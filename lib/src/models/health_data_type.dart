@@ -1,0 +1,55 @@
+enum HealthDataType {
+  heartRate,
+  hrv,
+  restingHeartRate,
+  sleepAnalysis,
+  workout,
+  activeCalories,
+  steps,
+  bodyMass,
+  height,
+  bodyFatPercentage,
+  vo2Max,
+  respiratoryRate,
+  oxygenSaturation,
+}
+
+extension HealthDataTypeExtension on HealthDataType {
+  String get identifier {
+    switch (this) {
+      case HealthDataType.heartRate:
+        return 'HKQuantityTypeIdentifierHeartRate';
+      case HealthDataType.hrv:
+        return 'HKQuantityTypeIdentifierHeartRateVariabilitySDNN';
+      case HealthDataType.restingHeartRate:
+        return 'HKQuantityTypeIdentifierRestingHeartRate';
+      case HealthDataType.sleepAnalysis:
+        return 'HKCategoryTypeIdentifierSleepAnalysis';
+      case HealthDataType.steps:
+        return 'HKQuantityTypeIdentifierStepCount';
+      case HealthDataType.activeCalories:
+        return 'HKQuantityTypeIdentifierActiveEnergyBurned';
+      case HealthDataType.bodyMass:
+        return 'HKQuantityTypeIdentifierBodyMass';
+      case HealthDataType.height:
+        return 'HKQuantityTypeIdentifierHeight';
+      case HealthDataType.bodyFatPercentage:
+        return 'HKQuantityTypeIdentifierBodyFatPercentage';
+      case HealthDataType.vo2Max:
+        return 'HKQuantityTypeIdentifierVO2Max';
+      case HealthDataType.respiratoryRate:
+        return 'HKQuantityTypeIdentifierRespiratoryRate';
+      case HealthDataType.oxygenSaturation:
+        return 'HKQuantityTypeIdentifierOxygenSaturation';
+      case HealthDataType.workout:
+        return 'HKWorkoutType';
+    }
+  }
+
+  static HealthDataType? fromIdentifier(String identifier) {
+    for (var type in HealthDataType.values) {
+      if (type.identifier == identifier) return type;
+    }
+    return null;
+  }
+}
