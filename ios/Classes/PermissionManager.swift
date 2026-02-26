@@ -6,133 +6,168 @@ public class PermissionManager {
     public static let shared = PermissionManager()
     let healthStore = HKHealthStore()
     
-    public func verifyPermissions(readTypes: [String], writeTypes: [String]) -> [String: Any] {
-        var readStatuses: [String: String] = [:]
-        var writeStatuses: [String: String] = [:]
-        
-        guard HKHealthStore.isHealthDataAvailable() else {
-            return [
-                "error": "HealthKit not available on this device",
-                "readStatuses": readStatuses,
-                "writeStatuses": writeStatuses
-            ]
+    // MARK: - EventChannel sink (holds the live stream connection to Flutter)
+    var healthKitEventSink: FlutterEventSink?
+    
+    private let quantityIdentifiers: [HKQuantityTypeIdentifier] = [
+        .heartRate,
+        .bodyMass,
+        .height,
+        .restingHeartRate,
+        .heartRateVariabilitySDNN,
+        .bodyFatPercentage,
+        .activeEnergyBurned,
+        .stepCount,
+        .distanceWalkingRunning
+    ]
+
+    private var readTypes: Set<HKObjectType> {
+        var types = Set<HKObjectType>()
+        types.insert(HKObjectType.workoutType())
+        if let st = HKObjectType.categoryType(forIdentifier: .sleepAnalysis) { types.insert(st) }
+        for id in quantityIdentifiers {
+            if let q = HKObjectType.quantityType(forIdentifier: id) { types.insert(q) }
         }
-        
-        for identifier in readTypes {
-            guard let type = createObjectType(for: identifier) else { continue }
-            let status = healthStore.authorizationStatus(for: type)
-            readStatuses[identifier] = statusString(from: status)
-        }
-        
-        for identifier in writeTypes {
-            guard let type = createObjectType(for: identifier) else { continue }
-            let status = healthStore.authorizationStatus(for: type)
-            writeStatuses[identifier] = statusString(from: status)
-        }
-        
-        return [
-            "readStatuses": readStatuses,
-            "writeStatuses": writeStatuses
-        ]
+        return types
+    }
+
+    private var writeTypes: Set<HKSampleType> {
+        return [HKObjectType.workoutType()]
     }
     
-    public func requestPermissions(readTypes: [String], writeTypes: [String], completion: @escaping (Result<Void, Error>) -> Void) {
+    public func requestAuthorization(result: @escaping FlutterResult) {
         guard HKHealthStore.isHealthDataAvailable() else {
-            completion(.failure(NSError(domain: "HumangoHealth", code: 1, userInfo: [NSLocalizedDescriptionKey: "HealthKit not available"])))
+            result(FlutterError(code: "NOT_AVAILABLE", message: "HealthKit is not available on this device", details: nil))
             return
         }
-        
-        var readSet = Set<HKObjectType>()
-        var writeSet = Set<HKSampleType>()
-        
-        for identifier in readTypes {
-            if let type = createObjectType(for: identifier) {
-                readSet.insert(type)
-            }
-        }
-        
-        for identifier in writeTypes {
-            if let type = createSampleType(for: identifier) {
-                writeSet.insert(type)
-            }
-        }
-        
-        healthStore.requestAuthorization(toShare: writeSet, read: readSet) { success, error in
-            if let error = error {
-                completion(.failure(error))
-            } else {
-                completion(.success(()))
+
+        healthStore.requestAuthorization(toShare: writeTypes, read: readTypes) { [weak self] success, error in
+            guard let self = self else { return }
+            DispatchQueue.main.async {
+                if let error = error {
+                    let flutterError = FlutterError(code: "AUTH_ERROR", message: error.localizedDescription, details: nil)
+                    self.healthKitEventSink?(flutterError)
+                    result(flutterError)
+                    return
+                }
+
+                // Run status checking on background thread since getRequestStatus uses semaphore
+                DispatchQueue.global().async {
+                    let detailedStatus = self.buildDetailedAuthorizationStatus()
+                    DispatchQueue.main.async {
+                        self.healthKitEventSink?(detailedStatus)
+                        result(true)
+                    }
+                }
             }
         }
     }
     
-    private func createObjectType(for identifier: String) -> HKObjectType? {
-        if identifier == "HKWorkoutType" {
-            return HKObjectType.workoutType()
+    public func verifyAuthorization(result: @escaping FlutterResult) {
+        // Run on background thread then return to main to avoid blocking Flutter UI with semaphores
+        DispatchQueue.global().async {
+            let detailedStatus = self.buildDetailedAuthorizationStatus()
+            DispatchQueue.main.async {
+                result(detailedStatus)
+            }
         }
-        if identifier.hasPrefix("HKCategoryTypeIdentifier") {
-            return HKObjectType.categoryType(forIdentifier: HKCategoryTypeIdentifier(rawValue: identifier))
-        }
-        if identifier.hasPrefix("HKQuantityTypeIdentifier") {
-            return HKObjectType.quantityType(forIdentifier: HKQuantityTypeIdentifier(rawValue: identifier))
-        }
-        return nil
     }
-    
-    private func createSampleType(for identifier: String) -> HKSampleType? {
-        return createObjectType(for: identifier) as? HKSampleType
+
+    public func buildDetailedAuthorizationStatus() -> [String: Any] {
+        let workout       = HKObjectType.workoutType()
+        let workoutStatus = writeAuthStatus(for: workout)
+
+        let readStatuses = readAuthStatuses()
+
+        let allGranted = workoutStatus == "authorized"
+            && readStatuses.values.allSatisfy { $0 == "authorized" }
+
+        var map: [String: Any] = [
+            "isAuthorized":         allGranted,
+            "workoutStatus":        workoutStatus,
+        ]
+        readStatuses.forEach { map[$0.key] = $0.value }
+        return map
     }
-    
-    private func statusString(from status: HKAuthorizationStatus) -> String {
-        switch status {
-        case .notDetermined: return "notDetermined"
-        case .sharingDenied: return "denied"
+
+    private func writeAuthStatus(for type: HKObjectType) -> String {
+        switch healthStore.authorizationStatus(for: type) {
         case .sharingAuthorized: return "authorized"
-        @unknown default: return "notDetermined"
+        case .sharingDenied:     return "denied"
+        case .notDetermined:     return "notDetermined"
+        @unknown default:        return "unknown"
         }
+    }
+
+    private func readAuthStatuses() -> [String: String] {
+        let typesToCheck: [(key: String, type: HKObjectType)] = [
+            ("sleepStatus",           HKObjectType.categoryType(forIdentifier: .sleepAnalysis)!),
+            ("hrvStatus",             HKObjectType.quantityType(forIdentifier: .heartRateVariabilitySDNN)!),
+            ("restingHeartRateStatus",HKObjectType.quantityType(forIdentifier: .restingHeartRate)!),
+            ("bodyMassStatus",        HKObjectType.quantityType(forIdentifier: .bodyMass)!),
+            ("heightStatus",          HKObjectType.quantityType(forIdentifier: .height)!),
+            ("bodyFatStatus",         HKObjectType.quantityType(forIdentifier: .bodyFatPercentage)!),
+            ("activeEnergyStatus",    HKObjectType.quantityType(forIdentifier: .activeEnergyBurned)!),
+            ("distanceStatus",        HKObjectType.quantityType(forIdentifier: .distanceWalkingRunning)!),
+            ("stepsStatus",           HKObjectType.quantityType(forIdentifier: .stepCount)!),
+        ]
+
+        var result = [String: String]()
+        let semaphore = DispatchSemaphore(value: 0)
+        var pending = typesToCheck.count
+
+        for item in typesToCheck {
+            let shareSet   = Set<HKSampleType>()
+            let readSet: Set<HKObjectType> = [item.type]
+
+            healthStore.getRequestStatusForAuthorization(toShare: shareSet, read: readSet) { status, _ in
+                switch status {
+                case .unnecessary:
+                    result[item.key] = "authorized"
+                case .shouldRequest:
+                    result[item.key] = "notDetermined"
+                case .unknown:
+                    result[item.key] = "unknown"
+                @unknown default:
+                    result[item.key] = "unknown"
+                }
+                pending -= 1
+                if pending == 0 { semaphore.signal() }
+            }
+        }
+
+        semaphore.wait()
+        return result
     }
 }
 
 public class PermissionStreamHandler: NSObject, FlutterStreamHandler {
-    private var eventSink: FlutterEventSink?
-    private var lastArgs: [String: Any]?
     
     public func onListen(withArguments arguments: Any?, eventSink events: @escaping FlutterEventSink) -> FlutterError? {
-        self.eventSink = events
-        self.lastArgs = arguments as? [String: Any]
+        PermissionManager.shared.healthKitEventSink = events
         
-        // Emit initial state
-        emitCurrentState()
-        
-        // Listen for app coming to foreground
+        // Listen for app coming to foreground to re-emit status
         NotificationCenter.default.addObserver(
             self,
             selector: #selector(applicationDidBecomeActive),
             name: UIApplication.didBecomeActiveNotification,
             object: nil
         )
-        
         return nil
     }
     
     public func onCancel(withArguments arguments: Any?) -> FlutterError? {
         NotificationCenter.default.removeObserver(self)
-        self.eventSink = nil
-        self.lastArgs = nil
+        PermissionManager.shared.healthKitEventSink = nil
         return nil
     }
     
     @objc private func applicationDidBecomeActive() {
-        emitCurrentState()
-    }
-    
-    private func emitCurrentState() {
-        guard let sink = self.eventSink, let args = self.lastArgs else { return }
-        
-        let readTypes = args["readTypes"] as? [String] ?? []
-        let writeTypes = args["writeTypes"] as? [String] ?? []
-        
-        let result = PermissionManager.shared.verifyPermissions(readTypes: readTypes, writeTypes: writeTypes)
-        sink(result)
+        DispatchQueue.global().async {
+            let detailedStatus = PermissionManager.shared.buildDetailedAuthorizationStatus()
+            DispatchQueue.main.async {
+                PermissionManager.shared.healthKitEventSink?(detailedStatus)
+            }
+        }
     }
 }

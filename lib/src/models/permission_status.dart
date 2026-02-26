@@ -1,8 +1,8 @@
 enum PermissionStatus {
   notDetermined,  // Never asked
-  authorized,     // Permission granted (or appears granted)
+  authorized,     // Permission granted
   denied,         // Permission explicitly denied
-  restricted      // OS restriction (e.g., parental controls)
+  restricted      // OS restriction
 }
 
 extension PermissionStatusExtension on PermissionStatus {
@@ -21,6 +21,7 @@ extension PermissionStatusExtension on PermissionStatus {
       case 'denied': return PermissionStatus.denied;
       case 'restricted': return PermissionStatus.restricted;
       case 'notDetermined':
+      case 'unknown':
       default:
         return PermissionStatus.notDetermined;
     }

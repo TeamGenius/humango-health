@@ -103,3 +103,51 @@ void dispose() {
 ```
 
 See the `example/` app directory for a complete working demonstration on requesting, verifying, and streaming Permission actions. 
+
+---
+
+## Push Workouts (Scheduling)
+
+The plugin incorporates native support for scheduling workouts against Apple's `WorkoutKit`. It bypasses intermediate Dart models and directly ingests custom JSON representations designed by your backend, translating them natively into iOS `WorkoutPlan` models. 
+
+### Performing the Push
+
+A robust `WorkoutPushManager` coordinates the dispatch. The system strictly enforces the Apple requirement that all scheduled workouts must take place within the next **7 days**. 
+
+The deduplication engine natively compares the exact JSON byte-size, alongside extracting your custom `schedule_id` key, to ensure workouts aren't duplicated if users click sync multiple times.
+
+```dart
+import 'package:humango_health/humango_health.dart';
+
+final pushManager = WorkoutPushManager();
+
+void scheduleWorkouts() async {
+
+  // 1. Ingest raw backend JSON (List of Maps)
+  // Ensure "schedule_id" and "date" exist for deduplication and Apple scheduling rules.
+  final List<Map<String, dynamic>> rawBackendJson = [
+    {
+      "schedule_id": 123456,
+      "date": DateTime.now().add(const Duration(hours: 2)).toIso8601String(),
+      "sport": "RUNNING",
+      "blocks": [
+        // ... (Humango specific Warmup/Interval/Cooldown definition)
+      ]
+    }
+  ];
+
+  // 2. Dispatch the raw maps natively
+  final response = await pushManager.pushRawWorkouts(rawBackendJson);
+
+  // 3. Process the results
+  for (final result in response.results) {
+    if (result.status == WorkoutPushStatus.success) {
+      print("✅ Successfully Pushed: \${result.workoutId}");
+    } else if (result.status == WorkoutPushStatus.skipped) {
+      print("⏭️ Skipped (Already cached natively): \${result.workoutId}");
+    } else {
+      print("❌ Failed: \${result.errorMessage}");
+    }
+  }
+}
+```

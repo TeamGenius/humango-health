@@ -12,6 +12,7 @@ enum HealthDataType {
   vo2Max,
   respiratoryRate,
   oxygenSaturation,
+  distance,
 }
 
 extension HealthDataTypeExtension on HealthDataType {
@@ -41,6 +42,8 @@ extension HealthDataTypeExtension on HealthDataType {
         return 'HKQuantityTypeIdentifierRespiratoryRate';
       case HealthDataType.oxygenSaturation:
         return 'HKQuantityTypeIdentifierOxygenSaturation';
+      case HealthDataType.distance:
+        return 'HKQuantityTypeIdentifierDistanceWalkingRunning';
       case HealthDataType.workout:
         return 'HKWorkoutType';
     }

@@ -1,9 +1,25 @@
 import 'package:flutter/material.dart';
-import 'package:humango_health/humango_health.dart';
+import 'package:provider/provider.dart';
 import 'package:url_launcher/url_launcher.dart';
+import 'health_permissions_provider.dart';
+import 'health_data_provider.dart';
+import 'sleep_data_provider.dart';
+import 'health_data_screen.dart' as humango;
+import 'sleep_data_screen.dart' as sleep;
+import 'workout_push_screen.dart' as workouts;
+import 'package:humango_health/humango_health.dart';
 
 void main() {
-  runApp(const MyApp());
+  runApp(
+    MultiProvider(
+      providers: [
+        ChangeNotifierProvider(create: (_) => HealthPermissionsProvider()),
+        ChangeNotifierProvider(create: (_) => HealthDataProvider()),
+        ChangeNotifierProvider(create: (_) => SleepDataProvider()),
+      ],
+      child: const MyApp(),
+    ),
+  );
 }
 
 class MyApp extends StatefulWidget {
@@ -13,73 +29,43 @@ class MyApp extends StatefulWidget {
   State<MyApp> createState() => _MyAppState();
 }
 
-class _MyAppState extends State<MyApp> {
-  final PermissionManager _permissionManager = PermissionManager();
-  StreamSubscription<PermissionResponse>? _permissionSubscription;
-
-  String _statusText = "Not verified";
-
-  // Define the types we want to ask for permissions
-  final List<HealthDataType> _readTypes = [
-    HealthDataType.workout,
-    HealthDataType.heartRate,
-    HealthDataType.steps,
-    HealthDataType.sleepAnalysis,
-    HealthDataType.restingHeartRate,
-    HealthDataType.hrv,
-  ];
-
-  final List<HealthDataType> _writeTypes = [HealthDataType.workout];
-
+class _MyAppState extends State<MyApp> with WidgetsBindingObserver {
   @override
   void initState() {
     super.initState();
-    _startListening();
+    WidgetsBinding.instance.addObserver(this);
   }
 
   @override
   void dispose() {
-    _permissionSubscription?.cancel();
+    WidgetsBinding.instance.removeObserver(this);
     super.dispose();
   }
 
-  void _startListening() {
-    // Listen to changes in permission status asynchronously
-    _permissionSubscription = _permissionManager
-        .listen(_readTypes, _writeTypes)
-        .listen(
-          (PermissionResponse response) {
-            if (mounted) {
-              setState(() {
-                _statusText = _formatResponse(response);
-              });
-              
-              _checkForDeniedPermissions(response);
-            }
-          },
-          onError: (error) {
-            setState(() {
-              _statusText = "Stream Error: $error";
-            });
-          },
-        );
-  }
-
-  void _checkForDeniedPermissions(PermissionResponse response) {
-    // Check if any write permissions were denied
-    bool anyDenied = response.writeStatuses.values.any(
-      (status) => status == PermissionStatus.denied
-    );
-
-    if (anyDenied) {
-      _showPermissionDeniedDialog();
+  @override
+  void didChangeAppLifecycleState(AppLifecycleState state) {
+    if (state == AppLifecycleState.paused) {
+      Provider.of<HealthDataProvider>(context, listen: false).notifyLifecycleBackground();
+    } else if (state == AppLifecycleState.resumed) {
+      Provider.of<HealthDataProvider>(context, listen: false).notifyLifecycleForeground();
     }
   }
 
-  void _showPermissionDeniedDialog() {
+  @override
+  Widget build(BuildContext context) {
+    return const MaterialApp(
+      home: HealthPermissionsScreen(),
+    );
+  }
+}
+
+class HealthPermissionsScreen extends StatelessWidget {
+  const HealthPermissionsScreen({super.key});
+
+  void _showPermissionDeniedDialog(BuildContext context) {
     showDialog(
       context: context,
-      builder: (BuildContext context) {
+      builder: (BuildContext dialogContext) {
         return AlertDialog(
           title: const Text('Permissions Required'),
           content: const Text(
@@ -89,12 +75,12 @@ class _MyAppState extends State<MyApp> {
           ),
           actions: [
             TextButton(
-              onPressed: () => Navigator.of(context).pop(),
+              onPressed: () => Navigator.of(dialogContext).pop(),
               child: const Text('Cancel'),
             ),
             ElevatedButton(
               onPressed: () async {
-                Navigator.of(context).pop();
+                Navigator.of(dialogContext).pop();
                 // Deep link to iOS Settings App
                 final Uri url = Uri.parse('app-settings:');
                 if (await canLaunchUrl(url)) {
@@ -109,105 +95,171 @@ class _MyAppState extends State<MyApp> {
     );
   }
 
-  Future<void> _verifyPermissions() async {
-    try {
-      final PermissionResponse response = await _permissionManager.verify(
-        _readTypes,
-        _writeTypes,
-      );
+  @override
+  Widget build(BuildContext context) {
+    return Scaffold(
+      appBar: AppBar(title: const Text('Humango Health Permissions')),
+      body: Padding(
+        padding: const EdgeInsets.all(16.0),
+        child: Consumer<HealthPermissionsProvider>(
+          builder: (context, provider, child) {
+            
+            // Check for denied and optionally show dialog 
+            // NOTE: In production you might want to debounce this or
+            // show it based on explicit user action rather than on every rebuild.
+            WidgetsBinding.instance.addPostFrameCallback((_) {
+              if (provider.hasAnyDenied) {
+                // To avoid spamming dialogs, you might use a shared preference or state flag.
+                // For this example we just log it to avoid endless loops on rebuilds.
+                print("Permissions Denied Detected!");
+              }
+            });
 
-      if (mounted) {
-        setState(() {
-          _statusText = "Verified status:\n\n${_formatResponse(response)}";
-        });
-        _checkForDeniedPermissions(response);
-      }
-    } catch (e) {
-      setState(() {
-        _statusText = "Error verifying: $e";
-      });
-    }
+            return Column(
+              crossAxisAlignment: CrossAxisAlignment.stretch,
+              children: [
+                ElevatedButton(
+                  onPressed: () async {
+                    await provider.verifyPermissions();
+                    if (provider.hasAnyDenied && context.mounted) {
+                      _showPermissionDeniedDialog(context);
+                    }
+                  },
+                  child: const Text('Verify Current Permissions'),
+                ),
+                const SizedBox(height: 16),
+                ElevatedButton(
+                  onPressed: () => provider.requestPermissions(),
+                  child: const Text('Request Permissions'),
+                ),
+                if (provider.streamError.isNotEmpty) ...[
+                  const SizedBox(height: 16),
+                  Text(
+                    provider.streamError,
+                    style: const TextStyle(color: Colors.red),
+                  ),
+                ],
+                const SizedBox(height: 24),
+                
+                // Header Status
+                Row(
+                  mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                  children: [
+                    const Text(
+                      'All Authorized:',
+                      style: TextStyle(fontWeight: FontWeight.bold, fontSize: 18),
+                    ),
+                    Icon(
+                      provider.isAuthorized ? Icons.check_circle : Icons.cancel,
+                      color: provider.isAuthorized ? Colors.green : Colors.red,
+                    ),
+                  ],
+                ),
+                const Divider(),
+                
+                // Detailed Status List
+                Row(
+                  mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                  children: [
+                    const Text(
+                      'Permission Details:',
+                      style: TextStyle(fontWeight: FontWeight.w600, fontSize: 16),
+                    ),
+                    ElevatedButton(
+                      style: ElevatedButton.styleFrom(backgroundColor: Colors.blue[100]),
+                      onPressed: () {
+                        Navigator.of(context).push(
+                          MaterialPageRoute(builder: (context) => const _AppTabsScreen()),
+                        );
+                      },
+                      child: const Text('Explore Integrations →'),
+                    ),
+                  ],
+                ),
+                const SizedBox(height: 8),
+                Expanded(
+                  child: provider.statuses.isEmpty
+                      ? const Center(child: Text("No statuses loaded yet."))
+                      : ListView.builder(
+                          itemCount: provider.statuses.length,
+                          itemBuilder: (context, index) {
+                            final entry = provider.statuses.entries.elementAt(index);
+                            final type = entry.key;
+                            final status = entry.value;
+
+                            Color statusColor = Colors.grey;
+                            if (status == PermissionStatus.authorized) {
+                              statusColor = Colors.green;
+                            } else if (status == PermissionStatus.denied) {
+                              statusColor = Colors.red;
+                            }
+
+                            return ListTile(
+                              title: Text(type.name),
+                              trailing: Chip(
+                                label: Text(
+                                  status.name.toUpperCase(),
+                                  style: const TextStyle(
+                                    color: Colors.white,
+                                    fontSize: 12,
+                                  ),
+                                ),
+                                backgroundColor: statusColor,
+                              ),
+                            );
+                          },
+                        ),
+                ),
+              ],
+            );
+          },
+        ),
+      ),
+    );
   }
+}
 
-  Future<void> _requestPermissions() async {
-    try {
-      // Fire-and-forget request
-      // iOS will show the Health app permission sheet
-      await _permissionManager.request(_readTypes, _writeTypes);
+class _AppTabsScreen extends StatefulWidget {
+  const _AppTabsScreen();
 
-      setState(() {
-        _statusText = "Requested permissions. Check Health app popup.";
-      });
-      // Verification will be captured when the app comes back to foreground
-      // natively handled by the event channel Stream.
-    } catch (e) {
-      setState(() {
-        _statusText = "Error requesting permissions: $e";
-      });
-    }
-  }
+  @override
+  State<_AppTabsScreen> createState() => _AppTabsScreenState();
+}
 
-  String _formatResponse(PermissionResponse response) {
-    StringBuffer sb = StringBuffer();
-    sb.writeln("--- READ PERMISSIONS ---");
-    response.readStatuses.forEach((type, status) {
-      sb.writeln("${type.name}: ${status.name}");
-    });
+class _AppTabsScreenState extends State<_AppTabsScreen> {
+  int _currentIndex = 0;
 
-    sb.writeln("\n--- WRITE PERMISSIONS ---");
-    response.writeStatuses.forEach((type, status) {
-      sb.writeln("${type.name}: ${status.name}");
-    });
-
-    return sb.toString();
-  }
+  final List<Widget> _pages = [
+    const humango.HealthDataScreen(),
+    const sleep.SleepDataScreen(),
+    const workouts.WorkoutPushScreen(),
+  ];
 
   @override
   Widget build(BuildContext context) {
-    return MaterialApp(
-      home: Scaffold(
-        appBar: AppBar(title: const Text('Humango Health Permissions')),
-        body: Padding(
-          padding: const EdgeInsets.all(16.0),
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.stretch,
-            children: [
-              ElevatedButton(
-                onPressed: _verifyPermissions,
-                child: const Text('Verify Current Permissions'),
-              ),
-              const SizedBox(height: 16),
-              ElevatedButton(
-                onPressed: _requestPermissions,
-                child: const Text('Request Permissions'),
-              ),
-              const SizedBox(height: 24),
-              const Text(
-                'Status Log:',
-                style: TextStyle(fontWeight: FontWeight.bold, fontSize: 18),
-              ),
-              const SizedBox(height: 8),
-              Expanded(
-                child: Container(
-                  padding: const EdgeInsets.all(12),
-                  decoration: BoxDecoration(
-                    color: Colors.grey[200],
-                    borderRadius: BorderRadius.circular(8),
-                  ),
-                  child: SingleChildScrollView(
-                    child: Text(
-                      _statusText,
-                      style: const TextStyle(
-                        fontFamily: 'Courier',
-                        fontSize: 13,
-                      ),
-                    ),
-                  ),
-                ),
-              ),
-            ],
+    return Scaffold(
+      body: _pages[_currentIndex],
+      bottomNavigationBar: BottomNavigationBar(
+        currentIndex: _currentIndex,
+        onTap: (index) {
+          setState(() {
+            _currentIndex = index;
+          });
+        },
+        items: const [
+          BottomNavigationBarItem(
+            icon: Icon(Icons.monitor_heart),
+            label: 'Activity & Vitals',
           ),
-        ),
+          BottomNavigationBarItem(
+            icon: Icon(Icons.bedtime),
+            label: 'Sleep Analytics',
+          ),
+          BottomNavigationBarItem(
+            icon: Icon(Icons.directions_run),
+            label: 'Push Workouts',
+          ),
+        ],
       ),
     );
   }

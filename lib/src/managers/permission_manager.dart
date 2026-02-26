@@ -1,55 +1,37 @@
-import 'dart:async';
 import 'package:flutter/services.dart';
-
-import '../models/health_data_type.dart';
-import '../models/permission_response.dart';
+import '../models/health_kit_authorization_result.dart';
 
 class PermissionManager {
-  static const MethodChannel _methodChannel = MethodChannel('com.humango.workouts/permissions');
-  static const EventChannel _eventChannel = EventChannel('com.humango.workouts/permissions/stream');
+  static const MethodChannel _methodChannel = MethodChannel('healthkit/method');
+  static const EventChannel _eventChannel = EventChannel('healthkit/event');
 
-  /// Checks current authorization status for specified data types.
-  Future<PermissionResponse> verify(
-    List<HealthDataType> readTypes,
-    List<HealthDataType> writeTypes,
-  ) async {
-    final args = {
-      'readTypes': readTypes.map((t) => t.identifier).toList(),
-      'writeTypes': writeTypes.map((t) => t.identifier).toList(),
-    };
+  Stream<HealthKitAuthorizationResult>? _permissionStream;
 
-    final result = await _methodChannel.invokeMapMethod<String, dynamic>('verify', args);
-    if (result == null) {
-      throw Exception('Failed to receive response from verify method');
-    }
-    return PermissionResponse.fromJson(result);
-  }
-
-  /// Requests authorization for specified data types. (Fire-and-forget)
-  Future<void> request(
-    List<HealthDataType> readTypes,
-    List<HealthDataType> writeTypes,
-  ) async {
-    final args = {
-      'readTypes': readTypes.map((t) => t.identifier).toList(),
-      'writeTypes': writeTypes.map((t) => t.identifier).toList(),
-    };
-    await _methodChannel.invokeMethod('request', args);
-  }
-
-  /// Creates stream that emits permission status updates.
-  Stream<PermissionResponse> listen(
-    List<HealthDataType> readTypes,
-    List<HealthDataType> writeTypes,
-  ) {
-    final args = {
-      'readTypes': readTypes.map((t) => t.identifier).toList(),
-      'writeTypes': writeTypes.map((t) => t.identifier).toList(),
-    };
-
-    return _eventChannel.receiveBroadcastStream(args).map((event) {
-      final resultMap = Map<String, dynamic>.from(event as Map);
-      return PermissionResponse.fromJson(resultMap);
+  /// Listen for permission updates explicitly mapped to our Result object
+  Stream<HealthKitAuthorizationResult> get permissionStream {
+    _permissionStream ??= _eventChannel.receiveBroadcastStream().map((event) {
+      return HealthKitAuthorizationResult.fromMap(Map<dynamic, dynamic>.from(event));
     });
+
+    return _permissionStream!;
+  }
+
+  /// Request authorization because we will not get correct authorization here only by subscribing to stream and listening is one way and by verifying authorization
+  Future<void> requestAuthorization() async {
+    try {
+      await _methodChannel.invokeMethod('requestAuthorization');
+    } catch (e) {
+      return;
+    }
+  }
+
+  /// Verify authorization manually
+  Future<HealthKitAuthorizationResult> verifyAuthorization() async {
+    try {
+      final Map<dynamic, dynamic> result = await _methodChannel.invokeMethod('verifyAuthorization');
+      return HealthKitAuthorizationResult.fromMap(result);
+    } catch (e) {
+      return HealthKitAuthorizationResult.error();
+    }
   }
 }
