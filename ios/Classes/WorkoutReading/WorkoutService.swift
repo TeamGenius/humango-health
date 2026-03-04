@@ -5,6 +5,7 @@
 
 import Foundation
 import HealthKit
+import WorkoutKit
 
 @available(iOS 17.0, *)
 final class WorkoutService {
@@ -12,7 +13,6 @@ final class WorkoutService {
     static let liveWindowSeconds: TimeInterval = 2 * 60 * 60 // 2 hours
 
     let startDate: Date
-    let endDate: Date
     private let cycling = "Cycling"
     private let running = "Running"
     private let swimminng = "Swimming"
@@ -32,9 +32,8 @@ final class WorkoutService {
     private var routeServices: [String: RouteService] = [:]
     private let routeServiceQueue = DispatchQueue(label: "com.humango.WorkoutService.routeQueue", attributes: .concurrent)
 
-    init(startDate: Date, endDate: Date) {
+    init(startDate: Date) {
         self.startDate = startDate
-        self.endDate = endDate
         self.handleSpotImporting()
     }
     
@@ -57,16 +56,12 @@ final class WorkoutService {
     }
 
     // Call this ONCE after you create the service
+    // Note: Authorization is handled by PermissionManager before creating this service
     func start() async {
-        do {
-            try await requestAuthorization()
-            authorized = true
-            debugPrint("Read Workouts: WorkoutService: start")
-            await fetchWorkouts()          // initial delta fetch
-             startLiveUpdates()   
-        } catch {
-            print("Read Workouts: HealthKit auth failed: \(error)")
-        }
+        authorized = true
+        debugPrint("Read Workouts: WorkoutService: start")
+        await fetchWorkouts()          // initial delta fetch
+        startLiveUpdates()
     }
 
     // MARK: - Foreground / Background switches
@@ -108,94 +103,7 @@ final class WorkoutService {
         pruneOldRouteServices()
     }
 
-    // MARK: - Authorization & sample types
-
-    private func requestAuthorization() async throws {
-        guard HKHealthStore.isHealthDataAvailable() else { return }
-        var hkSampleTypes = Set<HKSampleType>()
-        hkSampleTypes.insert(HKObjectType.workoutType())
-        hkSampleTypes.insert(HKSeriesType.workoutRoute())
-        hkSampleTypes.insert(HKSampleType.categoryType(forIdentifier: .sleepAnalysis)!)
-        let quantityIdentifiers = getQuantityTypeIdentifiers()
-        for quantityIdentifier in quantityIdentifiers {
-            if let q = HKSampleType.quantityType(forIdentifier: quantityIdentifier) {
-                hkSampleTypes.insert(q)
-            }
-        }
-        try await store.requestAuthorization(
-            toShare: [],
-            read: hkSampleTypes
-        )
-    }
-
-    func getQuantityTypeIdentifiers() -> [HKQuantityTypeIdentifier] {
-        var quantityIdentifiers = [
-            HKQuantityTypeIdentifier.heartRate,
-            HKQuantityTypeIdentifier.stepCount,
-            HKQuantityTypeIdentifier.distanceCycling,
-            HKQuantityTypeIdentifier.swimmingStrokeCount,
-            HKQuantityTypeIdentifier.distanceSwimming,
-            HKQuantityTypeIdentifier.vo2Max,
-            HKQuantityTypeIdentifier.distanceWalkingRunning,
-            HKQuantityTypeIdentifier.activeEnergyBurned,
-            HKQuantityTypeIdentifier.bodyMass,
-            HKQuantityTypeIdentifier.height,
-            HKQuantityTypeIdentifier.restingHeartRate,
-            HKQuantityTypeIdentifier.heartRateVariabilitySDNN,
-            HKQuantityTypeIdentifier.bodyMassIndex,
-            HKQuantityTypeIdentifier.runningGroundContactTime,
-            HKQuantityTypeIdentifier.runningPower,
-            HKQuantityTypeIdentifier.runningSpeed,
-            HKQuantityTypeIdentifier.runningStrideLength,
-            HKQuantityTypeIdentifier.runningVerticalOscillation,
-            HKQuantityTypeIdentifier.cyclingCadence,
-            HKQuantityTypeIdentifier.cyclingPower,
-        ]
-
-        return quantityIdentifiers
-    }
-
-    // MARK: - Fetching workouts
-
-    // Use this for one-shot fetches (e.g., on start or from observer)
-    // Use this replacement for your fetchWorkouts()
-    func fetchWorkouts(upToNow: Bool = false) async {
-        debugPrint("Read Workouts: WorkoutService: fetchWorkouts (upToNow: \(upToNow))")
-        guard authorized else { return }
-
-        // If caller wants the latest data (background observer), use 'now' as end
-        let effectiveEnd: Date? = upToNow ? Date() : endDate
-
-        // Bounded window: startDate .. effectiveEnd
-        let initialPredicate = HKQuery.predicateForSamples(
-            withStart: startDate,
-            end: effectiveEnd,
-            options: [.strictStartDate, .strictEndDate]
-        )
-
-        let desc = HKAnchoredObjectQueryDescriptor(
-            predicates: [.workout(initialPredicate)],
-            anchor: anchor,
-            limit: 0
-        )
-
-        do {
-            debugPrint("Read Workouts: WorkoutService: fetchWorkouts (upToNow: \(upToNow))")
-            
-            let result: HKAnchoredObjectQueryDescriptor<HKWorkout>.Result = try await desc.result(for: store)
-            debugPrint("Read Workouts: WorkoutService: anchored result — addedSamples.count = \(result.addedSamples.count)")
-            anchor = result.newAnchor
-            for w in result.addedSamples {
-                debugPrint("Read Workouts: WorkoutService: workout activity type :\(w.workoutActivityType.name) ")
-                if !excludeImporting.contains(w.workoutActivityType.name) {
-                    handleWorkouts(workout: w)
-                }
-            }
-        } catch {
-            print("Read Workouts: WorkoutService: Fetch failed: \(error)")
-        }
-    }
-
+   
     // Live stream while app is open
     func startLiveUpdates() {
         guard authorized else { return }
@@ -223,6 +131,22 @@ final class WorkoutService {
                     for w in update.addedSamples {
                         debugPrint("Read Workouts: WorkoutService: Live Workout")
                         debugPrint("Read Workouts: WorkoutService: workout activity type :\(w.workoutActivityType.name)")
+                        print("Workout UUID: \(w.uuid)")
+                        
+                        // Check workoutPlan asynchronously without blocking the stream
+                        // Task {
+                        //     do {
+                        //         let plan = try await w.workoutPlan
+                        //         if let plan = plan {
+                        //             print("✅ WorkoutPlan found - ID: \(plan.id)")
+                        //         } else {
+                        //             print("ℹ️ No WorkoutPlan attached (manual workout)")
+                        //         }
+                        //     } catch {
+                        //         print("⚠️ Error accessing workoutPlan: \(error)")
+                        //     }
+                        // }
+                        
                         dump(w)
                         self.handleWorkouts(workout: w)
                     }
@@ -234,6 +158,39 @@ final class WorkoutService {
     }
 
     func stopLiveUpdates() { updateTask?.cancel(); updateTask = nil }
+
+    // MARK: - Initial fetch (anchored query snapshot)
+    
+    private func fetchWorkouts(upToNow: Bool = false) async {
+        guard authorized else { return }
+        
+        // For initial fetch or background wake-ups
+        let endDate = upToNow ? Date() : Date().addingTimeInterval(-WorkoutService.liveWindowSeconds)
+        let predicate = HKQuery.predicateForSamples(
+            withStart: startDate,
+            end: endDate,
+            options: [.strictStartDate]
+        )
+        
+        let desc = HKAnchoredObjectQueryDescriptor(
+            predicates: [.workout(predicate)],
+            anchor: anchor
+        )
+        
+        do {
+            let result = try await desc.result(for: store)
+            self.anchor = result.newAnchor
+            
+            debugPrint("Read Workouts: WorkoutService: fetchWorkouts found \(result.addedSamples.count) workouts")
+            
+            for workout in result.addedSamples {
+                handleWorkouts(workout: workout)
+            }
+        } catch {
+            print("Read Workouts: WorkoutService: fetchWorkouts error: \(error)")
+        }
+    }
+    
 
     // MARK: - Background observer/wake-ups
 

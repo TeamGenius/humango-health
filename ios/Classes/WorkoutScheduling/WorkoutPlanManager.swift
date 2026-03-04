@@ -141,7 +141,7 @@ public class WorkoutPlanManager: NSObject {
         // 4. Schedule each via WorkoutScheduler
         for (index, item) in items.enumerated() {
             let workoutPlanNative = WorkoutPlan(item.workout)
-            
+             print("✅ WorkoutPlan id : \(workoutPlanNative.id)")
             let dateComponents = Calendar.current.dateComponents([.year, .month, .day, .hour, .minute], from: item.scheduledDate)
             let scheduledWorkout = ScheduledWorkoutPlan(workoutPlanNative, date: dateComponents)
             var hashValue: Int = 0
@@ -154,6 +154,7 @@ public class WorkoutPlanManager: NSObject {
                 }
                 
                 await WorkoutScheduler.shared.schedule(scheduledWorkout.plan, at: scheduledWorkout.date)
+              
                 hashValue = scheduledWorkout.hashValue
                 
                 // Safe name extraction wrapper from reference

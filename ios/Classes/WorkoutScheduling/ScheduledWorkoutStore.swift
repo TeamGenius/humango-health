@@ -4,6 +4,7 @@
 //
 
 import Foundation
+import HealthKit
 
 // MARK: - Record Model
 
@@ -154,6 +155,65 @@ class ScheduledWorkoutStore {
             return String(id)
         }
         return nil
+    }
+    
+    // MARK: - Workout Matching
+    
+    /// Find scheduled workout by WorkoutPlan hash value
+    /// This is the most reliable matching method for iOS 17.0+
+    func findWorkoutByHash(_ hash: Int) -> String? {
+        for (workoutId, record) in records {
+            if record.scheduledHashValue == hash {
+                debugPrint("🎯 ScheduledWorkoutStore: Found workout \(workoutId) by hash \(hash)")
+                return workoutId
+            }
+        }
+        debugPrint("⚠️ ScheduledWorkoutStore: No workout found for hash \(hash)")
+        return nil
+    }
+    
+    /// Find the scheduled workout that matches a completed workout
+    /// Returns the workout ID (schedule_id) if found, nil otherwise
+    /// Matches by date (within 10 minutes) and activity type
+    func findMatchingScheduledWorkout(startDate: Date, activityType: HKWorkoutActivityType) -> String? {
+        let tolerance: TimeInterval = 10 * 60 // 10 minutes
+        
+        var bestMatch: (id: String, timeDiff: TimeInterval)? = nil
+        
+        for (workoutId, record) in records {
+            let timeDifference = abs(record.scheduledDate.timeIntervalSince(startDate))
+            
+            // Check if dates match within tolerance
+            if timeDifference <= tolerance {
+                // Try to extract activity type from JSON
+                var typeMatches = false
+                
+                if let activityName = record.workoutJson["summary"]?.value as? [String: Any],
+                   let sportType = activityName["name"] as? String {
+                    // Name matching
+                    let activityTypeName = activityType.name.lowercased()
+                    typeMatches = sportType.lowercased().contains(activityTypeName) || 
+                                 activityTypeName.contains(sportType.lowercased())
+                } else {
+                    // If we can't extract sport type, match by time only
+                    typeMatches = true
+                }
+                
+                if typeMatches {
+                    // Keep the closest time match
+                    if bestMatch == nil || timeDifference < bestMatch!.timeDiff {
+                        bestMatch = (workoutId, timeDifference)
+                    }
+                }
+            }
+        }
+        
+        return bestMatch?.id
+    }
+    
+    /// Check if a completed workout matches any scheduled workout
+    func isWorkoutScheduled(startDate: Date, activityType: HKWorkoutActivityType) -> Bool {
+        return findMatchingScheduledWorkout(startDate: startDate, activityType: activityType) != nil
     }
 
     // MARK: - Persistence

@@ -27,7 +27,7 @@ class _WorkoutPushScreenState extends State<WorkoutPushScreen> {
   {
     "schedule_id": 3232443,
     "average_intensity": 73,
-    "date": "2026-02-27T14:00:00+00:00",
+    "date": "2026-03-03T14:00:00+00:00",
     "blocks": [
       {
         "description": "Activation - leg swings, walking lunges...",

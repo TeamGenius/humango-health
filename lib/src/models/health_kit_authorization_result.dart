@@ -22,6 +22,7 @@ class HealthKitAuthorizationResult {
       'sleepStatus': HealthDataType.sleepAnalysis,
       'hrvStatus': HealthDataType.hrv,
       'restingHeartRateStatus': HealthDataType.restingHeartRate,
+      'heartRateStatus': HealthDataType.heartRate,
       'bodyMassStatus': HealthDataType.bodyMass,
       'heightStatus': HealthDataType.height,
       'bodyFatStatus': HealthDataType.bodyFatPercentage,
@@ -29,7 +30,9 @@ class HealthKitAuthorizationResult {
 
     keyMapping.forEach((key, type) {
       if (map.containsKey(key)) {
-        statuses[type] = PermissionStatusExtension.fromString(map[key] as String);
+        statuses[type] = PermissionStatusExtension.fromString(
+          map[key] as String,
+        );
       }
     });
 
@@ -44,7 +47,7 @@ class HealthKitAuthorizationResult {
     for (var type in HealthDataType.values) {
       statuses[type] = PermissionStatus.denied; // Fail closed
     }
-    
+
     return HealthKitAuthorizationResult(
       isAuthorized: false,
       statuses: statuses,
@@ -56,8 +59,18 @@ class HealthKitAuthorizationResult {
     return statuses.values.any((status) => status == PermissionStatus.denied);
   }
 
-  /// Returns true if any tracked permission has not been determined yet
-  bool get hasAnyNotDetermined {
-    return statuses.values.any((status) => status == PermissionStatus.notDetermined);
+  /// Returns true if any tracked permission has no data in HealthKit
+  bool get hasAnyNoData {
+    return statuses.values.any((status) => status == PermissionStatus.noData);
+  }
+
+  /// Returns true if all tracked permissions are either authorized or noData (likely all granted)
+  bool get isLikelyFullyGranted {
+    return statuses.values.every((status) => status.isLikelyGranted);
+  }
+
+  /// Returns true if any tracked permission has not been requested yet
+  bool get hasAnyUnknown {
+    return statuses.values.any((status) => status == PermissionStatus.unknown);
   }
 }

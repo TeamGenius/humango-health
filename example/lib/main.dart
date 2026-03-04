@@ -2,11 +2,8 @@ import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 import 'package:url_launcher/url_launcher.dart';
 import 'health_permissions_provider.dart';
-import 'health_data_provider.dart';
-import 'sleep_data_provider.dart';
-import 'health_data_screen.dart' as humango;
-import 'sleep_data_screen.dart' as sleep;
 import 'workout_push_screen.dart' as workouts;
+import 'workout_read_screen.dart' as readworkouts;
 import 'package:humango_health/humango_health.dart';
 
 void main() {
@@ -14,8 +11,6 @@ void main() {
     MultiProvider(
       providers: [
         ChangeNotifierProvider(create: (_) => HealthPermissionsProvider()),
-        ChangeNotifierProvider(create: (_) => HealthDataProvider()),
-        ChangeNotifierProvider(create: (_) => SleepDataProvider()),
       ],
       child: const MyApp(),
     ),
@@ -44,18 +39,12 @@ class _MyAppState extends State<MyApp> with WidgetsBindingObserver {
 
   @override
   void didChangeAppLifecycleState(AppLifecycleState state) {
-    if (state == AppLifecycleState.paused) {
-      Provider.of<HealthDataProvider>(context, listen: false).notifyLifecycleBackground();
-    } else if (state == AppLifecycleState.resumed) {
-      Provider.of<HealthDataProvider>(context, listen: false).notifyLifecycleForeground();
-    }
+    // Empty lifecycle hook since HealthDataProvider was removed
   }
 
   @override
   Widget build(BuildContext context) {
-    return const MaterialApp(
-      home: HealthPermissionsScreen(),
-    );
+    return const MaterialApp(home: HealthPermissionsScreen());
   }
 }
 
@@ -103,8 +92,7 @@ class HealthPermissionsScreen extends StatelessWidget {
         padding: const EdgeInsets.all(16.0),
         child: Consumer<HealthPermissionsProvider>(
           builder: (context, provider, child) {
-            
-            // Check for denied and optionally show dialog 
+            // Check for denied and optionally show dialog
             // NOTE: In production you might want to debounce this or
             // show it based on explicit user action rather than on every rebuild.
             WidgetsBinding.instance.addPostFrameCallback((_) {
@@ -140,14 +128,17 @@ class HealthPermissionsScreen extends StatelessWidget {
                   ),
                 ],
                 const SizedBox(height: 24),
-                
+
                 // Header Status
                 Row(
                   mainAxisAlignment: MainAxisAlignment.spaceBetween,
                   children: [
                     const Text(
                       'All Authorized:',
-                      style: TextStyle(fontWeight: FontWeight.bold, fontSize: 18),
+                      style: TextStyle(
+                        fontWeight: FontWeight.bold,
+                        fontSize: 18,
+                      ),
                     ),
                     Icon(
                       provider.isAuthorized ? Icons.check_circle : Icons.cancel,
@@ -156,20 +147,27 @@ class HealthPermissionsScreen extends StatelessWidget {
                   ],
                 ),
                 const Divider(),
-                
+
                 // Detailed Status List
                 Row(
                   mainAxisAlignment: MainAxisAlignment.spaceBetween,
                   children: [
                     const Text(
                       'Permission Details:',
-                      style: TextStyle(fontWeight: FontWeight.w600, fontSize: 16),
+                      style: TextStyle(
+                        fontWeight: FontWeight.w600,
+                        fontSize: 16,
+                      ),
                     ),
                     ElevatedButton(
-                      style: ElevatedButton.styleFrom(backgroundColor: Colors.blue[100]),
+                      style: ElevatedButton.styleFrom(
+                        backgroundColor: Colors.blue[100],
+                      ),
                       onPressed: () {
                         Navigator.of(context).push(
-                          MaterialPageRoute(builder: (context) => const _AppTabsScreen()),
+                          MaterialPageRoute(
+                            builder: (context) => const _AppTabsScreen(),
+                          ),
                         );
                       },
                       child: const Text('Explore Integrations →'),
@@ -183,7 +181,9 @@ class HealthPermissionsScreen extends StatelessWidget {
                       : ListView.builder(
                           itemCount: provider.statuses.length,
                           itemBuilder: (context, index) {
-                            final entry = provider.statuses.entries.elementAt(index);
+                            final entry = provider.statuses.entries.elementAt(
+                              index,
+                            );
                             final type = entry.key;
                             final status = entry.value;
 
@@ -192,6 +192,8 @@ class HealthPermissionsScreen extends StatelessWidget {
                               statusColor = Colors.green;
                             } else if (status == PermissionStatus.denied) {
                               statusColor = Colors.red;
+                            } else if (status == PermissionStatus.noData) {
+                              statusColor = Colors.blue;
                             }
 
                             return ListTile(
@@ -230,9 +232,8 @@ class _AppTabsScreenState extends State<_AppTabsScreen> {
   int _currentIndex = 0;
 
   final List<Widget> _pages = [
-    const humango.HealthDataScreen(),
-    const sleep.SleepDataScreen(),
     const workouts.WorkoutPushScreen(),
+    const readworkouts.WorkoutReadScreen(),
   ];
 
   @override
@@ -240,6 +241,7 @@ class _AppTabsScreenState extends State<_AppTabsScreen> {
     return Scaffold(
       body: _pages[_currentIndex],
       bottomNavigationBar: BottomNavigationBar(
+        type: BottomNavigationBarType.fixed,
         currentIndex: _currentIndex,
         onTap: (index) {
           setState(() {
@@ -248,17 +250,10 @@ class _AppTabsScreenState extends State<_AppTabsScreen> {
         },
         items: const [
           BottomNavigationBarItem(
-            icon: Icon(Icons.monitor_heart),
-            label: 'Activity & Vitals',
+            icon: Icon(Icons.sports_score),
+            label: 'Push',
           ),
-          BottomNavigationBarItem(
-            icon: Icon(Icons.bedtime),
-            label: 'Sleep Analytics',
-          ),
-          BottomNavigationBarItem(
-            icon: Icon(Icons.directions_run),
-            label: 'Push Workouts',
-          ),
+          BottomNavigationBarItem(icon: Icon(Icons.sync), label: 'Read'),
         ],
       ),
     );

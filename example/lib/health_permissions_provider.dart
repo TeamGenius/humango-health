@@ -14,7 +14,8 @@ class HealthPermissionsProvider with ChangeNotifier {
   Map<HealthDataType, PermissionStatus> get statuses => _statuses;
   String get streamError => _streamError;
 
-  bool get hasAnyDenied => _statuses.values.any((s) => s == PermissionStatus.denied);
+  bool get hasAnyDenied =>
+      _statuses.values.any((s) => s == PermissionStatus.denied);
 
   HealthPermissionsProvider() {
     _startListening();
@@ -38,7 +39,8 @@ class HealthPermissionsProvider with ChangeNotifier {
 
   Future<void> verifyPermissions() async {
     try {
-      final HealthKitAuthorizationResult result = await _permissionManager.verifyAuthorization();
+      final HealthKitAuthorizationResult result = await _permissionManager
+          .verifyAuthorization();
       _isAuthorized = result.isAuthorized;
       _statuses = result.statuses;
       _streamError = "";
@@ -52,7 +54,7 @@ class HealthPermissionsProvider with ChangeNotifier {
   Future<void> requestPermissions() async {
     try {
       await _permissionManager.requestAuthorization();
-      // Statuses will be updated implicitly when the 
+      // Statuses will be updated implicitly when the
       // EventChannel stream fires upon returning from Settings!
     } catch (e) {
       _streamError = "Error requesting permissions: $e";

@@ -151,3 +151,119 @@ void scheduleWorkouts() async {
   }
 }
 ```
+
+---
+
+## Background Delivery Manager (API Configuration)
+
+When monitoring workouts, the plugin needs a strategy for delivering workout data discovered while the app is in the **background** (suspended by iOS). The `BackgroundDeliveryManager` handles this natively on the iOS side.
+
+### Delivery Modes
+
+| Mode | Description |
+|------|-------------|
+| `BackgroundDeliveryMode.api` | Native iOS directly POSTs workout JSON to your configured API endpoint — no Flutter involvement needed. |
+| `BackgroundDeliveryMode.localStorage` | Stores workout JSON in `UserDefaults`. Retrieve on next app open via `getLocalWorkouts()`. |
+
+### How It Works
+
+**If API mode is configured:**
+- Workouts are **always** pushed directly to your API endpoint via native HTTP POST — whether the app is in the foreground or background. Flutter's event stream is bypassed entirely.
+
+**If not configured (default `localStorage` mode):**
+- **Foreground (Flutter listening):** Workouts are pushed directly to Flutter's `workoutStream` via the `EventChannel` in real-time.
+- **Background (app suspended):** HealthKit wakes the app via `HKObserverQuery`. Workouts are stored in `UserDefaults`. When the user opens the app, call `getLocalWorkouts()` to retrieve them and push to your Flutter code.
+
+### Configuring API Mode
+
+To push workouts directly to your backend from the background:
+
+```dart
+import 'package:humango_health/humango_health.dart';
+
+final workoutManager = WorkoutReadManager();
+
+void configureAPIDelivery() async {
+  await workoutManager.configureBackgroundDelivery(
+    BackgroundDeliveryConfig(
+      mode: BackgroundDeliveryMode.api,
+      apiURL: 'https://api.example.com/v1/workouts/ingest',
+      headers: {
+        'Authorization': 'Bearer <your-auth-token>',
+        'X-Device-Id': '<device-identifier>',
+        'Content-Type': 'application/json',
+      },
+    ),
+  );
+}
+```
+
+**What happens natively:**
+- The `apiURL` and `headers` are persisted to `UserDefaults`, so they survive app restarts.
+- **All** detected workouts (foreground and background) are pushed via native HTTP POST — Flutter's event stream is not used.
+- On a successful response (HTTP 2xx), the workout is marked as pushed in the `WorkoutRecordStore` to prevent duplicates.
+- On failure, the error is logged natively.
+
+### Configuring Local Storage Mode
+
+If you prefer to retrieve workouts yourself when the app opens:
+
+```dart
+void configureLocalDelivery() async {
+  await workoutManager.configureBackgroundDelivery(
+    BackgroundDeliveryConfig(mode: BackgroundDeliveryMode.localStorage),
+  );
+}
+```
+
+Then retrieve pending workouts on app startup:
+
+```dart
+void fetchPendingWorkouts() async {
+  final List<String> pending = await workoutManager.getLocalWorkouts();
+  
+  for (final workoutJson in pending) {
+    // Parse and process each workout
+    print('Retrieved pending workout: $workoutJson');
+  }
+  // Local storage is automatically cleared after retrieval
+}
+```
+
+### Configuration Persistence
+
+All delivery configuration (`mode`, `apiURL`, `headers`) is persisted to `UserDefaults` under the keys:
+- `HumangoDeliveryMode`
+- `HumangoDeliveryURL`
+- `HumangoDeliveryHeaders`
+
+This means the configuration survives app restarts — critical because HealthKit background observers can fire when iOS relaunches your app in the background.
+
+### Recommended Setup
+
+Call `configureBackgroundDelivery` early in your app lifecycle (e.g., after login when you have a valid auth token), and before calling `startMonitoring()`:
+
+```dart
+void initWorkoutMonitoring() async {
+  // 1. Configure how background workouts should be delivered
+  await workoutManager.configureBackgroundDelivery(
+    BackgroundDeliveryConfig(
+      mode: BackgroundDeliveryMode.api,
+      apiURL: 'https://api.example.com/v1/workouts/ingest',
+      headers: {
+        'Authorization': 'Bearer $authToken',
+      },
+    ),
+  );
+
+  // 2. Start monitoring from 1 hour ago onwards
+  await workoutManager.startMonitoring(
+    DateTime.now().subtract(const Duration(hours: 1)),
+  );
+
+  // 3. Listen to the live stream for foreground workouts
+  workoutManager.workoutStream.listen((workoutJson) {
+    print('Live workout received: $workoutJson');
+  });
+}
+```

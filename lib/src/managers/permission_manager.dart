@@ -10,7 +10,10 @@ class PermissionManager {
   /// Listen for permission updates explicitly mapped to our Result object
   Stream<HealthKitAuthorizationResult> get permissionStream {
     _permissionStream ??= _eventChannel.receiveBroadcastStream().map((event) {
-      return HealthKitAuthorizationResult.fromMap(Map<dynamic, dynamic>.from(event));
+      print("Event listen : $event");
+      return HealthKitAuthorizationResult.fromMap(
+        Map<dynamic, dynamic>.from(event),
+      );
     });
 
     return _permissionStream!;
@@ -28,7 +31,9 @@ class PermissionManager {
   /// Verify authorization manually
   Future<HealthKitAuthorizationResult> verifyAuthorization() async {
     try {
-      final Map<dynamic, dynamic> result = await _methodChannel.invokeMethod('verifyAuthorization');
+      final Map<dynamic, dynamic> result = await _methodChannel.invokeMethod(
+        'verifyAuthorization',
+      );
       return HealthKitAuthorizationResult.fromMap(result);
     } catch (e) {
       return HealthKitAuthorizationResult.error();
