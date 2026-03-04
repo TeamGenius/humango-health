@@ -55,8 +55,65 @@ public class WorkoutPlanManager: NSObject {
            store.clearAll()
            result(true)
             
+        case "requestAuthorizationForWorkoutPush":
+            if #available(iOS 17.0, *) {
+                Task {
+                    do {
+                        let authResult = try await self.requestWorkoutPushAuthorization()
+                        DispatchQueue.main.async {
+                            result(authResult)
+                        }
+                    } catch {
+                        DispatchQueue.main.async {
+                            result(FlutterError(code: "AUTH_ERROR", message: error.localizedDescription, details: nil))
+                        }
+                    }
+                }
+            } else {
+                result(FlutterError(code: "UNSUPPORTED", message: "WorkoutKit requires iOS 17.0+", details: nil))
+            }
+            
         default:
             result(FlutterMethodNotImplemented)
+        }
+    }
+    
+    // MARK: - Workout Push Authorization
+    
+    @available(iOS 17.0, *)
+    private func requestWorkoutPushAuthorization() async throws -> [String: Any] {
+        let authState = await WorkoutScheduler.shared.authorizationState
+        
+        switch authState {
+        case .notDetermined:
+            do {
+                try await WorkoutScheduler.shared.requestAuthorization()
+                let newState = await WorkoutScheduler.shared.authorizationState
+                return authorizationStatusMap(from: newState)
+            } catch {
+                print("⚠️ [Humango Health] WorkoutScheduler requestAuthorization failed: \(error)")
+                throw error
+            }
+        case .authorized:
+            return authorizationStatusMap(from: authState)
+        case .denied:
+            return authorizationStatusMap(from: authState)
+        @unknown default:
+            return ["status": "unknown", "authorized": false]
+        }
+    }
+    
+    @available(iOS 17.0, *)
+    private func authorizationStatusMap(from state: WorkoutScheduler.AuthorizationState) -> [String: Any] {
+        switch state {
+        case .notDetermined:
+            return ["status": "notDetermined", "authorized": false]
+        case .authorized:
+            return ["status": "authorized", "authorized": true]
+        case .denied:
+            return ["status": "denied", "authorized": false]
+        @unknown default:
+            return ["status": "unknown", "authorized": false]
         }
     }
 

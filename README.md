@@ -110,6 +110,41 @@ See the `example/` app directory for a complete working demonstration on request
 
 The plugin incorporates native support for scheduling workouts against Apple's `WorkoutKit`. It bypasses intermediate Dart models and directly ingests custom JSON representations designed by your backend, translating them natively into iOS `WorkoutPlan` models. 
 
+### Requesting Authorization
+
+Before pushing workouts, you should request authorization for WorkoutKit. This displays Apple's native permission dialog for workout scheduling (requires iOS 17.0+).
+
+```dart
+import 'package:humango_health/humango_health.dart';
+
+final pushManager = WorkoutPushManager();
+
+void requestWorkoutPushPermission() async {
+  final result = await pushManager.requestAuthorizationForWorkoutPush();
+  
+  if (result.isAuthorized) {
+    print("✅ Workout push authorized!");
+  } else {
+    switch (result.status) {
+      case WorkoutPushAuthorizationStatus.denied:
+        print("❌ User denied workout push access");
+        // Guide user to Settings -> Health -> Data Access
+        break;
+      case WorkoutPushAuthorizationStatus.notDetermined:
+        print("⏳ Authorization not yet determined");
+        break;
+      case WorkoutPushAuthorizationStatus.error:
+        print("⚠️ Error: ${result.errorMessage}");
+        break;
+      default:
+        print("Unknown status");
+    }
+  }
+}
+```
+
+**Note:** WorkoutKit authorization is separate from HealthKit permissions. Even if the user has granted HealthKit permissions, they must also authorize WorkoutKit for scheduling workouts to Apple Watch.
+
 ### Performing the Push
 
 A robust `WorkoutPushManager` coordinates the dispatch. The system strictly enforces the Apple requirement that all scheduled workouts must take place within the next **7 days**. 

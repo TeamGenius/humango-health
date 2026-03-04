@@ -33,7 +33,7 @@ public class HumangoHealthPlugin: NSObject, FlutterPlugin {
       } else if ["readWorkouts", "startWorkoutMonitoring", "stopWorkoutMonitoring", "getLocalWorkouts", "configureBackgroundDelivery", "setImportPreferences", "enterForeground", "enterBackground"].contains(call.method) {
           // Workout read channel
           workoutReadChannel.handle(call, result: result)
-      } else if ["scheduleWorkoutsFromFlutter", "clearAppleScheduledWorkouts"].contains(call.method) {
+      } else if ["scheduleWorkoutsFromFlutter", "clearAppleScheduledWorkouts", "requestAuthorizationForWorkoutPush"].contains(call.method) {
           WorkoutPlanManager.shared.handle(call, result: result)
       } else {
           result(FlutterMethodNotImplemented)
