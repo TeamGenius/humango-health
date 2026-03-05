@@ -16,6 +16,7 @@ import Foundation
 private struct SleepDataKeys {
     static let storedSleepData = "com.humango.health.storedSleepData"
     static let lastFetchDate = "com.humango.health.lastSleepFetchDate"
+    static let sleepSessionConfig = "com.humango.health.sleepSessionConfig"
 }
 
 // MARK: - SleepDataManager
@@ -43,20 +44,64 @@ public class SleepDataManager: NSObject, FlutterStreamHandler, AppLifecycleObser
     private var observerQuery: HKObserverQuery?
     private var isBackgroundMonitoring = false
     
+    // Sleep session detection (freeze window: 12 AM - 12 PM)
+    private var sessionDetector: SleepSessionDetector
+    private var sessionState: SleepSessionState = .empty
+    private var freezeCheckTimer: Timer?
+    
+    // Background delivery manager (API vs localStorage mode)
+    private let deliveryManager = SleepBackgroundDeliveryManager.shared
+    
     // Configuration
     private var monitorStartDate: Date?
+    private var sessionConfig: SleepSessionConfig = .default
     
     // MARK: - Initialization
     
     private override init() {
+        self.sessionDetector = SleepSessionDetector(config: .default)
         super.init()
         // Register with AppLifecycleManager for automatic foreground/background switching
         AppLifecycleManager.shared.addObserver(self)
+        // Restore persisted session state if any
+        self.sessionState = sessionDetector.loadState()
         print("🛏️ [Humango Health] SleepDataManager initialized with native lifecycle observer")
+        if sessionState.segmentCount > 0 {
+            print("🛏️ [Humango Health] Restored session state: \(sessionState.segmentCount) segments, \(String(format: "%.0f", sessionState.totalSleepMinutes))m sleep")
+        }
     }
     
     deinit {
         AppLifecycleManager.shared.removeObserver(self)
+        freezeCheckTimer?.invalidate()
+    }
+    
+    // MARK: - Auto-Start on App Launch
+    
+    /// Auto-starts sleep monitoring if API delivery is configured in UserDefaults.
+    /// Called from HumangoHealthPlugin.register() on every app launch/background wake.
+    /// First launch: no config in UserDefaults → no-op.
+    /// Subsequent launches: config persisted from previous configureSleepBackgroundDelivery() call → auto-start.
+    func autoStartIfConfigured() {
+        guard deliveryManager.isAPIConfigured else {
+            print("🛏️ [Humango Health] Auto-start skipped — no API config in UserDefaults")
+            return
+        }
+        guard monitorStartDate == nil else {
+            print("🛏️ [Humango Health] Auto-start skipped — monitoring already active")
+            return
+        }
+        
+        let startDate = Date().addingTimeInterval(-12 * 60 * 60) // 12h lookback
+        monitorStartDate = startDate
+        
+        if AppLifecycleManager.shared.isInForeground {
+            startLiveUpdates()
+        } else {
+            startBackgroundMonitoring()
+        }
+        
+        print("🛏️ [Humango Health] ✅ Auto-started sleep monitoring (API mode) from \(isoFormatter.string(from: startDate))")
     }
     
     // MARK: - AppLifecycleObserver (Native iOS lifecycle)
@@ -71,32 +116,42 @@ public class SleepDataManager: NSObject, FlutterStreamHandler, AppLifecycleObser
     
     // MARK: - Mode Switching (shared logic)
     
+    /// Switches to foreground mode.
+    /// Both API and localStorage modes use HKAnchoredObjectQueryDescriptor in foreground.
+    /// - localStorage mode: pushes individual samples to Flutter EventChannel
+    /// - API mode: accumulates samples into session state, triggers API on session end
     private func switchToForegroundMode() {
         guard monitorStartDate != nil else { return }
         
         stopBackgroundMonitoring()
         startLiveUpdates()
-        print("🛏️ [Humango Health] Switched to foreground mode (live streaming) via native lifecycle")
+        print("🛏️ [Humango Health] Switched to foreground mode (live streaming, delivery=\(deliveryManager.mode.rawValue)) via native lifecycle")
     }
     
+    /// Switches to background mode.
+    /// Both API and localStorage modes use HKObserverQuery in background.
+    /// - localStorage mode: stores data in UserDefaults
+    /// - API mode: accumulates + evaluates, triggers API on session end
     private func switchToBackgroundMode() {
         guard monitorStartDate != nil else { return }
         
         stopLiveUpdates()
         startBackgroundMonitoring()
-        print("🛏️ [Humango Health] Switched to background mode (observer query) via native lifecycle")
+        print("🛏️ [Humango Health] Switched to background mode (observer query, delivery=\(deliveryManager.mode.rawValue)) via native lifecycle")
     }
     
     // MARK: - FlutterStreamHandler
     
     public func onListen(withArguments arguments: Any?, eventSink events: @escaping FlutterEventSink) -> FlutterError? {
         self.eventSink = events
+        deliveryManager.attachEventSink(events)
         print("🛏️ [Humango Health] Sleep EventChannel: onListen")
         return nil
     }
     
     public func onCancel(withArguments arguments: Any?) -> FlutterError? {
         self.eventSink = nil
+        deliveryManager.attachEventSink(nil)
         print("🛏️ [Humango Health] Sleep EventChannel: onCancel")
         return nil
     }
@@ -119,6 +174,21 @@ public class SleepDataManager: NSObject, FlutterStreamHandler, AppLifecycleObser
             
         case "clearStoredSleepData":
             handleClearStoredSleepData(result: result)
+            
+        case "configureSleepSession":
+            handleConfigureSleepSession(call, result: result)
+            
+        case "getSleepSessionStatus":
+            handleGetSleepSessionStatus(result: result)
+            
+        case "resetSleepSession":
+            handleResetSleepSession(result: result)
+            
+        case "configureSleepBackgroundDelivery":
+            handleConfigureSleepBackgroundDelivery(call, result: result)
+            
+        case "getLocalSleepSessions":
+            handleGetLocalSleepSessions(result: result)
             
         case "enterForeground":
             // Keep for backward compatibility, but native lifecycle is preferred
@@ -181,15 +251,19 @@ public class SleepDataManager: NSObject, FlutterStreamHandler, AppLifecycleObser
         
         monitorStartDate = startDate
         
-        // Start appropriate mode based on current app state (from native lifecycle manager)
+        // Both API and localStorage modes use the same foreground/background strategy:
+        // Foreground → HKAnchoredObjectQueryDescriptor (live streaming)
+        // Background → HKObserverQuery
+        // The delivery mode (API vs EventChannel) is handled inside each path.
         if AppLifecycleManager.shared.isInForeground {
             startLiveUpdates()
         } else {
             startBackgroundMonitoring()
         }
         
-        print("🛏️ [Humango Health] Started sleep monitoring from \(isoFormatter.string(from: startDate))")
-        result(["status": "started", "startDate": isoFormatter.string(from: startDate)])
+        print("🛏️ [Humango Health] Started sleep monitoring (delivery=\(deliveryManager.mode.rawValue)) from \(isoFormatter.string(from: startDate))")
+        
+        result(["status": "started", "startDate": isoFormatter.string(from: startDate), "deliveryMode": deliveryManager.mode.rawValue])
     }
     
     private func handleStopMonitoring(result: @escaping FlutterResult) {
@@ -209,6 +283,137 @@ public class SleepDataManager: NSObject, FlutterStreamHandler, AppLifecycleObser
     private func handleClearStoredSleepData(result: @escaping FlutterResult) {
         clearStoredSleepData()
         result(["status": "cleared"])
+    }
+    
+    private func handleConfigureSleepSession(_ call: FlutterMethodCall, result: @escaping FlutterResult) {
+        var freezeStart = 0
+        var freezeEnd = 12
+        var minSleepMinutes = 240.0
+        var stalenessMinutes = 60.0
+        var deepAbsenceMinutes = 90.0
+        
+        if let args = call.arguments as? [String: Any] {
+            if let start = args["freezeWindowStartHour"] as? Int { freezeStart = start }
+            if let end = args["freezeWindowEndHour"] as? Int { freezeEnd = end }
+            if let minSleep = args["minimumSleepMinutes"] as? Double { minSleepMinutes = minSleep }
+            if let staleness = args["stalenessThresholdMinutes"] as? Double { stalenessMinutes = staleness }
+            if let deepAbsence = args["deepSleepAbsenceWindowMinutes"] as? Double { deepAbsenceMinutes = deepAbsence }
+        }
+        
+        sessionConfig = SleepSessionConfig(
+            freezeWindowStartHour: freezeStart,
+            freezeWindowEndHour: freezeEnd,
+            minimumSleepMinutes: minSleepMinutes,
+            stalenessThresholdMinutes: stalenessMinutes,
+            deepSleepAbsenceWindowMinutes: deepAbsenceMinutes
+        )
+        sessionDetector = SleepSessionDetector(config: sessionConfig)
+        
+        print("🛏️ [Humango Health] Sleep session configured: freeze \(freezeStart):00-\(freezeEnd):00, minSleep=\(minSleepMinutes)m")
+        result([
+            "status": "configured",
+            "freezeWindowStartHour": freezeStart,
+            "freezeWindowEndHour": freezeEnd,
+            "minimumSleepMinutes": minSleepMinutes,
+            "stalenessThresholdMinutes": stalenessMinutes,
+            "deepSleepAbsenceWindowMinutes": deepAbsenceMinutes
+        ])
+    }
+    
+    private func handleGetSleepSessionStatus(result: @escaping FlutterResult) {
+        let status = sessionDetector.evaluateSession(state: sessionState)
+        let isInFreeze = sessionDetector.isInFreezeWindow()
+        
+        var statusStr: String
+        var reason: String = ""
+        
+        switch status {
+        case .active:
+            statusStr = "active"
+        case .ended(let r):
+            statusStr = "ended"
+            reason = r
+        case .freezeExpired:
+            statusStr = "freeze_expired"
+            reason = "Freeze window ended"
+        }
+        
+        result([
+            "status": statusStr,
+            "reason": reason,
+            "isInFreezeWindow": isInFreeze,
+            "segmentCount": sessionState.segmentCount,
+            "totalSleepMinutes": sessionState.totalSleepMinutes,
+            "totalAwakeMinutes": sessionState.totalAwakeMinutes,
+            "hasRecentDeepSleep": sessionState.hasRecentDeepSleep,
+            "isFinalized": sessionState.isFinalized,
+            "sessionStartDate": sessionState.sessionStartDate as Any,
+            "latestSegmentEndDate": sessionState.latestSegmentEndDate as Any,
+            "lastDeepSleepEndDate": sessionState.lastDeepSleepEndDate as Any,
+            "finalizedAt": sessionState.finalizedAt as Any
+        ])
+    }
+    
+    private func handleResetSleepSession(result: @escaping FlutterResult) {
+        sessionState = .empty
+        sessionDetector.clearState()
+        print("🛏️ [Humango Health] Sleep session reset")
+        result(["status": "reset"])
+    }
+    
+    private func handleConfigureSleepBackgroundDelivery(_ call: FlutterMethodCall, result: @escaping FlutterResult) {
+        guard let args = call.arguments as? [String: Any],
+              let modeStr = args["mode"] as? String else {
+            result(FlutterError(code: "INVALID_ARGS", message: "Missing 'mode' argument", details: nil))
+            return
+        }
+        
+        guard let mode = SleepBackgroundDeliveryMode(rawValue: modeStr) else {
+            result(FlutterError(code: "INVALID_MODE", message: "Mode must be 'api' or 'localStorage'", details: nil))
+            return
+        }
+        
+        var apiURL: URL? = nil
+        if let urlStr = args["apiURL"] as? String {
+            apiURL = URL(string: urlStr)
+        }
+        let headers = args["headers"] as? [String: String] ?? [:]
+        
+        deliveryManager.configure(mode: mode, apiURL: apiURL, headers: headers)
+        
+        if mode == .api && monitorStartDate != nil {
+            // Already monitoring: restart to pick up API delivery mode
+            if isLiveStreaming {
+                stopLiveUpdates()
+                startLiveUpdates()
+            }
+            print("🛏️ [Humango Health] Switched to API delivery mode — live streaming will accumulate + trigger API")
+        } else if mode == .api && monitorStartDate == nil {
+            // Not monitoring yet: auto-start now that API is configured
+            autoStartIfConfigured()
+        }
+        
+        // If switching to localStorage while monitoring is active:
+        // restart to pick up the new delivery mode
+        if mode == .localStorage && monitorStartDate != nil {
+            if isLiveStreaming {
+                stopLiveUpdates()
+                startLiveUpdates()
+            }
+            print("🛏️ [Humango Health] Switched to localStorage delivery mode — live streaming will push to EventChannel")
+        }
+        
+        result([
+            "status": "configured",
+            "mode": mode.rawValue,
+            "apiURL": apiURL?.absoluteString as Any,
+            "headersCount": headers.count
+        ])
+    }
+    
+    private func handleGetLocalSleepSessions(result: @escaping FlutterResult) {
+        let sessions = deliveryManager.retrieveLocalSleepSessions()
+        result(sessions)
     }
     
     // MARK: - Fetch Sleep Data
@@ -313,7 +518,12 @@ public class SleepDataManager: NSObject, FlutterStreamHandler, AppLifecycleObser
     // MARK: - Live Streaming (Foreground)
     
     /// Starts live streaming of sleep data changes using HKAnchoredObjectQueryDescriptor.
-    /// Each new/updated sleep sample is pushed to Flutter via EventChannel.
+    ///
+    /// Behavior depends on delivery mode:
+    /// - **localStorage mode**: Each sample is pushed to Flutter via EventChannel
+    /// - **API mode**: Samples are accumulated into session state and evaluated.
+    ///   When the session ends, the finalized data is POSTed to the configured API.
+    ///   No individual samples are pushed to Flutter EventChannel.
     private func startLiveUpdates() {
         guard !isLiveStreaming else { return }
         guard let startDate = monitorStartDate else { return }
@@ -324,6 +534,7 @@ public class SleepDataManager: NSObject, FlutterStreamHandler, AppLifecycleObser
         }
         
         isLiveStreaming = true
+        let isAPIMode = !deliveryManager.shouldStreamToEventChannel
         
         // Open-ended predicate: start at monitorStartDate, no endDate so future samples match
         let livePredicate = HKQuery.predicateForSamples(
@@ -347,26 +558,55 @@ public class SleepDataManager: NSObject, FlutterStreamHandler, AppLifecycleObser
                     for try await update in stream {
                         self.anchor = update.newAnchor
                         
-                        for sample in update.addedSamples {
-                            let sampleDict = self.convertSampleToDict(sample)
-                            print("🛏️ [Humango Health] Live sleep update: \(sample.uuid.uuidString)")
-                            
-                            // Push to Flutter via EventChannel
-                            DispatchQueue.main.async {
-                                self.eventSink?([
-                                    "type": "sleepSample",
-                                    "sample": sampleDict
-                                ])
+                        if isAPIMode {
+                            // API mode: accumulate samples into session state, evaluate, and trigger API if session ended
+                            let sampleDicts = update.addedSamples.map { self.convertSampleToDict($0) }
+                            if !sampleDicts.isEmpty {
+                                print("🛏️ [Humango Health] Live update (API mode): \(sampleDicts.count) new samples — accumulating into session")
+                                self.sessionDetector.updateState(&self.sessionState, withSamples: sampleDicts)
+                                self.sessionDetector.saveState(self.sessionState)
+                                
+                                // Also store full snapshot for fetchStoredSleepData compatibility
+                                Task {
+                                    if let fullData = try? await self.fetchSleepData(startDate: startDate, endDate: Date()) {
+                                        self.storeSleepDataToUserDefaults(fullData)
+                                    }
+                                }
+                                
+                                print("🛏️ [Humango Health] Session state: \(self.sessionState.segmentCount) segments, "
+                                      + "\(String(format: "%.0f", self.sessionState.totalSleepMinutes))m sleep, "
+                                      + "deepRecent=\(self.sessionState.hasRecentDeepSleep), "
+                                      + "freeze=\(self.sessionDetector.isInFreezeWindow())")
+                                
+                                self.evaluateAndNotifySessionStatus()
                             }
-                        }
-                        
-                        // Handle deleted samples
-                        for deletedObject in update.deletedObjects {
-                            DispatchQueue.main.async {
-                                self.eventSink?([
-                                    "type": "sleepSampleDeleted",
-                                    "uuid": deletedObject.uuid.uuidString
-                                ])
+                            
+                            // Deleted samples — log only in API mode
+                            for deletedObject in update.deletedObjects {
+                                print("🛏️ [Humango Health] Live update (API mode): sample deleted \(deletedObject.uuid.uuidString)")
+                            }
+                        } else {
+                            // localStorage mode: push individual samples to Flutter EventChannel
+                            for sample in update.addedSamples {
+                                let sampleDict = self.convertSampleToDict(sample)
+                                print("🛏️ [Humango Health] Live sleep update: \(sample.uuid.uuidString)")
+                                
+                                DispatchQueue.main.async {
+                                    self.eventSink?([
+                                        "type": "sleepSample",
+                                        "sample": sampleDict
+                                    ])
+                                }
+                            }
+                            
+                            // Handle deleted samples
+                            for deletedObject in update.deletedObjects {
+                                DispatchQueue.main.async {
+                                    self.eventSink?([
+                                        "type": "sleepSampleDeleted",
+                                        "uuid": deletedObject.uuid.uuidString
+                                    ])
+                                }
                             }
                         }
                     }
@@ -382,7 +622,7 @@ public class SleepDataManager: NSObject, FlutterStreamHandler, AppLifecycleObser
                 }
             }
             
-            print("🛏️ [Humango Health] Started live sleep streaming")
+            print("🛏️ [Humango Health] Started live sleep streaming (mode=\(isAPIMode ? "api" : "localStorage"))")
         } else {
             print("🛏️ [Humango Health] Live streaming requires iOS 15.0+")
         }
@@ -397,8 +637,14 @@ public class SleepDataManager: NSObject, FlutterStreamHandler, AppLifecycleObser
     
     // MARK: - Background Monitoring
     
-    /// Starts background monitoring using HKObserverQuery.
-    /// When sleep data changes, fetches new data and stores in UserDefaults.
+    /// Starts background monitoring using HKObserverQuery with freeze-window-aware session detection.
+    ///
+    /// When sleep data changes:
+    /// 1. Fetches new samples and accumulates them into session state
+    /// 2. Evaluates whether the sleep session has ended using multi-factor scoring
+    /// 3. During freeze window (12 AM - 12 PM): session stays open, data accumulates
+    /// 4. After freeze window: session auto-finalizes
+    /// 5. Stores accumulated data + session status for Flutter retrieval
     private func startBackgroundMonitoring() {
         guard !isBackgroundMonitoring else { return }
         guard let startDate = monitorStartDate else { return }
@@ -436,18 +682,21 @@ public class SleepDataManager: NSObject, FlutterStreamHandler, AppLifecycleObser
                 return
             }
             
-            print("🛏️ [Humango Health] Background sleep observer fired")
+            print("🛏️ [Humango Health] Background sleep observer fired (freeze window: \(self.sessionDetector.isInFreezeWindow() ? "ACTIVE" : "INACTIVE"))")
             
-            // Fetch new data and store in UserDefaults
+            // Fetch, accumulate into session state, evaluate, and store
             Task {
-                await self.fetchAndStoreSleepData()
+                await self.fetchAccumulateAndEvaluate()
             }
         }
         
         if let query = observerQuery {
             healthStore.execute(query)
-            print("🛏️ [Humango Health] Started background sleep monitoring")
+            print("🛏️ [Humango Health] Started background sleep monitoring with freeze window")
         }
+        
+        // Start periodic freeze window check timer
+        startFreezeCheckTimer()
     }
     
     private func stopBackgroundMonitoring() {
@@ -455,6 +704,10 @@ public class SleepDataManager: NSObject, FlutterStreamHandler, AppLifecycleObser
             healthStore.stop(query)
             observerQuery = nil
         }
+        
+        // Stop freeze check timer
+        freezeCheckTimer?.invalidate()
+        freezeCheckTimer = nil
         
         // Disable background delivery
         if let sleepType = HKObjectType.categoryType(forIdentifier: .sleepAnalysis) {
@@ -471,19 +724,154 @@ public class SleepDataManager: NSObject, FlutterStreamHandler, AppLifecycleObser
         print("🛏️ [Humango Health] Stopped background sleep monitoring")
     }
     
-    // MARK: - UserDefaults Storage
+    // MARK: - Freeze Window Timer
     
-    /// Fetches sleep data and stores it in UserDefaults for later retrieval
-    private func fetchAndStoreSleepData() async {
+    /// Starts a periodic timer that checks if the freeze window has expired.
+    /// This ensures sessions are finalized even if no new HealthKit data arrives.
+    private func startFreezeCheckTimer() {
+        freezeCheckTimer?.invalidate()
+        
+        // Check every 15 minutes
+        DispatchQueue.main.async { [weak self] in
+            self?.freezeCheckTimer = Timer.scheduledTimer(withTimeInterval: 15 * 60, repeats: true) { [weak self] _ in
+                guard let self = self else { return }
+                self.evaluateAndNotifySessionStatus()
+            }
+        }
+        
+        print("🛏️ [Humango Health] Started freeze window check timer (every 15 min)")
+    }
+    
+    // MARK: - Freeze-Aware Accumulation & Evaluation
+    
+    /// Core background logic: fetch new samples, accumulate into session state,
+    /// evaluate whether session ended, and store results.
+    private func fetchAccumulateAndEvaluate() async {
         guard let startDate = monitorStartDate else { return }
         
         do {
+            // Fetch all sleep data from monitoring start to now
             let sleepData = try await fetchSleepData(startDate: startDate, endDate: Date())
+            
+            // Store the full data snapshot (for fetchStoredSleepData compatibility)
             storeSleepDataToUserDefaults(sleepData)
-            print("🛏️ [Humango Health] Stored \(sleepData["sampleCount"] ?? 0) sleep samples to UserDefaults")
+            
+            // Extract samples and update session state
+            if let samples = sleepData["samples"] as? [[String: Any]] {
+                sessionDetector.updateState(&sessionState, withSamples: samples)
+                sessionDetector.saveState(sessionState)
+                
+                print("🛏️ [Humango Health] Session state: \(sessionState.segmentCount) segments, "
+                      + "\(String(format: "%.0f", sessionState.totalSleepMinutes))m sleep, "
+                      + "deepRecent=\(sessionState.hasRecentDeepSleep), "
+                      + "freeze=\(sessionDetector.isInFreezeWindow())")
+            }
+            
+            // Evaluate session
+            evaluateAndNotifySessionStatus()
+            
         } catch {
-            print("🛏️ [Humango Health] Error fetching sleep data for storage: \(error)")
+            print("🛏️ [Humango Health] Error in fetchAccumulateAndEvaluate: \(error)")
         }
+    }
+    
+    /// Evaluates the session status and sends a notification to Flutter if ended/expired.
+    private func evaluateAndNotifySessionStatus() {
+        guard !sessionState.isFinalized else { return }
+        guard sessionState.segmentCount > 0 else { return }
+        
+        let status = sessionDetector.evaluateSession(state: sessionState)
+        
+        switch status {
+        case .active:
+            break // Still accumulating
+            
+        case .ended(let reason):
+            sessionDetector.finalizeState(&sessionState, reason: reason)
+            notifyFlutterSessionEnded(reason: reason)
+            
+        case .freezeExpired:
+            sessionDetector.finalizeState(&sessionState, reason: "freeze_window_expired")
+            notifyFlutterSessionEnded(reason: "freeze_window_expired")
+        }
+    }
+    
+    /// Sends a session-ended event to Flutter via EventChannel,
+    /// and delivers the finalized sleep data via the configured delivery mode.
+    private func notifyFlutterSessionEnded(reason: String) {
+        print("🛏️ [Humango Health] Notifying Flutter: sleep session ended (\(reason))")
+        
+        // Build the session data payload
+        let sessionPayload: [String: Any] = [
+            "type": "sleepSessionEnded",
+            "reason": reason,
+            "segmentCount": self.sessionState.segmentCount,
+            "totalSleepMinutes": self.sessionState.totalSleepMinutes,
+            "totalAwakeMinutes": self.sessionState.totalAwakeMinutes,
+            "sessionStartDate": self.sessionState.sessionStartDate as Any,
+            "latestSegmentEndDate": self.sessionState.latestSegmentEndDate as Any,
+            "isFinalized": self.sessionState.isFinalized,
+            "finalizedAt": self.sessionState.finalizedAt as Any
+        ]
+        
+        // Deliver via configured mode (API or localStorage)
+        Task { [weak self] in
+            guard let self = self else { return }
+            
+            // Fetch the full sleep data for the session
+            if let startDate = self.monitorStartDate {
+                do {
+                    let fullSleepData = try await self.fetchSleepData(startDate: startDate, endDate: Date())
+                    // Merge session metadata with full sleep data
+                    var deliveryPayload = fullSleepData
+                    deliveryPayload["reason"] = reason
+                    deliveryPayload["segmentCount"] = self.sessionState.segmentCount
+                    deliveryPayload["isFinalized"] = self.sessionState.isFinalized
+                    deliveryPayload["finalizedAt"] = self.sessionState.finalizedAt as Any
+                    deliveryPayload["sessionStartDate"] = self.sessionState.sessionStartDate as Any
+                    deliveryPayload["latestSegmentEndDate"] = self.sessionState.latestSegmentEndDate as Any
+                    
+                    if let jsonData = try? JSONSerialization.data(withJSONObject: deliveryPayload, options: []),
+                       let jsonString = String(data: jsonData, encoding: .utf8) {
+                        let sessionId = self.sessionState.sessionStartDate ?? self.isoFormatter.string(from: Date())
+                        
+                        print("🛏️ [Humango Health] ── SESSION DATA RECORDED ──────────────")
+                        print("🛏️ [Humango Health] Session ID: \(sessionId)")
+                        print("🛏️ [Humango Health] Reason: \(reason)")
+                        print("🛏️ [Humango Health] Segments: \(self.sessionState.segmentCount)")
+                        print("🛏️ [Humango Health] Total sleep: \(String(format: "%.1f", self.sessionState.totalSleepMinutes))m")
+                        print("🛏️ [Humango Health] Total awake: \(String(format: "%.1f", self.sessionState.totalAwakeMinutes))m")
+                        print("🛏️ [Humango Health] Session start: \(self.sessionState.sessionStartDate ?? "nil")")
+                        print("🛏️ [Humango Health] Session end: \(self.sessionState.latestSegmentEndDate ?? "nil")")
+                        print("🛏️ [Humango Health] Finalized at: \(self.sessionState.finalizedAt ?? "nil")")
+                        print("🛏️ [Humango Health] Delivery mode: \(self.deliveryManager.mode.rawValue)")
+                        print("🛏️ [Humango Health] JSON payload size: \(jsonData.count) bytes")
+                        if let sampleCount = deliveryPayload["sampleCount"] as? Int {
+                            print("🛏️ [Humango Health] Samples in payload: \(sampleCount)")
+                        }
+                        print("🛏️ [Humango Health] ─────────────────────────────────────")
+                        
+                        await self.deliveryManager.deliverSleepSession(jsonString, sessionId: sessionId)
+                    }
+                } catch {
+                    print("🛏️ [Humango Health] Error fetching full sleep data for delivery: \(error)")
+                }
+            }
+        }
+        
+        // Also notify via EventChannel (for localStorage mode / backward compat)
+        DispatchQueue.main.async { [weak self] in
+            guard let self = self else { return }
+            self.eventSink?(sessionPayload)
+        }
+    }
+    
+    // MARK: - UserDefaults Storage
+    
+    /// Fetches sleep data and stores it in UserDefaults for later retrieval.
+    /// Also accumulates into session state for freeze-window-aware detection.
+    private func fetchAndStoreSleepData() async {
+        await fetchAccumulateAndEvaluate()
     }
     
     private func storeSleepDataToUserDefaults(_ sleepData: [String: Any]) {

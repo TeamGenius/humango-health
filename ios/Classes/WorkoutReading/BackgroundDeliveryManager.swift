@@ -11,9 +11,15 @@ enum BackgroundDeliveryMode: String, Codable {
 class BackgroundDeliveryManager {
     static let shared = BackgroundDeliveryManager()
     
-    private var mode: BackgroundDeliveryMode = .localStorage
+    private(set) var mode: BackgroundDeliveryMode = .localStorage
     private var apiURL: URL?
-    private var headers: [String: String] = [:]
+    private var headers: [String: String] = []
+    
+    /// Whether API delivery is fully configured (mode=.api AND apiURL is set).
+    /// Used by auto-start logic to determine if monitoring should begin on app launch.
+    var isAPIConfigured: Bool {
+        return mode == .api && apiURL != nil
+    }
     
     // Store eventSink to pump foreground events directly back to Flutter
     private var eventSink: FlutterEventSink?
@@ -49,10 +55,17 @@ class BackgroundDeliveryManager {
     }
     
     func deliverWorkout(_ workoutJSONString: String, deviceId: String) async {
+        debugPrint("📤 [WorkoutDelivery] ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━")
+        debugPrint("📤 [WorkoutDelivery] Delivering workout: deviceId=\(deviceId)")
+        debugPrint("📤 [WorkoutDelivery] Mode: \(mode.rawValue)")
+        debugPrint("📤 [WorkoutDelivery] JSON size: \(workoutJSONString.count) chars / \(workoutJSONString.data(using: .utf8)?.count ?? 0) bytes")
+        debugPrint("📤 [WorkoutDelivery] JSON preview: \(String(workoutJSONString.prefix(500)))...")
+        debugPrint("📤 [WorkoutDelivery] ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━")
+        
         switch mode {
         case .api:
             // API mode: always push to API regardless of foreground/background
-            debugPrint("📤 BackgroundDeliveryManager: API mode — pushing workout \(deviceId) to API")
+            debugPrint("📤 [WorkoutDelivery] API mode — pushing workout \(deviceId) to API")
             await pushToAPI(workoutJSONString, deviceActivityId: deviceId)
             
         case .localStorage:
@@ -72,10 +85,13 @@ class BackgroundDeliveryManager {
     
     private func pushToAPI(_ workoutJSON: String, deviceActivityId: String) async {
         guard let url = apiURL else {
-            debugPrint("⚠️ Background API Delivery failed: No API URL configured")
+            debugPrint("⚠️ [WorkoutDelivery] API push failed: No API URL configured")
             return
         }
-        guard let data = workoutJSON.data(using: .utf8) else { return }
+        guard let data = workoutJSON.data(using: .utf8) else {
+            debugPrint("⚠️ [WorkoutDelivery] API push failed: Cannot encode JSON to UTF8 data")
+            return
+        }
         
         var request = URLRequest(url: url)
         request.httpMethod = "POST"
@@ -86,16 +102,39 @@ class BackgroundDeliveryManager {
             request.setValue(value, forHTTPHeaderField: key)
         }
         
+        // Log API call details
+        debugPrint("🌐 [WorkoutDelivery] ── API REQUEST ──────────────────────────")
+        debugPrint("🌐 [WorkoutDelivery] URL: \(url.absoluteString)")
+        debugPrint("🌐 [WorkoutDelivery] Method: POST")
+        debugPrint("🌐 [WorkoutDelivery] Headers:")
+        debugPrint("🌐 [WorkoutDelivery]   Content-Type: application/json")
+        for (key, value) in headers {
+            let maskedValue = key.lowercased().contains("auth") ? "\(value.prefix(10))...***" : value
+            debugPrint("🌐 [WorkoutDelivery]   \(key): \(maskedValue)")
+        }
+        debugPrint("🌐 [WorkoutDelivery] Body size: \(data.count) bytes")
+        debugPrint("🌐 [WorkoutDelivery] Body preview: \(String(workoutJSON.prefix(300)))...")
+        debugPrint("🌐 [WorkoutDelivery] DeviceActivityId: \(deviceActivityId)")
+        debugPrint("🌐 [WorkoutDelivery] Sending request...")
+        
         do {
-            let (_, response) = try await URLSession.shared.data(for: request)
-            if let http = response as? HTTPURLResponse, (200...299).contains(http.statusCode) {
+            let (responseData, response) = try await URLSession.shared.data(for: request)
+            let statusCode = (response as? HTTPURLResponse)?.statusCode ?? -1
+            let responseBody = String(data: responseData, encoding: .utf8) ?? "<non-UTF8>"
+            
+            debugPrint("🌐 [WorkoutDelivery] ── API RESPONSE ─────────────────────────")
+            debugPrint("🌐 [WorkoutDelivery] Status: \(statusCode)")
+            debugPrint("🌐 [WorkoutDelivery] Response body: \(String(responseBody.prefix(500)))")
+            
+            if (200...299).contains(statusCode) {
                 await WorkoutRecordStore.shared.markPushed(deviceActivityId: deviceActivityId)
-                debugPrint("✅ Background API push succeeded for \(deviceActivityId)")
+                debugPrint("✅ [WorkoutDelivery] API push succeeded for \(deviceActivityId) (HTTP \(statusCode))")
             } else {
-                debugPrint("⚠️ Background API Response failed: \(response)")
+                debugPrint("⚠️ [WorkoutDelivery] API push failed with HTTP \(statusCode) for \(deviceActivityId)")
             }
         } catch {
-            debugPrint("❌ Background API Delivery push failed: \(error)")
+            debugPrint("❌ [WorkoutDelivery] API push network error for \(deviceActivityId): \(error)")
+            debugPrint("❌ [WorkoutDelivery] Error type: \(type(of: error)), description: \(error.localizedDescription)")
         }
     }
     

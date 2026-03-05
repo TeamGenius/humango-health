@@ -37,6 +37,15 @@ public class HumangoHealthPlugin: NSObject, FlutterPlugin {
     if #available(iOS 14.0, *) {
         sleepDataEventChannel.setStreamHandler(SleepDataManager.shared)
     }
+    
+    // MARK: - Auto-Start Monitoring (if API delivery was previously configured)
+    // On first launch: no config in UserDefaults → these are no-ops.
+    // On subsequent launches: if API was configured via configureBackgroundDelivery(),
+    // monitoring starts immediately without needing Flutter to call startMonitoring().
+    instance.workoutReadChannel.autoStartIfConfigured()
+    if #available(iOS 14.0, *) {
+        SleepDataManager.shared.autoStartIfConfigured()
+    }
   }
 
   public func handle(_ call: FlutterMethodCall, result: @escaping FlutterResult) {
@@ -49,7 +58,7 @@ public class HumangoHealthPlugin: NSObject, FlutterPlugin {
           workoutReadChannel.handle(call, result: result)
       } else if ["scheduleWorkoutsFromFlutter", "clearAppleScheduledWorkouts", "requestAuthorizationForWorkoutPush", "getScheduledWorkouts"].contains(call.method) {
           WorkoutPlanManager.shared.handle(call, result: result)
-      } else if ["getSleepData", "startSleepMonitoring", "stopSleepMonitoring", "fetchStoredSleepData", "clearStoredSleepData", "enterSleepForeground", "enterSleepBackground"].contains(call.method) {
+      } else if ["getSleepData", "startSleepMonitoring", "stopSleepMonitoring", "fetchStoredSleepData", "clearStoredSleepData", "enterSleepForeground", "enterSleepBackground", "configureSleepSession", "getSleepSessionStatus", "resetSleepSession", "configureSleepBackgroundDelivery", "getLocalSleepSessions"].contains(call.method) {
           // Sleep data channel - remap foreground/background methods to avoid conflict with workout methods
           var mappedCall = call
           if call.method == "enterSleepForeground" {

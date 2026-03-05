@@ -425,6 +425,31 @@ class RouteService {
             }
             debugPrint("   - ✅ JSON string created")
 
+            // Log workout data recorded
+            debugPrint("🏋️ [WorkoutDelivery] ── WORKOUT DATA RECORDED ──────────────")
+            debugPrint("🏋️ [WorkoutDelivery] DeviceActivityId: \(deviceId)")
+            debugPrint("🏋️ [WorkoutDelivery] JSON payload size: \(data.count) bytes")
+            if let activityType = dict["activityType"] as? String {
+                debugPrint("🏋️ [WorkoutDelivery] Activity type: \(activityType)")
+            }
+            if let startDate = dict["startDate"] as? String {
+                debugPrint("🏋️ [WorkoutDelivery] Start date: \(startDate)")
+            }
+            if let endDate = dict["endDate"] as? String {
+                debugPrint("🏋️ [WorkoutDelivery] End date: \(endDate)")
+            }
+            if let duration = dict["duration"] as? Double {
+                debugPrint("🏋️ [WorkoutDelivery] Duration: \(String(format: "%.1f", duration))s")
+            }
+            if let distance = dict["totalDistance"] as? Double {
+                debugPrint("🏋️ [WorkoutDelivery] Distance: \(String(format: "%.2f", distance))m")
+            }
+            if let calories = dict["totalEnergyBurned"] as? Double {
+                debugPrint("🏋️ [WorkoutDelivery] Calories: \(String(format: "%.1f", calories)) kcal")
+            }
+            debugPrint("🏋️ [WorkoutDelivery] JSON preview: \(String(jsonString.prefix(300)))...")
+            debugPrint("🏋️ [WorkoutDelivery] ─────────────────────────────────────────")
+
             debugPrint("📤 RouteService: Calling BackgroundDeliveryManager.deliverWorkout for \(deviceId)")
             // Delegate background delivery to Manager (API vs Local vs Foreground Stream)
             await BackgroundDeliveryManager.shared.deliverWorkout(jsonString, deviceId: deviceId)

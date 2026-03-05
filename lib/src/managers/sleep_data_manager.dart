@@ -9,6 +9,7 @@
 import 'dart:async';
 import 'package:flutter/services.dart';
 import '../models/sleep_sample.dart';
+import '../models/sleep_background_delivery_config.dart';
 
 /// Manager for fetching and monitoring sleep data from Apple HealthKit.
 ///
@@ -219,6 +220,157 @@ class SleepDataManager {
     }
   }
 
+  /// Configures the sleep session freeze window and detection parameters.
+  ///
+  /// The freeze window defines the time period (local time) during which
+  /// sleep data is accumulated without declaring session end.
+  /// Default: 12:00 AM → 12:00 PM.
+  ///
+  /// **Parameters:**
+  /// - [freezeWindowStartHour]: Start hour in local time (0-23). Default: 0 (midnight)
+  /// - [freezeWindowEndHour]: End hour in local time (0-23). Default: 12 (noon)
+  /// - [minimumSleepMinutes]: Minimum sleep before session can end. Default: 240 (4 hrs)
+  /// - [stalenessThresholdMinutes]: Minutes of no data before declaring stale. Default: 60
+  /// - [deepSleepAbsenceWindowMinutes]: No deep sleep in this window = late sleep. Default: 90
+  ///
+  /// Call this before [startMonitoring] to customize detection behavior.
+  Future<Map<String, dynamic>> configureSleepSession({
+    int freezeWindowStartHour = 0,
+    int freezeWindowEndHour = 12,
+    double minimumSleepMinutes = 240,
+    double stalenessThresholdMinutes = 60,
+    double deepSleepAbsenceWindowMinutes = 90,
+  }) async {
+    try {
+      final result = await _channel
+          .invokeMethod<Map<dynamic, dynamic>>('configureSleepSession', {
+            'freezeWindowStartHour': freezeWindowStartHour,
+            'freezeWindowEndHour': freezeWindowEndHour,
+            'minimumSleepMinutes': minimumSleepMinutes,
+            'stalenessThresholdMinutes': stalenessThresholdMinutes,
+            'deepSleepAbsenceWindowMinutes': deepSleepAbsenceWindowMinutes,
+          });
+      return Map<String, dynamic>.from(result ?? {});
+    } on PlatformException catch (e) {
+      throw SleepDataException(
+        code: e.code,
+        message: e.message ?? 'Failed to configure sleep session',
+        details: e.details,
+      );
+    }
+  }
+
+  /// Returns the current sleep session status.
+  ///
+  /// Includes:
+  /// - `status`: "active", "ended", or "freeze_expired"
+  /// - `isInFreezeWindow`: Whether currently in the freeze window
+  /// - `segmentCount`: Number of accumulated sleep segments
+  /// - `totalSleepMinutes`: Total sleep time accumulated
+  /// - `hasRecentDeepSleep`: Whether deep sleep appeared recently
+  /// - `isFinalized`: Whether the session has been finalized
+  Future<Map<String, dynamic>> getSleepSessionStatus() async {
+    try {
+      final result = await _channel.invokeMethod<Map<dynamic, dynamic>>(
+        'getSleepSessionStatus',
+      );
+      return Map<String, dynamic>.from(result ?? {});
+    } on PlatformException catch (e) {
+      throw SleepDataException(
+        code: e.code,
+        message: e.message ?? 'Failed to get sleep session status',
+        details: e.details,
+      );
+    }
+  }
+
+  /// Resets the current sleep session state.
+  ///
+  /// Call this after processing a finalized session to start fresh
+  /// for the next night's sleep.
+  Future<Map<String, dynamic>> resetSleepSession() async {
+    try {
+      final result = await _channel.invokeMethod<Map<dynamic, dynamic>>(
+        'resetSleepSession',
+      );
+      return Map<String, dynamic>.from(result ?? {});
+    } on PlatformException catch (e) {
+      throw SleepDataException(
+        code: e.code,
+        message: e.message ?? 'Failed to reset sleep session',
+        details: e.details,
+      );
+    }
+  }
+
+  /// Configures background delivery mode for sleep session data.
+  ///
+  /// **API mode** (`SleepBackgroundDeliveryMode.api`):
+  /// - Finalized sleep sessions are POSTed directly to the configured API endpoint.
+  /// - Both foreground (`HKAnchoredObjectQueryDescriptor`) and background (`HKObserverQuery`)
+  ///   run normally — samples accumulate into session state instead of being pushed to EventChannel.
+  /// - When the session ends (multi-factor scoring), the complete session is POSTed to your API.
+  /// - The [sleepDataStream] will still emit `sleepSessionEnded` events for awareness.
+  ///
+  /// **Local storage mode** (`SleepBackgroundDeliveryMode.localStorage`):
+  /// - Default behavior: foreground uses EventChannel streaming,
+  ///   background stores data in UserDefaults.
+  ///
+  /// Call this before [startMonitoring] for best results. If called while
+  /// monitoring is active, the mode switch takes effect immediately.
+  ///
+  /// Example:
+  /// ```dart
+  /// await sleepManager.configureSleepBackgroundDelivery(
+  ///   SleepBackgroundDeliveryConfig(
+  ///     mode: SleepBackgroundDeliveryMode.api,
+  ///     apiURL: 'https://api.example.com/sleep-sessions',
+  ///     headers: {'Authorization': 'Bearer token123'},
+  ///   ),
+  /// );
+  /// ```
+  Future<Map<String, dynamic>> configureSleepBackgroundDelivery(
+    SleepBackgroundDeliveryConfig config,
+  ) async {
+    try {
+      final result = await _channel.invokeMethod<Map<dynamic, dynamic>>(
+        'configureSleepBackgroundDelivery',
+        config.toJson(),
+      );
+      return Map<String, dynamic>.from(result ?? {});
+    } on PlatformException catch (e) {
+      throw SleepDataException(
+        code: e.code,
+        message: e.message ?? 'Failed to configure sleep background delivery',
+        details: e.details,
+      );
+    }
+  }
+
+  /// Retrieves and clears locally stored sleep sessions.
+  ///
+  /// When in `localStorage` mode and the app was in background,
+  /// finalized sleep sessions are stored locally. Call this method
+  /// after the app becomes active to retrieve them.
+  ///
+  /// Returns a list of JSON strings, each representing a finalized sleep session.
+  /// The local storage is cleared after retrieval.
+  Future<List<String>> getLocalSleepSessions() async {
+    try {
+      final result = await _channel.invokeMethod('getLocalSleepSessions');
+      if (result is List) {
+        return result.cast<String>();
+      }
+      return [];
+    } on PlatformException catch (e) {
+      throw SleepDataException(
+        code: e.code,
+        message: e.message ?? 'Failed to get local sleep sessions',
+        details: e.details,
+      );
+    }
+  }
+
   SleepDataResponse _emptyResponse(DateTime from, DateTime to) {
     return SleepDataResponse(
       samples: [],
@@ -254,6 +406,23 @@ abstract class SleepDataEvent {
         );
       case 'sleepSampleDeleted':
         return SleepSampleDeletedEvent(uuid: map['uuid'] as String);
+      case 'sleepSessionEnded':
+        return SleepSessionEndedEvent(
+          reason: map['reason'] as String? ?? 'unknown',
+          segmentCount: map['segmentCount'] as int? ?? 0,
+          totalSleepMinutes:
+              (map['totalSleepMinutes'] as num?)?.toDouble() ?? 0,
+          totalAwakeMinutes:
+              (map['totalAwakeMinutes'] as num?)?.toDouble() ?? 0,
+          sessionStartDate: map['sessionStartDate'] as String?,
+          latestSegmentEndDate: map['latestSegmentEndDate'] as String?,
+          finalizedAt: map['finalizedAt'] as String?,
+        );
+      case 'sleepSessionDelivered':
+        return SleepSessionDeliveredEvent(
+          sessionId: map['sessionId'] as String? ?? '',
+          data: map['data'] as String? ?? '',
+        );
       default:
         return SleepDataUnknownEvent(rawData: map);
     }
@@ -279,6 +448,71 @@ class SleepSampleDeletedEvent implements SleepDataEvent {
 
   @override
   String toString() => 'SleepSampleDeletedEvent($uuid)';
+}
+
+/// Event emitted when a sleep session has ended.
+///
+/// This is triggered by the freeze-window-aware session detector when:
+/// - Multi-factor scoring detects sleep has ended (during freeze window), OR
+/// - The freeze window expires (12:00 PM) with accumulated data
+///
+/// After receiving this event, call [SleepDataManager.fetchStoredSleepData]
+/// to get the full session data, then [SleepDataManager.resetSleepSession]
+/// to prepare for the next night.
+class SleepSessionEndedEvent implements SleepDataEvent {
+  /// Why the session was declared ended
+  final String reason;
+
+  /// Number of sleep segments in the session
+  final int segmentCount;
+
+  /// Total actual sleep time (excluding awake/inBed) in minutes
+  final double totalSleepMinutes;
+
+  /// Total awake time within the sleep session in minutes
+  final double totalAwakeMinutes;
+
+  /// ISO8601 start of the first segment
+  final String? sessionStartDate;
+
+  /// ISO8601 end of the last segment
+  final String? latestSegmentEndDate;
+
+  /// ISO8601 timestamp when the session was finalized
+  final String? finalizedAt;
+
+  SleepSessionEndedEvent({
+    required this.reason,
+    required this.segmentCount,
+    required this.totalSleepMinutes,
+    required this.totalAwakeMinutes,
+    this.sessionStartDate,
+    this.latestSegmentEndDate,
+    this.finalizedAt,
+  });
+
+  @override
+  String toString() =>
+      'SleepSessionEndedEvent(reason=$reason, segments=$segmentCount, '
+      'sleep=${totalSleepMinutes.toStringAsFixed(0)}m, '
+      'awake=${totalAwakeMinutes.toStringAsFixed(0)}m)';
+}
+
+/// Event emitted when a sleep session has been delivered via localStorage mode.
+///
+/// This contains the full session JSON data as a string, which can be parsed
+/// on the Dart side. Only emitted in `localStorage` delivery mode.
+class SleepSessionDeliveredEvent implements SleepDataEvent {
+  /// Unique session identifier (typically the session start date)
+  final String sessionId;
+
+  /// Full sleep session data as a JSON string
+  final String data;
+
+  SleepSessionDeliveredEvent({required this.sessionId, required this.data});
+
+  @override
+  String toString() => 'SleepSessionDeliveredEvent(sessionId=$sessionId)';
 }
 
 /// Event for unknown event types

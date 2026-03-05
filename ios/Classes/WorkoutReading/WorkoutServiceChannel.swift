@@ -387,6 +387,14 @@ class WorkoutServiceChannel: NSObject, FlutterStreamHandler {
                 apiURL: apiURL,
                 headers: headers
             )
+            
+            // Auto-start monitoring when API is configured for the first time
+            if mode == .api && apiURL != nil && self.workoutService == nil {
+                DispatchQueue.main.async {
+                    self.autoStartIfConfigured()
+                }
+            }
+            
             DispatchQueue.main.async {
                 result(nil)
             }
@@ -410,6 +418,32 @@ class WorkoutServiceChannel: NSObject, FlutterStreamHandler {
         
         debugPrint("Read Workouts: Import preferences updated - Running: \(running), Cycling: \(cycling), Swimming: \(swimming)")
         result(nil)
+    }
+    
+    // MARK: - Auto-Start on App Launch
+    
+    /// Auto-starts workout monitoring if API delivery is configured in UserDefaults.
+    /// Called from HumangoHealthPlugin.register() on every app launch/background wake.
+    /// First launch: no config in UserDefaults → no-op.
+    /// Subsequent launches: config persisted from previous configureBackgroundDelivery() call → auto-start.
+    func autoStartIfConfigured() {
+        guard BackgroundDeliveryManager.shared.isAPIConfigured else {
+            debugPrint("Read Workouts: Auto-start skipped — no API config in UserDefaults")
+            return
+        }
+        guard workoutService == nil else {
+            debugPrint("Read Workouts: Auto-start skipped — monitoring already active")
+            return
+        }
+        
+        let startDate = Date().addingTimeInterval(-24 * 60 * 60) // 24h lookback
+        workoutService = WorkoutService(startDate: startDate)
+        BackgroundDeliveryManager.shared.attachEventSink(eventSink)
+        
+        Task {
+            await workoutService?.start()
+            debugPrint("Read Workouts: ✅ Auto-started workout monitoring (API mode) from \(startDate)")
+        }
     }
     
     // MARK: - FlutterStreamHandler
