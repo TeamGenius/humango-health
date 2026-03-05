@@ -777,6 +777,114 @@ The plugin provides comprehensive workout reading with real-time monitoring and 
 | `startMonitoring(startDate, endDate)` | Live monitoring | Real-time tracking |
 | `getLocalWorkouts()` | Retrieve stored workouts | App startup, background data |
 
+### Fetching Completed Workouts (One-Shot)
+
+Use `readWorkouts()` to fetch historical/completed workouts from HealthKit:
+
+```dart
+import 'dart:convert';
+import 'package:humango_health/humango_health.dart';
+
+final workoutManager = WorkoutReadManager();
+
+void fetchCompletedWorkouts() async {
+  try {
+    final now = DateTime.now();
+    
+    // Fetch past 7 days of completed workouts
+    final List<String> rawJsons = await workoutManager.readWorkouts(
+      now.subtract(const Duration(days: 7)),
+      endDate: now, // Optional - defaults to current time
+    );
+    
+    print('📦 Fetched ${rawJsons.length} completed workouts');
+    
+    for (final jsonString in rawJsons) {
+      final workout = jsonDecode(jsonString);
+      
+      print('🏃 Workout:');
+      print('   Activity: ${workout['activityType']}');
+      print('   Duration: ${(workout['duration'] / 60).toStringAsFixed(1)} min');
+      print('   Distance: ${((workout['distance'] ?? 0) / 1000).toStringAsFixed(2)} km');
+      print('   Start: ${workout['startDate']}');
+      print('   End: ${workout['endDate']}');
+      
+      // Statistics
+      if (workout['statistics'] != null) {
+        final stats = workout['statistics'];
+        print('   Avg HR: ${stats['avgHeartRate']} bpm');
+        print('   Max HR: ${stats['maxHeartRate']} bpm');
+        print('   Calories: ${stats['totalCalories']} kcal');
+      }
+      
+      // Route data (if available)
+      if (workout['route'] != null) {
+        final route = workout['route'] as List;
+        print('   Route points: ${route.length}');
+      }
+    }
+  } catch (e) {
+    print('Error fetching workouts: $e');
+  }
+}
+```
+
+### Workout JSON Structure
+
+Each workout is returned as a JSON string with the following structure:
+
+```json
+{
+  "uuid": "ABC-123-DEF",
+  "activityType": "running",
+  "startDate": "2026-03-04T08:00:00.000Z",
+  "endDate": "2026-03-04T08:45:00.000Z",
+  "duration": 2700,
+  "distance": 5500,
+  "sourceBundle": "com.apple.health",
+  "sourceName": "Apple Watch",
+  "statistics": {
+    "avgHeartRate": 145,
+    "maxHeartRate": 172,
+    "minHeartRate": 98,
+    "totalCalories": 450,
+    "activeCalories": 380
+  },
+  "route": [
+    {"latitude": 37.7749, "longitude": -122.4194, "altitude": 10.5, "timestamp": "..."},
+    ...
+  ],
+  "events": [
+    {"type": "pause", "startDate": "...", "endDate": "..."},
+    {"type": "lap", "startDate": "...", "endDate": "..."}
+  ],
+  "device": {
+    "name": "Apple Watch Series 9",
+    "model": "Watch6,1",
+    "softwareVersion": "10.3"
+  }
+}
+```
+
+### Setting Import Preferences
+
+Control which workout types are fetched/monitored:
+
+```dart
+void configureWorkoutTypes() async {
+  await workoutManager.setImportPreferences(
+    running: true,    // Import running workouts
+    cycling: true,    // Import cycling workouts
+    swimming: false,  // Skip swimming workouts
+  );
+  
+  // Now fetch will only return running and cycling workouts
+  final workouts = await workoutManager.readWorkouts(
+    DateTime.now().subtract(const Duration(days: 30)),
+  );
+}
+```
+
 ### Starting Workout Monitoring
 
 ```dart
