@@ -13,7 +13,7 @@ class BackgroundDeliveryManager {
     
     private(set) var mode: BackgroundDeliveryMode = .localStorage
     private var apiURL: URL?
-    private var headers: [String: String] = []
+    private var headers: [String: String] = [:]
     
     /// Whether API delivery is fully configured (mode=.api AND apiURL is set).
     /// Used by auto-start logic to determine if monitoring should begin on app launch.
