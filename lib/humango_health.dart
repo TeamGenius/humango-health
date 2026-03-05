@@ -32,3 +32,7 @@ export 'src/models/quantity_series.dart';
 // Sleep Data Manager & Models
 export 'src/managers/sleep_data_manager.dart';
 export 'src/models/sleep_sample.dart';
+
+// Health Metrics Manager & Models (HRV, Resting HR, Body Fat, Weight, Height)
+export 'src/managers/health_metrics_manager.dart';
+export 'src/models/health_metric_sample.dart';

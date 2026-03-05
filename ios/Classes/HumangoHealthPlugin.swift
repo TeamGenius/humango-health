@@ -18,6 +18,9 @@ public class HumangoHealthPlugin: NSObject, FlutterPlugin {
     // Phase 5: Sleep Data Reading
     let sleepDataMethodChannel = FlutterMethodChannel(name: "com.humango.health/sleep", binaryMessenger: registrar.messenger())
     let sleepDataEventChannel = FlutterEventChannel(name: "com.humango.health/sleep/stream", binaryMessenger: registrar.messenger())
+    
+    // Phase 6: Health Metrics (HRV, Resting HR, Body Fat, Weight, Height)
+    let healthMetricsMethodChannel = FlutterMethodChannel(name: "com.humango.health/metrics", binaryMessenger: registrar.messenger())
 
     let instance = HumangoHealthPlugin()
     
@@ -25,6 +28,7 @@ public class HumangoHealthPlugin: NSObject, FlutterPlugin {
     registrar.addMethodCallDelegate(instance, channel: workoutPlanMethodChannel)
     registrar.addMethodCallDelegate(instance, channel: workoutReadMethodChannel)
     registrar.addMethodCallDelegate(instance, channel: sleepDataMethodChannel)
+    registrar.addMethodCallDelegate(instance, channel: healthMetricsMethodChannel)
     
     permissionEventChannel.setStreamHandler(PermissionStreamHandler())
     workoutReadEventChannel.setStreamHandler(instance.workoutReadChannel)
@@ -59,6 +63,9 @@ public class HumangoHealthPlugin: NSObject, FlutterPlugin {
           } else {
               result(FlutterError(code: "UNSUPPORTED", message: "Sleep data requires iOS 14.0+", details: nil))
           }
+      } else if ["getHealthMetric", "getLatestHealthMetric", "getAllHealthMetrics"].contains(call.method) {
+          // Health metrics channel (HRV, resting HR, body fat, weight, height)
+          HealthMetricsManager.shared.handle(call, result: result)
       } else {
           result(FlutterMethodNotImplemented)
       }

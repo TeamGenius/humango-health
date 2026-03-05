@@ -173,6 +173,9 @@ public struct HuWorkout {
         }
         dict["metadata"] = cleanMeta
         
+        // Include raw JSON representation
+        dict["rawJson"] = dict
+        
         return dict
     }
     

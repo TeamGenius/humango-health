@@ -12,6 +12,7 @@ A comprehensive Flutter plugin for integrating iOS HealthKit and WorkoutKit func
 - [Workout Reading & Monitoring](#workout-reading--monitoring)
 - [Background Delivery Manager](#background-delivery-manager-api-configuration)
 - [Sleep Data Reading & Monitoring](#sleep-data-reading--monitoring)
+- [Health Metrics Reading](#health-metrics-reading)
 - [Native iOS Lifecycle Management](#native-ios-lifecycle-management)
 
 ## Features
@@ -334,6 +335,31 @@ The plugin implements a sophisticated two-layer deduplication system to prevent 
 1. **Dart Layer**: Before sending to iOS, checks if a workout with the same `schedule_id` exists locally with identical `jsonSizeBytes`. If sizes match, the workout is skipped immediately.
 
 2. **iOS Layer**: If passed through Dart, iOS serializes the JSON with `.sortedKeys` for consistent ordering, then compares the exact bytes against stored records using `WorkoutPlan.id` (Apple's stable UUID).
+
+> **Note:** Both deduplication layers now correctly report skipped workouts in `WorkoutPushResponse`. When all workouts in a batch are skipped by iOS-level dedup, the skipped records (with `status: "skipped"`) are returned to the Dart layer so that `response.skipped` accurately reflects the count. Previously, iOS-level skips were only logged but not included in the response when the entire batch was deduplicated.
+
+### Interpreting the Push Response
+
+The `WorkoutPushResponse` provides accurate counts for all outcomes:
+
+```dart
+final response = await pushManager.pushRawWorkouts(workouts);
+
+print('Total submitted: ${response.totalSubmitted}');
+print('Successful: ${response.successful}');   // newly scheduled
+print('Skipped: ${response.skipped}');         // deduplicated (Dart or iOS layer)
+print('Failed: ${response.failed}');           // errors
+
+// The sum always holds:
+// response.successful + response.skipped + response.failed == response.totalSubmitted
+
+// Determine overall outcome
+if (response.successful > 0) {
+  print('New workouts scheduled!');
+} else if (response.skipped == response.totalSubmitted) {
+  print('All workouts already scheduled — nothing changed');
+}
+```
 
 ### JSON Response Details
 
@@ -945,6 +971,154 @@ The plugin implements two-layer deduplication:
 | **Layer 2** | iOS | SHA256 hash + byte-level comparison |
 
 ---
+
+## Health Metrics Reading
+
+Read body-composition and vital-sign metrics from HealthKit with a single, generic manager.
+
+### Supported Metrics
+
+| Metric | HealthKit Identifier | Unit | iOS |
+|--------|---------------------|------|-----|
+| HRV (SDNN) | `heartRateVariabilitySDNN` | ms | 11.0+ |
+| Resting Heart Rate | `restingHeartRate` | bpm | 11.0+ |
+| Body Fat Percentage | `bodyFatPercentage` | % | 8.0+ |
+| Weight (Body Mass) | `bodyMass` | kg | 8.0+ |
+| Height | `height` | cm | 8.0+ |
+
+### Quick Start
+
+```dart
+import 'package:humango_health/humango_health.dart';
+
+final metrics = HealthMetricsManager();
+```
+
+### Fetching a Single Metric
+
+```dart
+// Fetch HRV samples from the last 30 days (default)
+final hrvResponse = await metrics.getHRV();
+
+print('Latest HRV: ${hrvResponse.latestValue} ${hrvResponse.unit}');
+print('Average: ${hrvResponse.statistics.average}');
+print('Samples: ${hrvResponse.sampleCount}');
+
+for (final sample in hrvResponse.samples) {
+  print('${sample.startDate}: ${sample.value} ${sample.unit}');
+}
+```
+
+### Convenience Methods
+
+Each metric has a dedicated convenience method that returns a `HealthMetricResponse`:
+
+```dart
+final hrv       = await metrics.getHRV();
+final restingHR = await metrics.getRestingHeartRate();
+final bodyFat   = await metrics.getBodyFatPercentage();
+final weight    = await metrics.getWeight();
+final height    = await metrics.getHeight();
+```
+
+All convenience methods accept optional `startDate`, `endDate`, and `limit` parameters:
+
+```dart
+final recentWeight = await metrics.getWeight(
+  startDate: DateTime.now().subtract(const Duration(days: 7)),
+  endDate: DateTime.now(),
+  limit: 10,
+);
+```
+
+### Fetching the Latest Value
+
+Use `getLatestMetric` to fetch only the most recent sample for any metric type:
+
+```dart
+final latest = await metrics.getLatestMetric(HealthMetricType.bodyMass);
+print('Current weight: ${latest.latestValue} ${latest.unit}');
+```
+
+### Fetching All Metrics at Once
+
+`getAllMetrics` queries all 5 metric types in a single call and returns an `AllHealthMetricsResponse`:
+
+```dart
+final all = await metrics.getAllMetrics(
+  startDate: DateTime.now().subtract(const Duration(days: 30)),
+);
+
+// Named convenience getters
+print('HRV: ${all.hrv?.latestValue} ms');
+print('Resting HR: ${all.restingHeartRate?.latestValue} bpm');
+print('Body Fat: ${all.bodyFatPercentage?.latestValue} %');
+print('Weight: ${all.weight?.latestValue} kg');
+print('Height: ${all.height?.latestValue} cm');
+
+// Check for per-metric errors
+if (all.errors.isNotEmpty) {
+  print('Errors: ${all.errors}');
+}
+```
+
+### Response Structure
+
+`HealthMetricResponse` contains:
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `metricType` | `String` | The metric key (e.g. `heartRateVariabilitySDNN`) |
+| `unit` | `String` | Display unit (e.g. `ms`, `bpm`, `%`, `kg`, `cm`) |
+| `samples` | `List<HealthMetricSample>` | Individual data points |
+| `sampleCount` | `int` | Number of samples returned |
+| `latestSample` | `HealthMetricSample?` | Most recent sample |
+| `statistics` | `HealthMetricStatistics` | Aggregated avg / min / max / sum |
+| `fetchedFrom` | `DateTime` | Query start date |
+| `fetchedTo` | `DateTime` | Query end date |
+
+Each `HealthMetricSample` includes:
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `uuid` | `String` | HealthKit sample UUID |
+| `value` | `double` | Metric value |
+| `unit` | `String` | Unit string |
+| `startDate` / `endDate` | `DateTime` | Sample time range |
+| `sourceName` | `String?` | Source app name |
+| `sourceBundle` | `String?` | Source bundle identifier |
+| `device` | `HealthMetricDevice?` | Device info (name, model, etc.) |
+| `metadata` | `Map?` | HealthKit metadata dictionary |
+
+### Error Handling
+
+```dart
+try {
+  final response = await metrics.getHRV();
+} on HealthMetricsException catch (e) {
+  print('Code: ${e.code}');
+  print('Message: ${e.message}');
+  print('Details: ${e.details}');
+}
+```
+
+### Permission Requirements
+
+Health Metrics reading requires HealthKit read permissions for the corresponding quantity types. Ensure the following are included in your permission request:
+
+- `HKQuantityTypeIdentifier.heartRateVariabilitySDNN`
+- `HKQuantityTypeIdentifier.restingHeartRate`
+- `HKQuantityTypeIdentifier.bodyFatPercentage`
+- `HKQuantityTypeIdentifier.bodyMass`
+- `HKQuantityTypeIdentifier.height`
+
+### Channel
+
+| Channel | Type | Purpose |
+|---------|------|--------|
+| `com.humango.health/metrics` | MethodChannel | Health metrics queries |
+
+---
 ## Channel Reference
 
 All communication between Flutter and iOS uses these channels:
@@ -959,6 +1133,7 @@ All communication between Flutter and iOS uses these channels:
 | `com.humango.workouts/read/stream` | EventChannel | Real-time workout updates |
 | `com.humango.health/sleep` | MethodChannel | Sleep data operations |
 | `com.humango.health/sleep/stream` | EventChannel | Real-time sleep updates |
+| `com.humango.health/metrics` | MethodChannel | Health metrics (HRV, HR, body comp) |
 
 ---
 

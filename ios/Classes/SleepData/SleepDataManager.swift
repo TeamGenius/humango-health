@@ -334,7 +334,7 @@ public class SleepDataManager: NSObject, FlutterStreamHandler, AppLifecycleObser
         
         if #available(iOS 15.0, *) {
             let descriptor = HKAnchoredObjectQueryDescriptor(
-                predicates: [.categoryType(sleepType, livePredicate)],
+                predicates: [.categorySample(type: sleepType, predicate: livePredicate)],
                 anchor: anchor
             )
             

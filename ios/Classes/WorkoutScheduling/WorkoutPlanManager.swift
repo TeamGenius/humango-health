@@ -331,7 +331,7 @@ public class WorkoutPlanManager: NSObject {
         print("ValidJsonArray (after dedup): \(validJsonArray.count), Skipped: \(skippedRecords.count)")
         
         
-        guard !validJsonArray.isEmpty else { return [] }
+        guard !validJsonArray.isEmpty else { return skippedRecords }
 
         // 2. Decode into Models using the provided User schema
         let decoder = JSONDecoder()
