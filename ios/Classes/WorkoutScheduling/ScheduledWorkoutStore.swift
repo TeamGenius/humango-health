@@ -10,9 +10,9 @@ import HealthKit
 
 struct ScheduledWorkoutRecord: Codable {
     let workoutId: String
+    let workoutPlanId: String
     let workoutJson: [String: AnyCodable]
     let jsonBytes: Data
-    let scheduledHashValue: Int
     let scheduledDate: Date
 }
 
@@ -81,24 +81,25 @@ class ScheduledWorkoutStore {
     /// Save a workout record after scheduling natively.
     func saveRecord(
         workoutId: String,
+        workoutPlanId: String,
         jsonDict: [String: Any],
-        hashValue: Int,
         scheduledDate: Date
     ) {
         let codableDict = jsonDict.mapValues { AnyCodable($0) }
-        let jsonBytes = (try? JSONSerialization.data(withJSONObject: jsonDict, options: [])) ?? Data()
+        // Use sortedKeys for consistent byte comparison in deduplication
+        let jsonBytes = (try? JSONSerialization.data(withJSONObject: jsonDict, options: .sortedKeys)) ?? Data()
 
         let record = ScheduledWorkoutRecord(
             workoutId: workoutId,
+            workoutPlanId: workoutPlanId,
             workoutJson: codableDict,
             jsonBytes: jsonBytes,
-            scheduledHashValue: hashValue,
             scheduledDate: scheduledDate
         )
 
         records[workoutId] = record
         saveToDisk()
-        print("💾 [Humango Health] Saved record for workout ID: \(workoutId), hash: \(hashValue)")
+        print("💾 [Humango Health] Saved record for workout ID: \(workoutId), planId: \(workoutPlanId), bytes: \(jsonBytes.count)")
     }
 
     func getRecord(for workoutId: String) -> ScheduledWorkoutRecord? {
@@ -159,17 +160,68 @@ class ScheduledWorkoutStore {
     
     // MARK: - Workout Matching
     
-    /// Find scheduled workout by WorkoutPlan hash value
+    /// Find scheduled workout by WorkoutPlan ID (UUID)
     /// This is the most reliable matching method for iOS 17.0+
-    func findWorkoutByHash(_ hash: Int) -> String? {
+    func findWorkoutByPlanId(_ planId: String) -> String? {
         for (workoutId, record) in records {
-            if record.scheduledHashValue == hash {
-                debugPrint("🎯 ScheduledWorkoutStore: Found workout \(workoutId) by hash \(hash)")
+            if record.workoutPlanId == planId {
+                debugPrint("🎯 ScheduledWorkoutStore: Found workout \(workoutId) by planId \(planId)")
                 return workoutId
             }
         }
-        debugPrint("⚠️ ScheduledWorkoutStore: No workout found for hash \(hash)")
+        debugPrint("⚠️ ScheduledWorkoutStore: No workout found for planId \(planId)")
         return nil
+    }
+    
+    /// Get the WorkoutPlan ID for a given workout ID (schedule_id)
+    func getPlanId(for workoutId: String) -> String? {
+        return records[workoutId]?.workoutPlanId
+    }
+    
+    // MARK: - Deduplication
+    
+    /// Check if a workout needs to be pushed based on JSON byte comparison.
+    /// Returns a tuple: (needsPush: Bool, reason: String)
+    /// - If workout doesn't exist: needsPush = true, reason = "new"
+    /// - If JSON bytes changed: needsPush = true, reason = "modified"
+    /// - If JSON bytes are identical: needsPush = false, reason = "unchanged"
+    func checkDeduplication(workoutId: String, jsonDict: [String: Any]) -> (needsPush: Bool, reason: String) {
+        guard let existingRecord = records[workoutId] else {
+            return (true, "new")
+        }
+        
+        // Calculate JSON bytes for the incoming workout
+        guard let incomingJsonBytes = try? JSONSerialization.data(withJSONObject: jsonDict, options: .sortedKeys) else {
+            // If we can't serialize, assume it needs push
+            return (true, "serialization_error")
+        }
+        
+        // Re-serialize the existing JSON for fair comparison (with sorted keys)
+        let existingDict = existingRecord.workoutJson.mapValues { $0.value }
+        guard let existingJsonBytes = try? JSONSerialization.data(withJSONObject: existingDict, options: .sortedKeys) else {
+            // If existing can't be serialized, push the new one
+            return (true, "existing_serialization_error")
+        }
+        
+        // Compare byte sizes first (fast check)
+        if incomingJsonBytes.count != existingJsonBytes.count {
+            print("📊 [Humango Health] Dedup: Workout \(workoutId) size changed (\(existingJsonBytes.count) → \(incomingJsonBytes.count) bytes)")
+            return (true, "size_changed")
+        }
+        
+        // Compare actual bytes (content check)
+        if incomingJsonBytes != existingJsonBytes {
+            print("📊 [Humango Health] Dedup: Workout \(workoutId) content changed (same size: \(incomingJsonBytes.count) bytes)")
+            return (true, "content_changed")
+        }
+        
+        print("⏭️ [Humango Health] Dedup: Workout \(workoutId) unchanged (\(incomingJsonBytes.count) bytes)")
+        return (false, "unchanged")
+    }
+    
+    /// Get the stored JSON byte size for a workout
+    func getJsonBytesSize(for workoutId: String) -> Int? {
+        return records[workoutId]?.jsonBytes.count
     }
     
     /// Find the scheduled workout that matches a completed workout

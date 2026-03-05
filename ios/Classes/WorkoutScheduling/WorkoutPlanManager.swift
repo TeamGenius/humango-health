@@ -73,9 +73,86 @@ public class WorkoutPlanManager: NSObject {
                 result(FlutterError(code: "UNSUPPORTED", message: "WorkoutKit requires iOS 17.0+", details: nil))
             }
             
+        case "getScheduledWorkouts":
+            if #available(iOS 17.0, *) {
+                Task {
+                    do {
+                        let workouts = await self.getScheduledWorkouts()
+                        DispatchQueue.main.async {
+                            result(workouts)
+                        }
+                    }
+                }
+            } else {
+                result(FlutterError(code: "UNSUPPORTED", message: "WorkoutKit requires iOS 17.0+", details: nil))
+            }
+            
         default:
             result(FlutterMethodNotImplemented)
         }
+    }
+    
+    // MARK: - Get Scheduled Workouts
+    
+    @available(iOS 17.0, *)
+    private func getScheduledWorkouts() async -> [[String: Any]] {
+        let scheduledWorkouts = await WorkoutScheduler.shared.scheduledWorkouts
+        let isoFormatter = ISO8601DateFormatter()
+        isoFormatter.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
+        
+        var workoutsList: [[String: Any]] = []
+        
+        for scheduledWorkout in scheduledWorkouts {
+            let plan = scheduledWorkout.plan
+            let planId = plan.id.uuidString
+            let dateComponents = scheduledWorkout.date
+            
+            // Convert DateComponents to Date
+            let scheduledDate = Calendar.current.date(from: dateComponents)
+            let scheduledDateString = scheduledDate != nil ? isoFormatter.string(from: scheduledDate!) : nil
+            
+            // Extract workout details
+            var workoutInfo: [String: Any] = [
+                "id": planId,
+                "workoutPlanId": planId
+            ]
+            
+            if let dateStr = scheduledDateString {
+                workoutInfo["scheduledDate"] = dateStr
+            }
+            
+            // Try to get workout name and activity type from the plan
+            if let customComposition = plan.workout as? CustomWorkoutComposition {
+                workoutInfo["activityType"] = customComposition.activity.workoutActivityType.name
+                if let displayName = customComposition.displayName {
+                    workoutInfo["name"] = displayName
+                }
+            } else if let goalComposition = plan.workout as? SingleGoalWorkoutComposition {
+                workoutInfo["activityType"] = goalComposition.activity.workoutActivityType.name
+            } else if let swimBikeRunComposition = plan.workout as? SwimBikeRunWorkoutComposition {
+                workoutInfo["activityType"] = "Triathlon"
+            }
+            
+            // Try to match with local store record using WorkoutPlan ID and include full JSON
+            if let localWorkoutId = store.findWorkoutByPlanId(planId) {
+                workoutInfo["workoutId"] = localWorkoutId
+                if let storedRecord = store.getRecord(for: localWorkoutId) {
+                    // Extract additional info from stored JSON
+                    if let summary = storedRecord.workoutJson["summary"]?.value as? [String: Any],
+                       let name = summary["name"] as? String {
+                        workoutInfo["name"] = name
+                    }
+                    // Include the full stored JSON
+                    let jsonDict = storedRecord.workoutJson.mapValues { $0.value }
+                    workoutInfo["workoutJson"] = jsonDict
+                    workoutInfo["jsonSizeBytes"] = storedRecord.jsonBytes.count
+                }
+            }
+            
+            workoutsList.append(workoutInfo)
+        }
+        
+        return workoutsList
     }
     
     // MARK: - Workout Push Authorization
@@ -121,6 +198,65 @@ public class WorkoutPlanManager: NSObject {
 
     @available(iOS 17.4, *)
     func scheduleWorkouts(jsonArray: [[String: Any]]) async throws -> [[String: Any]] {
+        
+        // MARK: - Strict Validation (All or Nothing)
+        // Validate ALL workouts first - if ANY fails, reject the entire batch
+        var validationErrors: [[String: Any]] = []
+        
+        for (index, dict) in jsonArray.enumerated() {
+            var errors: [String] = []
+            
+            // 1. Validate schedule_id (REQUIRED)
+            let hasScheduleId = dict["schedule_id"] != nil
+            if !hasScheduleId {
+                errors.append("Missing required field: 'schedule_id'")
+            }
+            
+            // 2. Validate date (REQUIRED)
+            let dateStr = dict["date"] as? String
+            if dateStr == nil {
+                errors.append("Missing required field: 'date'")
+            } else if DateUtils.parseDate(from: dateStr!) == nil {
+                errors.append("Invalid date format: '\(dateStr!)'. Expected ISO8601 format.")
+            }
+            
+            // 3. Validate blocks (REQUIRED and non-empty)
+            if let blocks = dict["blocks"] as? [[String: Any]] {
+                if blocks.isEmpty {
+                    errors.append("'blocks' array cannot be empty")
+                }
+            } else {
+                errors.append("Missing required field: 'blocks' (must be a non-empty array)")
+            }
+            
+            if !errors.isEmpty {
+                validationErrors.append([
+                    "index": index,
+                    "schedule_id": dict["schedule_id"] ?? "N/A",
+                    "errors": errors,
+                    "failedJson": dict
+                ])
+            }
+        }
+        
+        // If ANY validation errors exist, reject the ENTIRE batch
+        if !validationErrors.isEmpty {
+            let errorDetails = validationErrors.map { error -> String in
+                let idx = error["index"] as? Int ?? -1
+                let scheduleId = error["schedule_id"] ?? "N/A"
+                let errs = error["errors"] as? [String] ?? []
+                return "Workout[\(idx)] (schedule_id: \(scheduleId)): \(errs.joined(separator: ", "))"
+            }.joined(separator: "; ")
+            
+            print("❌ [Humango Health] Validation failed for \(validationErrors.count) workout(s): \(errorDetails)")
+            
+            throw NSError(domain: "WorkoutValidation", code: 400, userInfo: [
+                NSLocalizedDescriptionKey: "Validation failed: \(errorDetails)",
+                "validationErrors": validationErrors
+            ])
+        }
+        
+        // All workouts passed validation, continue with processing
         let isoFormatter = ISO8601DateFormatter()
         isoFormatter.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
         let isoFormatterNoFrac = ISO8601DateFormatter()
@@ -138,23 +274,61 @@ public class WorkoutPlanManager: NSObject {
         let sevenDaysFromNow = Calendar.current.date(byAdding: .day, value: 7, to: now)!
         
         var validJsonArray: [[String: Any]] = []
+        var skippedRecords: [[String: Any]] = []
 
-        // 1. Initial Filtering
+        // 2. Date Range Filtering + Deduplication Check (validation already passed)
         for dict in jsonArray {
-            guard let dateStr = dict["date"] as? String,
-                  let workoutDate = DateUtils.parseDate(from: dateStr) else {
-                print("⚠️ [Humango Health] Skipping workout with invalid date formatting: \(dict["date"] ?? "nil")")
-                continue
-            }
+            let dateStr = dict["date"] as! String
+            let workoutDate = DateUtils.parseDate(from: dateStr)!
             
             if workoutDate > now && workoutDate <= sevenDaysFromNow {
-                validJsonArray.append(dict)
+                // Check deduplication using JSON bytes comparison
+                if let workoutId = store.extractWorkoutId(from: dict) {
+                    let (needsPush, reason) = store.checkDeduplication(workoutId: workoutId, jsonDict: dict)
+                    if needsPush {
+                        validJsonArray.append(dict)
+                        print("📤 [Humango Health] Workout \(workoutId) will be scheduled (reason: \(reason))")
+                    } else {
+                        // Already exists with same content, skip - include both JSONs for comparison
+                        var skippedRecord: [String: Any] = [
+                            "workoutId": workoutId,
+                            "status": "skipped",
+                            "reason": reason,
+                            "currentJson": dict  // The JSON being pushed now
+                        ]
+                        
+                        // Include existing JSON from store
+                        if let existingRecord = store.getRecord(for: workoutId) {
+                            let existingJsonDict = existingRecord.workoutJson.mapValues { $0.value }
+                            skippedRecord["existingJson"] = existingJsonDict
+                            skippedRecord["existingJsonSizeBytes"] = existingRecord.jsonBytes.count
+                            skippedRecord["workoutPlanId"] = existingRecord.workoutPlanId
+                        }
+                        
+                        // Calculate current JSON size
+                        if let currentJsonBytes = try? JSONSerialization.data(withJSONObject: dict, options: .sortedKeys) {
+                            skippedRecord["currentJsonSizeBytes"] = currentJsonBytes.count
+                        }
+                        
+                        skippedRecords.append(skippedRecord)
+                        print("⏭️ [Humango Health] Skipping workout \(workoutId) — \(reason)")
+                    }
+                } else {
+                    // This should never happen since validation requires schedule_id
+                    // But just in case, throw an error
+                    throw NSError(domain: "WorkoutValidation", code: 400, userInfo: [
+                        NSLocalizedDescriptionKey: "Internal error: workout passed validation but has no schedule_id"
+                    ])
+                }
             } else {
-                 print("⏭️ [Humango Health] Skipping native schedule — Date \(dateStr) is outside the 7 day Window.")
+                 // Date outside 7-day window - this is also a validation failure
+                 throw NSError(domain: "WorkoutValidation", code: 400, userInfo: [
+                     NSLocalizedDescriptionKey: "Workout date '\(dateStr)' is outside the valid 7-day scheduling window (must be in the future and within 7 days)"
+                 ])
             }
         }
 
-        print("ValidJsonArray \(validJsonArray)")
+        print("ValidJsonArray (after dedup): \(validJsonArray.count), Skipped: \(skippedRecords.count)")
         
         
         guard !validJsonArray.isEmpty else { return [] }
@@ -198,10 +372,10 @@ public class WorkoutPlanManager: NSObject {
         // 4. Schedule each via WorkoutScheduler
         for (index, item) in items.enumerated() {
             let workoutPlanNative = WorkoutPlan(item.workout)
-             print("✅ WorkoutPlan id : \(workoutPlanNative.id)")
+            let workoutPlanId = workoutPlanNative.id.uuidString
+            print("✅ WorkoutPlan id : \(workoutPlanId)")
             let dateComponents = Calendar.current.dateComponents([.year, .month, .day, .hour, .minute], from: item.scheduledDate)
             let scheduledWorkout = ScheduledWorkoutPlan(workoutPlanNative, date: dateComponents)
-            var hashValue: Int = 0
             
             if #available(iOS 17.0, *) {
                 // Check if we hit the limit
@@ -211,21 +385,19 @@ public class WorkoutPlanManager: NSObject {
                 }
                 
                 await WorkoutScheduler.shared.schedule(scheduledWorkout.plan, at: scheduledWorkout.date)
-              
-                hashValue = scheduledWorkout.hashValue
                 
                 // Safe name extraction wrapper from reference
                 let name = item.workoutModel.summary?.name ?? "Unnamed Work"
-                print("✅ [Humango Health] Natively Scheduled '\(name)' | Hash: \(hashValue)")
+                print("✅ [Humango Health] Natively Scheduled '\(name)' | PlanId: \(workoutPlanId)")
             }
 
-            // 5. Save Deduplication Hash
+            // 5. Save record with WorkoutPlan ID
             let fullJsonDict = validJsonArray[index] // Re-grab original JSON
             if let workoutId = store.extractWorkoutId(from: fullJsonDict) {
                 store.saveRecord(
                     workoutId: workoutId,
+                    workoutPlanId: workoutPlanId,
                     jsonDict: fullJsonDict,
-                    hashValue: hashValue,
                     scheduledDate: item.scheduledDate
                 )
                 
@@ -233,13 +405,18 @@ public class WorkoutPlanManager: NSObject {
                 
                 returnRecords.append([
                     "workoutId": workoutId,
+                    "workoutPlanId": workoutPlanId,
                     "scheduledDateTime": fullJsonDict["date"],
-                    "hashValue": String(hashValue),
                     "jsonSizeBytes": jsonBytes,
-                    "pushedAt": isoFormatter.string(from: Date())
+                    "status": "scheduled",
+                    "pushedAt": isoFormatter.string(from: Date()),
+                    "workoutJson": fullJsonDict  // Include the full JSON in response
                 ])
             }
         }
+        
+        // Include skipped records in the response
+        returnRecords.append(contentsOf: skippedRecords)
         
         return returnRecords
     }

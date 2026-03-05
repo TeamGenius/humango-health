@@ -149,6 +149,51 @@ void requestWorkoutPushPermission() async {
 
 A robust `WorkoutPushManager` coordinates the dispatch. The system strictly enforces the Apple requirement that all scheduled workouts must take place within the next **7 days**. 
 
+### Required Fields (Strict Validation)
+
+Every workout JSON object **must** contain the following fields. If ANY workout in a batch is missing required fields, the **entire batch will be rejected**.
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `schedule_id` | `String` or `int` | **Required.** Unique identifier for the workout. Used for deduplication and tracking. |
+| `date` | `String` (ISO8601) | **Required.** Scheduled date/time in ISO8601 format. Must be in the future and within 7 days. |
+| `blocks` | `Array` (non-empty) | **Required.** Array of interval blocks defining the workout structure. Cannot be empty. |
+
+**Validation Behavior:**
+- Validation happens at **both** Dart and iOS layers
+- If ANY workout fails validation, ALL workouts in the batch fail
+- Failed workouts return with `status: WorkoutPushStatus.validationError`
+- The `errorMessage` contains details about which fields are missing
+- The `currentJson` contains the original JSON that failed validation
+
+```dart
+// Example: What happens when validation fails
+final invalidWorkouts = [
+  {
+    "schedule_id": 123,
+    "date": "2026-03-06T10:00:00Z",
+    "blocks": [/* valid blocks */]
+  },
+  {
+    // Missing schedule_id - will cause ENTIRE batch to fail!
+    "date": "2026-03-06T12:00:00Z",
+    "blocks": [/* valid blocks */]
+  }
+];
+
+final response = await pushManager.pushRawWorkouts(invalidWorkouts);
+
+// response.failed == 2 (entire batch failed)
+for (final result in response.results) {
+  if (result.status == WorkoutPushStatus.validationError) {
+    print("❌ Validation failed: ${result.errorMessage}");
+    print("   Failed JSON: ${result.currentJson}");
+  }
+}
+```
+
+### Pushing Workouts
+
 The deduplication engine natively compares the exact JSON byte-size, alongside extracting your custom `schedule_id` key, to ensure workouts aren't duplicated if users click sync multiple times.
 
 ```dart
@@ -159,7 +204,7 @@ final pushManager = WorkoutPushManager();
 void scheduleWorkouts() async {
 
   // 1. Ingest raw backend JSON (List of Maps)
-  // Ensure "schedule_id" and "date" exist for deduplication and Apple scheduling rules.
+  // All required fields: schedule_id, date, blocks
   final List<Map<String, dynamic>> rawBackendJson = [
     {
       "schedule_id": 123456,
@@ -177,13 +222,135 @@ void scheduleWorkouts() async {
   // 3. Process the results
   for (final result in response.results) {
     if (result.status == WorkoutPushStatus.success) {
-      print("✅ Successfully Pushed: \${result.workoutId}");
+      print("✅ Successfully Pushed: ${result.workoutId}");
     } else if (result.status == WorkoutPushStatus.skipped) {
-      print("⏭️ Skipped (Already cached natively): \${result.workoutId}");
+      print("⏭️ Skipped (Already cached natively): ${result.workoutId}");
+    } else if (result.status == WorkoutPushStatus.validationError) {
+      print("❌ Validation Error: ${result.errorMessage}");
     } else {
-      print("❌ Failed: \${result.errorMessage}");
+      print("❌ Failed: ${result.errorMessage}");
     }
   }
+}
+```
+
+### Retrieving Scheduled Workouts
+
+After pushing workouts, you can retrieve the list of currently scheduled workouts from Apple Watch:
+
+```dart
+import 'package:humango_health/humango_health.dart';
+
+final pushManager = WorkoutPushManager();
+
+void fetchScheduledWorkouts() async {
+  final scheduledWorkouts = await pushManager.getScheduledWorkouts();
+  
+  for (final workout in scheduledWorkouts) {
+    print("📅 Scheduled: ${workout.name ?? 'Unnamed'}");
+    print("   Activity: ${workout.activityType}");
+    print("   Date: ${workout.scheduledDate}");
+    print("   Workout ID: ${workout.workoutId}");
+  }
+  
+  print("Total scheduled: ${scheduledWorkouts.length}");
+}
+```
+
+The `ScheduledWorkoutInfo` model provides:
+- `id`: The WorkoutKit UUID
+- `workoutId`: Your original `schedule_id` (if matched with local records)
+- `scheduledDate`: When the workout is scheduled
+- `name`: The workout name
+- `activityType`: The activity type (Running, Cycling, etc.)
+- `workoutJson`: The full JSON payload that was scheduled (for comparison)
+- `jsonSizeBytes`: Size of the JSON payload in bytes
+
+**Note:** This retrieves workouts directly from `WorkoutScheduler.shared.scheduledWorkouts` on iOS 17.0+.
+
+### Two-Layer Deduplication System
+
+The plugin implements a sophisticated two-layer deduplication system to prevent duplicate workout scheduling:
+
+| Layer | Location | Strategy | Purpose |
+|-------|----------|----------|---------|
+| **Layer 1** | Dart (`WorkoutPushManager`) | JSON size comparison | Fast filter - avoids unnecessary native calls if size unchanged |
+| **Layer 2** | iOS (`ScheduledWorkoutStore`) | Byte-level JSON comparison | Accurate filter - catches edge cases where size matches but content differs |
+
+**How it works:**
+
+1. **Dart Layer**: Before sending to iOS, checks if a workout with the same `schedule_id` exists locally with identical `jsonSizeBytes`. If sizes match, the workout is skipped immediately.
+
+2. **iOS Layer**: If passed through Dart, iOS serializes the JSON with `.sortedKeys` for consistent ordering, then compares the exact bytes against stored records using `WorkoutPlan.id` (Apple's stable UUID).
+
+### JSON Response Details
+
+Every push operation returns detailed information about each workout's fate:
+
+```dart
+final response = await pushManager.pushRawWorkouts(rawBackendJson);
+
+for (final result in response.results) {
+  print("Workout: ${result.workoutId}");
+  print("Status: ${result.status}"); // success, skipped, failed, validationError
+  
+  if (result.status == WorkoutPushStatus.success) {
+    // Successfully scheduled to Apple Watch
+    print("✅ Scheduled!");
+    print("   WorkoutPlan ID: ${result.workoutPlanId}");
+    print("   JSON: ${result.currentJson}");
+    
+  } else if (result.status == WorkoutPushStatus.skipped) {
+    // Deduplication prevented scheduling
+    print("⏭️ Skipped: ${result.skipReason}");
+    
+    // Compare JSONs to see exact differences
+    print("   Current JSON (attempted): ${result.currentJson}");
+    print("   Existing JSON (stored): ${result.existingJson}");
+    print("   Current size: ${result.currentJsonSizeBytes} bytes");
+    print("   Existing size: ${result.existingJsonSizeBytes} bytes");
+    
+    // Use this to show user what changed (or didn't change)
+    _showDifferenceDialog(result.currentJson, result.existingJson);
+    
+  } else if (result.status == WorkoutPushStatus.failed) {
+    print("❌ Failed: ${result.errorMessage}");
+  }
+}
+```
+
+### Skip Reasons
+
+The `skipReason` field indicates which deduplication layer caught the workout:
+
+| Reason | Layer | Description |
+|--------|-------|-------------|
+| `dart_dedup_unchanged` | Dart | JSON size matched existing record - skipped before iOS call |
+| `ios_dedup_unchanged` | iOS | Byte-level comparison matched - workout already scheduled |
+| `ios_unchanged` | iOS | General iOS deduplication (fallback reason) |
+
+### Tracking with WorkoutPlan.id
+
+Each scheduled workout receives a stable UUID from Apple's `WorkoutPlan.id`. This ID:
+- Persists across app restarts
+- Allows matching scheduled workouts with your records
+- Is available in both `WorkoutPushResult.workoutPlanId` and `ScheduledWorkoutInfo.workoutPlanId`
+
+```dart
+// After pushing
+for (final result in response.results) {
+  if (result.status == WorkoutPushStatus.success) {
+    // Store this ID to track the workout
+    final appleId = result.workoutPlanId;
+    await saveWorkoutMapping(result.workoutId, appleId);
+  }
+}
+
+// Later, when retrieving scheduled workouts
+final scheduled = await pushManager.getScheduledWorkouts();
+for (final workout in scheduled) {
+  final originalId = await findOriginalId(workout.workoutPlanId);
+  print("Apple workout ${workout.id} maps to your workout $originalId");
 }
 ```
 

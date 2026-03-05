@@ -137,7 +137,7 @@ class _WorkoutPushScreenState extends State<WorkoutPushScreen> {
         final result = response.results.first;
         if (result.status == WorkoutPushStatus.success) {
           _statusMessage =
-              '✅ Success!\nWorkout ID: ${result.workoutId}\nHash: ${result.record?.hashValue}';
+              '✅ Success!\nWorkout ID: ${result.workoutId}\nPlan ID: ${result.record?.workoutPlanId}';
         } else if (result.status == WorkoutPushStatus.skipped) {
           _statusMessage = '⏭️ Skipped (Already Pushed natively)';
         } else {
