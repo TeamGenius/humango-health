@@ -1,16 +1,64 @@
 # Humango Health Plugin
 
-A Flutter plugin for integrating iOS HealthKit and WorkoutKit functionalities natively into the Humango platform. 
+A comprehensive Flutter plugin for integrating iOS HealthKit and WorkoutKit functionalities natively into the Humango platform.
 
-This plugin supports:
-- **Permission Handling** - Request and verify HealthKit permissions
-- **Workout Scheduling** - Push workouts to Apple Watch via WorkoutKit
-- **Activity Reading** - Read workouts and health data from HealthKit
-- **Sleep Data** - Fetch sleep analysis with detailed stage breakdown
+## Table of Contents
+
+- [Features](#features)
+- [Architecture Overview](#architecture-overview)
+- [Requirements](#requirements)
+- [Permission Handling](#permission-handling)
+- [Workout Scheduling (Push)](#push-workouts-scheduling)
+- [Workout Reading & Monitoring](#workout-reading--monitoring)
+- [Background Delivery Manager](#background-delivery-manager-api-configuration)
+- [Sleep Data Reading & Monitoring](#sleep-data-reading--monitoring)
+- [Native iOS Lifecycle Management](#native-ios-lifecycle-management)
+
+## Features
+
+| Feature | Description |
+|---------|-------------|
+| **Permission Handling** | Request, verify, and continuously monitor HealthKit permissions |
+| **Workout Scheduling** | Push workouts to Apple Watch via WorkoutKit with two-layer deduplication |
+| **Workout Reading** | Real-time workout monitoring with foreground/background modes |
+| **Sleep Data** | Fetch and monitor sleep analysis with live streaming support |
+| **Background Delivery** | Native iOS background processing with API or local storage delivery |
+| **Native Lifecycle Management** | Centralized iOS app lifecycle detection for automatic mode switching |
+
+## Architecture Overview
+
+```
+┌──────────────────────────────────────────────────────────────────┐
+│                    Flutter Application Layer                     │
+│  ├─ PermissionManager (permissions)                              │
+│  ├─ WorkoutPushManager (scheduling)                              │
+│  ├─ WorkoutReadManager (reading/monitoring)                      │
+│  └─ SleepDataManager (sleep data)                                │
+└──────────────────────────┬───────────────────────────────────────┘
+                           │ Method Channels + Event Channels
+┌──────────────────────────┴───────────────────────────────────────┐
+│                    iOS Native Layer                              │
+│  ├─ AppLifecycleManager (centralized lifecycle notifications)   │
+│  ├─ PermissionManager (HealthKit authorization)                  │
+│  ├─ WorkoutSchedulingService (WorkoutKit integration)            │
+│  ├─ WorkoutService (HKAnchoredObjectQuery + HKObserverQuery)     │
+│  ├─ SleepDataManager (sleep streaming + background monitoring)  │
+│  └─ WorkoutRecordStore (deduplication + persistence)             │
+└──────────────────────────┬───────────────────────────────────────┘
+                           │
+┌──────────────────────────┴───────────────────────────────────────┐
+│                Apple HealthKit & WorkoutKit                      │
+│  ├─ HKHealthStore (health data access)                           │
+│  ├─ WorkoutScheduler (Apple Watch workout scheduling)            │
+│  └─ HKObserverQuery (background delivery)                        │
+└──────────────────────────────────────────────────────────────────┘
+```
 
 ## Requirements
+
 - **iOS 18.0** minimum deployment target
-- This plugin requires physical devices for testing HealthKit permission popups and reading/writing Health data.
+- **Physical device** required for testing (HealthKit not available in Simulator)
+- **Apple Watch** required for WorkoutKit scheduling features
 
 ### iOS Setup (Info.plist)
 Any application using this plugin must declare the following keys in their `ios/Runner/Info.plist` file. Apple requires clear explanations for why your app needs to read and write Health data. Without these, your app will crash upon requesting permissions.
@@ -476,9 +524,63 @@ void initWorkoutMonitoring() async {
 
 ---
 
-## Sleep Data Reading
+## Native iOS Lifecycle Management
 
-The plugin provides access to Apple HealthKit's sleep analysis data (`HKCategoryTypeIdentifier.sleepAnalysis`). It fetches all sleep samples from the last 24 hours and returns both individual samples and aggregated statistics.
+The plugin uses a centralized `AppLifecycleManager` on the iOS side to automatically detect foreground/background transitions. This is **more accurate** than Flutter's `WidgetsBindingObserver` because it uses native iOS notifications directly.
+
+### How It Works
+
+```
+┌─────────────────────────────────────────────────────────────┐
+│                  AppLifecycleManager                        │
+│  ├─ observes: UIApplication lifecycle notifications        │
+│  ├─ isInForeground: Bool                                   │
+│  └─ observers: NSHashTable<AppLifecycleObserver> (weak)    │
+└───────────────────────┬─────────────────────────────────────┘
+                        │ notifies
+          ┌─────────────┴─────────────┐
+          ▼                           ▼
+┌───────────────────────┐   ┌───────────────────────┐
+│   SleepDataManager    │   │    WorkoutService     │
+│ (AppLifecycleObserver)│   │ (AppLifecycleObserver)│
+└───────────────────────┘   └───────────────────────┘
+```
+
+### iOS Notifications Observed
+
+| Notification | Action |
+|--------------|--------|
+| `UIApplication.didBecomeActiveNotification` | Switches to **foreground mode** (live streaming) |
+| `UIApplication.didEnterBackgroundNotification` | Switches to **background mode** (observer queries) |
+
+### Benefits
+
+1. **Automatic Mode Switching**: Services automatically switch between live streaming and background observer modes
+2. **No Flutter Code Needed**: No need to use `WidgetsBindingObserver` in Dart
+3. **More Accurate**: Native iOS lifecycle detection is more reliable than Flutter callbacks
+4. **Centralized Logic**: All services share the same lifecycle state
+
+### Manual Override (Optional)
+
+While lifecycle is handled automatically, you can still manually trigger mode switches if needed:
+
+```dart
+// Optional: Force foreground mode
+await sleepManager.enterForeground();
+
+// Optional: Force background mode
+await sleepManager.enterBackground();
+```
+
+---
+
+## Sleep Data Reading & Monitoring
+
+The plugin provides comprehensive access to Apple HealthKit's sleep analysis data (`HKCategoryTypeIdentifier.sleepAnalysis`) with support for:
+
+- **One-shot fetch**: Query sleep data for a configurable date range
+- **Live streaming (Foreground)**: Real-time updates via EventChannel using `HKAnchoredObjectQueryDescriptor`
+- **Background monitoring**: Detect changes via `HKObserverQuery` with UserDefaults storage
 
 ### Sleep Stages (iOS 16+)
 
@@ -592,3 +694,177 @@ final response = await sleepManager.getSleepData();
 
 **Note:** On devices with iOS < 16, sleep samples will use `asleepUnspecified` instead of detailed stage classification.
 
+### Live Sleep Monitoring (Foreground)
+
+Start real-time monitoring for sleep data changes:
+
+```dart
+import 'package:humango_health/humango_health.dart';
+
+final sleepManager = SleepDataManager();
+
+void startSleepMonitoring() async {
+  // 1. Start monitoring from 24 hours ago
+  await sleepManager.startMonitoring(
+    startDate: DateTime.now().subtract(const Duration(hours: 24)),
+  );
+  
+  // 2. Listen to real-time updates
+  sleepManager.sleepDataStream.listen((event) {
+    if (event.type == SleepDataEventType.sleepSample) {
+      print('📊 New sleep sample: ${event.sample?.sleepStage}');
+      print('   Duration: ${event.sample?.durationMinutes} min');
+    } else if (event.type == SleepDataEventType.sleepSampleDeleted) {
+      print('🗑️ Sleep sample deleted: ${event.uuid}');
+    }
+  });
+}
+
+void stopSleepMonitoring() async {
+  await sleepManager.stopMonitoring();
+}
+```
+
+### Background Sleep Monitoring
+
+When the app enters background, the plugin automatically switches to `HKObserverQuery` mode and stores new sleep data in `UserDefaults`. Retrieve it when the app opens:
+
+```dart
+void fetchBackgroundSleepData() async {
+  // Retrieve sleep data stored while app was in background
+  final response = await sleepManager.fetchStoredSleepData();
+  
+  if (response.hasSleepData) {
+    print('Retrieved ${response.sampleCount} samples from background');
+    
+    for (final sample in response.samples) {
+      print('Background sample: ${sample.sleepStage} - ${sample.durationMinutes} min');
+    }
+  }
+  
+  // Clear stored data after processing
+  await sleepManager.clearStoredSleepData();
+}
+```
+
+### Dual-Mode Architecture
+
+| Mode | Trigger | Technology | Data Delivery |
+|------|---------|------------|---------------|
+| **Foreground** | App active | `HKAnchoredObjectQueryDescriptor` | EventChannel stream |
+| **Background** | App suspended | `HKObserverQuery` + `enableBackgroundDelivery()` | UserDefaults storage |
+
+**Automatic switching**: The `AppLifecycleManager` automatically switches between modes based on iOS app lifecycle notifications. No Flutter code needed.
+
+### Channels
+
+| Channel | Type | Purpose |
+|---------|------|---------|
+| `com.humango.health/sleep` | MethodChannel | Request/response operations |
+| `com.humango.health/sleep/stream` | EventChannel | Real-time sleep sample streaming |
+
+---
+
+## Workout Reading & Monitoring
+
+The plugin provides comprehensive workout reading with real-time monitoring and intelligent background processing.
+
+### Reading Methods
+
+| Method | Description | Use Case |
+|--------|-------------|----------|
+| `readWorkouts(startDate, endDate)` | One-shot fetch | Initial sync, manual refresh |
+| `startMonitoring(startDate, endDate)` | Live monitoring | Real-time tracking |
+| `getLocalWorkouts()` | Retrieve stored workouts | App startup, background data |
+
+### Starting Workout Monitoring
+
+```dart
+import 'package:humango_health/humango_health.dart';
+
+final workoutManager = WorkoutReadManager();
+
+void startWorkoutMonitoring() async {
+  // 1. Start monitoring from 7 days ago
+  await workoutManager.startMonitoring(
+    DateTime.now().subtract(const Duration(days: 7)),
+  );
+  
+  // 2. Listen to real-time workout updates
+  workoutManager.workoutStream.listen((workoutJson) {
+    print('🏃 New workout received!');
+    print('   JSON: $workoutJson');
+    
+    // Parse and process workout data
+    final workout = jsonDecode(workoutJson);
+    print('   Type: ${workout['activityType']}');
+    print('   Duration: ${workout['duration']} seconds');
+  });
+}
+
+void stopWorkoutMonitoring() async {
+  await workoutManager.stopMonitoring();
+}
+```
+
+### Workout Data Contents
+
+Each workout includes comprehensive data:
+
+| Category | Fields |
+|----------|--------|
+| **Core Metadata** | distance, duration, activityType, startDate, endDate, sourceBundle |
+| **Statistics** | avgHeartRate, maxHeartRate, minHeartRate, totalCalories |
+| **Quantity Series** | Heart rate, steps, distance, power, cadence (20+ types) |
+| **Route Data** | GPS coordinates as `[CLLocation]` array |
+| **Events** | Workout segments, laps, pauses |
+| **Device Info** | Device name, model, iOS version |
+
+### Dual-Mode Monitoring
+
+| Mode | Technology | Data Delivery |
+|------|------------|---------------|
+| **Foreground** | `HKAnchoredObjectQueryDescriptor` | EventChannel stream |
+| **Background** | `HKObserverQuery` + `enableBackgroundDelivery()` | API POST or localStorage |
+
+### Deduplication
+
+The plugin implements two-layer deduplication:
+
+| Layer | Location | Strategy |
+|-------|----------|----------|
+| **Layer 1** | Dart | JSON size comparison (fast filter) |
+| **Layer 2** | iOS | SHA256 hash + byte-level comparison |
+
+---
+## Channel Reference
+
+All communication between Flutter and iOS uses these channels:
+
+| Channel | Type | Purpose |
+|---------|------|---------|
+| `com.humango.health` | MethodChannel | Main health operations |
+| `com.humango.health/permissions` | MethodChannel | Permission handling |
+| `com.humango.health/permissions/stream` | EventChannel | Permission status changes |
+| `com.humango.workouts/push` | MethodChannel | Workout scheduling |
+| `com.humango.workouts/read` | MethodChannel | Workout reading |
+| `com.humango.workouts/read/stream` | EventChannel | Real-time workout updates |
+| `com.humango.health/sleep` | MethodChannel | Sleep data operations |
+| `com.humango.health/sleep/stream` | EventChannel | Real-time sleep updates |
+
+---
+
+## Related Documentation
+
+For detailed subsystem documentation, see:
+
+- [PERMISSION_SUBSYSTEM.md](PERMISSION_SUBSYSTEM.md) - Permission handling architecture
+- [PUSH_WORKOUTS_SUBSYSTEM.md](PUSH_WORKOUTS_SUBSYSTEM.md) - Workout scheduling implementation
+- [READ_WORKOUTS_SUBSYSTEM.md](READ_WORKOUTS_SUBSYSTEM.md) - Workout reading architecture
+- [SLEEP_DATA_SUBSYSTEM.md](SLEEP_DATA_SUBSYSTEM.md) - Sleep data implementation
+
+---
+
+## License
+
+See [LICENSE](LICENSE) for details.

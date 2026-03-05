@@ -1,15 +1,18 @@
 # Sleep Data Subsystem - Requirements & Design
 
-**Document Version:** 1.0  
+**Document Version:** 2.0  
 **Date:** March 5, 2026  
 **Plugin:** humango_health  
-**Subsystem:** Sleep Data Reading
+**Subsystem:** Sleep Data Reading & Monitoring
 
 ---
 
 ## Overview
 
-This subsystem provides access to Apple HealthKit's sleep analysis data (`HKCategoryTypeIdentifier.sleepAnalysis`). It fetches sleep samples for a configurable time range (defaulting to the last 24 hours) and returns both individual samples and aggregated statistics.
+This subsystem provides access to Apple HealthKit's sleep analysis data (`HKCategoryTypeIdentifier.sleepAnalysis`). It supports:
+- **One-shot fetch**: Query sleep data for a configurable time range
+- **Live streaming (Foreground)**: Real-time updates via EventChannel using `HKAnchoredObjectQueryDescriptor`
+- **Background monitoring**: Detect changes via `HKObserverQuery` and store in UserDefaults
 
 ---
 
@@ -25,7 +28,27 @@ This subsystem provides access to Apple HealthKit's sleep analysis data (`HKCate
 - **MUST** include device and source information when available
 - **MUST** return raw JSON for each sample for user inspection
 
-#### 2. Sleep Stage Classification
+#### 2. Live Streaming (Foreground)
+
+- **MUST** use `HKAnchoredObjectQueryDescriptor` for real-time updates (iOS 15+)
+- **MUST** push each new sleep sample to Flutter via EventChannel
+- **MUST** support sample deletion events
+- **MUST** maintain anchor for incremental updates
+
+#### 3. Background Monitoring
+
+- **MUST** use `HKObserverQuery` for background change detection
+- **MUST** enable `HKHealthStore.enableBackgroundDelivery()` for immediate updates
+- **MUST** store fetched data in UserDefaults for later retrieval
+- **MUST** provide `fetchStoredSleepData()` method to retrieve background data
+
+#### 4. Foreground/Background Mode Switching
+
+- **MUST** support `enterForeground()` to switch to live streaming mode
+- **MUST** support `enterBackground()` to switch to observer mode
+- **MUST** automatically switch modes based on app lifecycle
+
+#### 5. Sleep Stage Classification
 
 Support all iOS sleep stages (iOS 16+):
 
@@ -38,18 +61,12 @@ Support all iOS sleep stages (iOS 16+):
 | 4 | `asleepDeep` | Deep sleep |
 | 5 | `asleepREM` | REM sleep |
 
-#### 3. Aggregated Statistics
+#### 6. Aggregated Statistics
 
 Return computed totals:
 - Total sleep time (excluding `inBed` and `awake`)
 - Time spent in each sleep stage
 - Duration in seconds, minutes, and hours
-
-#### 4. Permission Handling
-
-- Check authorization status before querying
-- Return clear error if permission denied
-- Reference existing `PermissionManager` for requesting `sleepAnalysis` read permission
 
 ---
 
@@ -65,14 +82,18 @@ Return computed totals:
 ┌─────────────────────┴────────────────────────────────────┐
 │           Sleep Data Manager (Dart)                      │
 │  ├─ getSleepData({startDate?, endDate?}) → Response      │
-│  └─ Channel: com.humango.health/sleep                    │
+│  ├─ startMonitoring() / stopMonitoring()                 │
+│  ├─ sleepDataStream → Stream<SleepDataEvent>             │
+│  ├─ fetchStoredSleepData() → Response                    │
+│  └─ enterForeground() / enterBackground()                │
 └─────────────────────┬────────────────────────────────────┘
-                      │ Method Channel
+                      │ Method Channel + Event Channel
 ┌─────────────────────┴────────────────────────────────────┐
 │           Sleep Data Manager (iOS/Swift)                 │
-│  ├─ fetchSleepData(startDate:, endDate:) → [String: Any] │
-│  ├─ HKSampleQuery for HKCategoryType.sleepAnalysis       │
-│  └─ Predicate: configurable date range (default: 24h)    │
+│  ├─ fetchSleepData() → one-shot query                    │
+│  ├─ startLiveUpdates() → HKAnchoredObjectQueryDescriptor │
+│  ├─ startBackgroundMonitoring() → HKObserverQuery        │
+│  └─ UserDefaults storage for background data             │
 └─────────────────────┬────────────────────────────────────┘
                       │
 ┌─────────────────────┴────────────────────────────────────┐
@@ -81,73 +102,31 @@ Return computed totals:
 └──────────────────────────────────────────────────────────┘
 ```
 
-### Method Channel
+### Channels
 
-| Channel | Name |
-|---------|------|
-| Sleep Data | `com.humango.health/sleep` |
+| Channel | Type | Name |
+|---------|------|------|
+| Method Channel | Request/Response | `com.humango.health/sleep` |
+| Event Channel | Streaming | `com.humango.health/sleep/stream` |
+
+### Method Channel API
 
 | Method | Direction | Parameters | Response |
 |--------|-----------|------------|----------|
-| `getSleepData` | Dart → iOS | `startDate?: String (ISO8601), endDate?: String (ISO8601)` | `SleepDataResponse` JSON |
+| `getSleepData` | Dart → iOS | `startDate?: ISO8601, endDate?: ISO8601` | `SleepDataResponse` |
+| `startSleepMonitoring` | Dart → iOS | `startDate?: ISO8601` | `{status, startDate}` |
+| `stopSleepMonitoring` | Dart → iOS | None | `{status}` |
+| `fetchStoredSleepData` | Dart → iOS | None | `SleepDataResponse` |
+| `clearStoredSleepData` | Dart → iOS | None | `{status}` |
+| `enterSleepForeground` | Dart → iOS | None | `null` |
+| `enterSleepBackground` | Dart → iOS | None | `null` |
 
-### iOS Implementation
+### Event Channel Events
 
-**File:** `ios/Classes/SleepData/SleepDataManager.swift`
-
-```swift
-@available(iOS 14.0, *)
-public class SleepDataManager: NSObject {
-    static let shared = SleepDataManager()
-    
-    public func handle(_ call: FlutterMethodCall, result: @escaping FlutterResult)
-    private func fetchLastDaySleepData() async throws -> [String: Any]
-    private func convertSampleToDict(_ sample: HKCategorySample) -> [String: Any]
-    private func sleepStageString(from value: Int) -> String
-}
-```
-
-**Query Configuration:**
-- Sample Type: `HKCategoryType(.sleepAnalysis)`
-- Predicate: `HKQuery.predicateForSamples(withStart: yesterday, end: now, options: .strictStartDate)`
-- Sort: By start date, ascending
-- Limit: `HKObjectQueryNoLimit`
-
-### Dart Implementation
-
-**Files:**
-- `lib/src/managers/sleep_data_manager.dart` - Manager class
-- `lib/src/models/sleep_sample.dart` - Data models
-
-**Models:**
-
-```dart
-class SleepSample {
-  final String uuid;
-  final DateTime startDate;
-  final DateTime endDate;
-  final int value;
-  final String sleepStage;
-  final double durationSeconds;
-  final double durationMinutes;
-  final String? sourceName;
-  final String? sourceBundle;
-  final SleepDevice? device;
-  final Map<String, dynamic>? metadata;
-  final Map<String, dynamic> rawJson;
-}
-
-class SleepDataResponse {
-  final List<SleepSample> samples;
-  final int sampleCount;
-  final double totalSleepSeconds;
-  final double totalSleepMinutes;
-  final double totalSleepHours;
-  final SleepStageTotals stageTotals;
-  final DateTime fetchedFrom;
-  final DateTime fetchedTo;
-  final Map<String, dynamic> rawJson;
-}
+| Event Type | Payload |
+|------------|---------|
+| `sleepSample` | `{type: "sleepSample", sample: SleepSample}` |
+| `sleepSampleDeleted` | `{type: "sleepSampleDeleted", uuid: String}` |
 
 class SleepStageTotals {
   final double inBedSeconds;
@@ -213,6 +192,7 @@ class SleepStageTotals {
 | Error Code | Description |
 |------------|-------------|
 | `SLEEP_FETCH_ERROR` | General error during fetch |
+| `LIVE_UPDATE_ERROR` | Error during live streaming |
 | `UNSUPPORTED` | iOS version below 14.0 |
 
 **Authorization Errors (embedded in SLEEP_FETCH_ERROR):**
@@ -222,7 +202,9 @@ class SleepStageTotals {
 
 ---
 
-## Usage Example
+## Usage Examples
+
+### One-Shot Fetch
 
 ```dart
 import 'package:humango_health/humango_health.dart';
@@ -241,22 +223,72 @@ void fetchSleepData() async {
       // Stage breakdown
       print('   Deep sleep: ${response.stageTotals.asleepDeepMinutes.toStringAsFixed(0)} min');
       print('   REM sleep: ${response.stageTotals.asleepREMMinutes.toStringAsFixed(0)} min');
-      print('   Core sleep: ${response.stageTotals.asleepCoreMinutes.toStringAsFixed(0)} min');
-      print('   Awake: ${response.stageTotals.awakeMinutes.toStringAsFixed(0)} min');
-      
-      // Individual samples
-      for (final sample in response.samples) {
-        print('   ${sample.sleepStage}: ${sample.durationMinutes.toStringAsFixed(0)} min');
-        print('      Source: ${sample.sourceName}');
-        print('      Raw JSON: ${sample.rawJson}');
-      }
-    } else {
-      print('No sleep data found for the last 24 hours');
     }
   } on SleepDataException catch (e) {
     print('Error: ${e.code} - ${e.message}');
   }
 }
+```
+
+### Live Streaming (Foreground)
+
+```dart
+import 'dart:async';
+import 'package:humango_health/humango_health.dart';
+
+final sleepManager = SleepDataManager();
+StreamSubscription<SleepDataEvent>? subscription;
+
+void startLiveMonitoring() async {
+  // Subscribe to live sleep data stream
+  subscription = sleepManager.sleepDataStream.listen((event) {
+    if (event is SleepSampleEvent) {
+      print('🛏️ New sleep sample: ${event.sample.sleepStage}');
+      print('   Duration: ${event.sample.durationMinutes} min');
+    } else if (event is SleepSampleDeletedEvent) {
+      print('❌ Sleep sample deleted: ${event.uuid}');
+    }
+  });
+
+  // Start monitoring from a specific date
+  await sleepManager.startMonitoring(
+    startDate: DateTime.now().subtract(const Duration(hours: 24)),
+  );
+}
+
+void stopLiveMonitoring() async {
+  await subscription?.cancel();
+  await sleepManager.stopMonitoring();
+}
+```
+
+### Background Monitoring
+
+```dart
+import 'package:humango_health/humango_health.dart';
+
+final sleepManager = SleepDataManager();
+
+// Start monitoring - native iOS will automatically switch between
+// foreground/background modes based on app lifecycle
+void initSleepMonitoring() async {
+  await sleepManager.startMonitoring();
+}
+
+// Retrieve sleep data stored during background (collected by iOS)
+void fetchBackgroundData() async {
+  final storedData = await sleepManager.fetchStoredSleepData();
+  print('📦 Stored ${storedData.sampleCount} samples from background');
+}
+
+// Clear stored data after processing
+void clearBackgroundData() async {
+  await sleepManager.clearStoredSleepData();
+}
+
+// NOTE: App lifecycle switching is now handled automatically by native iOS
+// via AppLifecycleManager. You no longer need to call enterForeground/enterBackground
+// from Flutter, though they remain available for manual override if needed.
 ```
 
 ---
@@ -300,5 +332,6 @@ await permissionManager.request(
 |-------------|---------|
 | iOS Minimum | 14.0 |
 | iOS Sleep Stages | 16.0+ (for asleepCore, asleepDeep, asleepREM) |
+| iOS Live Streaming | 15.0+ (HKAnchoredObjectQueryDescriptor) |
 | Flutter | 3.0+ |
 | Dart | 2.17+ |

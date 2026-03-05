@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:humango_health/humango_health.dart';
 
@@ -20,10 +21,27 @@ class _SleepDataScreenState extends State<SleepDataScreen> {
   DateTime? _customStartDate;
   DateTime? _customEndDate;
 
+  // Live monitoring state
+  bool _isMonitoring = false;
+  StreamSubscription<SleepDataEvent>? _sleepSubscription;
+  final List<SleepDataEvent> _liveEvents = [];
+
   @override
   void initState() {
     super.initState();
+    // Note: App lifecycle (foreground/background) is now handled automatically
+    // by native iOS AppLifecycleManager - no need to manually call
+    // enterForeground/enterBackground from Flutter.
     _fetchSleepData();
+  }
+
+  @override
+  void dispose() {
+    _sleepSubscription?.cancel();
+    if (_isMonitoring) {
+      _sleepManager.stopMonitoring();
+    }
+    super.dispose();
   }
 
   DateTime _getStartDate() {
@@ -111,12 +129,132 @@ class _SleepDataScreenState extends State<SleepDataScreen> {
     _fetchSleepData();
   }
 
+  // MARK: - Live Monitoring
+
+  Future<void> _toggleMonitoring() async {
+    if (_isMonitoring) {
+      await _stopMonitoring();
+    } else {
+      await _startMonitoring();
+    }
+  }
+
+  Future<void> _startMonitoring() async {
+    try {
+      // Start listening to the stream
+      _sleepSubscription = _sleepManager.sleepDataStream.listen(
+        (event) {
+          setState(() {
+            _liveEvents.insert(0, event);
+            // Keep only the last 50 events
+            if (_liveEvents.length > 50) {
+              _liveEvents.removeLast();
+            }
+          });
+          print('🛏️ Live event: $event');
+        },
+        onError: (error) {
+          print('🛏️ Stream error: $error');
+          ScaffoldMessenger.of(
+            context,
+          ).showSnackBar(SnackBar(content: Text('Stream error: $error')));
+        },
+      );
+
+      // Start monitoring on iOS side
+      final result = await _sleepManager.startMonitoring(
+        startDate: _getStartDate(),
+      );
+
+      setState(() {
+        _isMonitoring = true;
+        _liveEvents.clear();
+      });
+
+      print('🛏️ Started monitoring: $result');
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text('Live monitoring started')),
+        );
+      }
+    } catch (e) {
+      print('🛏️ Error starting monitoring: $e');
+      if (mounted) {
+        ScaffoldMessenger.of(
+          context,
+        ).showSnackBar(SnackBar(content: Text('Error: $e')));
+      }
+    }
+  }
+
+  Future<void> _stopMonitoring() async {
+    try {
+      await _sleepSubscription?.cancel();
+      _sleepSubscription = null;
+
+      await _sleepManager.stopMonitoring();
+
+      setState(() {
+        _isMonitoring = false;
+      });
+
+      print('🛏️ Stopped monitoring');
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text('Live monitoring stopped')),
+        );
+      }
+    } catch (e) {
+      print('🛏️ Error stopping monitoring: $e');
+    }
+  }
+
+  Future<void> _fetchStoredData() async {
+    try {
+      final storedData = await _sleepManager.fetchStoredSleepData();
+      setState(() {
+        _sleepData = storedData;
+      });
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text('Loaded ${storedData.sampleCount} stored samples'),
+          ),
+        );
+      }
+    } catch (e) {
+      print('🛏️ Error fetching stored data: $e');
+      if (mounted) {
+        ScaffoldMessenger.of(
+          context,
+        ).showSnackBar(SnackBar(content: Text('Error: $e')));
+      }
+    }
+  }
+
   @override
   Widget build(BuildContext context) {
     return Scaffold(
       appBar: AppBar(
         title: const Text('Sleep Data'),
         actions: [
+          // Live monitoring toggle
+          IconButton(
+            icon: Icon(
+              _isMonitoring ? Icons.stop_circle : Icons.play_circle,
+              color: _isMonitoring ? Colors.red : null,
+            ),
+            onPressed: _toggleMonitoring,
+            tooltip: _isMonitoring
+                ? 'Stop monitoring'
+                : 'Start live monitoring',
+          ),
+          // Fetch stored data (from background)
+          IconButton(
+            icon: const Icon(Icons.storage),
+            onPressed: _fetchStoredData,
+            tooltip: 'Fetch stored data',
+          ),
           IconButton(
             icon: const Icon(Icons.calendar_today),
             onPressed: _selectCustomDateRange,
@@ -131,10 +269,115 @@ class _SleepDataScreenState extends State<SleepDataScreen> {
       body: Column(
         children: [
           _buildDateRangeSelector(),
+          if (_isMonitoring) _buildMonitoringBanner(),
+          if (_liveEvents.isNotEmpty) _buildLiveEventsSection(),
           Expanded(child: _buildBody()),
         ],
       ),
     );
+  }
+
+  Widget _buildMonitoringBanner() {
+    return Container(
+      width: double.infinity,
+      padding: const EdgeInsets.symmetric(vertical: 8, horizontal: 16),
+      color: Colors.green.shade100,
+      child: Row(
+        children: [
+          Container(
+            width: 10,
+            height: 10,
+            decoration: const BoxDecoration(
+              color: Colors.green,
+              shape: BoxShape.circle,
+            ),
+          ),
+          const SizedBox(width: 8),
+          const Expanded(
+            child: Text(
+              'Live monitoring active - new sleep data will appear automatically',
+              style: TextStyle(fontSize: 12),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildLiveEventsSection() {
+    return Container(
+      constraints: const BoxConstraints(maxHeight: 150),
+      margin: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+      decoration: BoxDecoration(
+        border: Border.all(color: Colors.purple.shade200),
+        borderRadius: BorderRadius.circular(8),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Padding(
+            padding: const EdgeInsets.all(8.0),
+            child: Row(
+              children: [
+                const Icon(Icons.stream, size: 16, color: Colors.purple),
+                const SizedBox(width: 4),
+                Text(
+                  'Live Events (${_liveEvents.length})',
+                  style: const TextStyle(
+                    fontWeight: FontWeight.bold,
+                    fontSize: 12,
+                  ),
+                ),
+                const Spacer(),
+                TextButton(
+                  onPressed: () => setState(() => _liveEvents.clear()),
+                  child: const Text('Clear', style: TextStyle(fontSize: 12)),
+                ),
+              ],
+            ),
+          ),
+          Expanded(
+            child: ListView.builder(
+              itemCount: _liveEvents.length,
+              padding: const EdgeInsets.symmetric(horizontal: 8),
+              itemBuilder: (context, index) {
+                final event = _liveEvents[index];
+                return _buildEventTile(event);
+              },
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildEventTile(SleepDataEvent event) {
+    if (event is SleepSampleEvent) {
+      return ListTile(
+        dense: true,
+        leading: Icon(
+          _getStageIcon(event.sample.sleepStage),
+          color: _getStageColor(event.sample.sleepStage),
+          size: 20,
+        ),
+        title: Text(
+          _formatStageName(event.sample.sleepStage),
+          style: const TextStyle(fontSize: 12),
+        ),
+        subtitle: Text(
+          '${event.sample.durationMinutes.toStringAsFixed(0)} min',
+          style: const TextStyle(fontSize: 10),
+        ),
+      );
+    } else if (event is SleepSampleDeletedEvent) {
+      return ListTile(
+        dense: true,
+        leading: const Icon(Icons.delete, color: Colors.red, size: 20),
+        title: const Text('Sample deleted', style: TextStyle(fontSize: 12)),
+        subtitle: Text(event.uuid, style: const TextStyle(fontSize: 10)),
+      );
+    }
+    return const SizedBox.shrink();
   }
 
   Widget _buildDateRangeSelector() {

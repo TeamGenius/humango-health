@@ -17,6 +17,7 @@ public class HumangoHealthPlugin: NSObject, FlutterPlugin {
     
     // Phase 5: Sleep Data Reading
     let sleepDataMethodChannel = FlutterMethodChannel(name: "com.humango.health/sleep", binaryMessenger: registrar.messenger())
+    let sleepDataEventChannel = FlutterEventChannel(name: "com.humango.health/sleep/stream", binaryMessenger: registrar.messenger())
 
     let instance = HumangoHealthPlugin()
     
@@ -27,6 +28,11 @@ public class HumangoHealthPlugin: NSObject, FlutterPlugin {
     
     permissionEventChannel.setStreamHandler(PermissionStreamHandler())
     workoutReadEventChannel.setStreamHandler(instance.workoutReadChannel)
+    
+    // Set up sleep data event channel stream handler
+    if #available(iOS 14.0, *) {
+        sleepDataEventChannel.setStreamHandler(SleepDataManager.shared)
+    }
   }
 
   public func handle(_ call: FlutterMethodCall, result: @escaping FlutterResult) {
@@ -39,10 +45,17 @@ public class HumangoHealthPlugin: NSObject, FlutterPlugin {
           workoutReadChannel.handle(call, result: result)
       } else if ["scheduleWorkoutsFromFlutter", "clearAppleScheduledWorkouts", "requestAuthorizationForWorkoutPush", "getScheduledWorkouts"].contains(call.method) {
           WorkoutPlanManager.shared.handle(call, result: result)
-      } else if ["getSleepData"].contains(call.method) {
-          // Sleep data channel
+      } else if ["getSleepData", "startSleepMonitoring", "stopSleepMonitoring", "fetchStoredSleepData", "clearStoredSleepData", "enterSleepForeground", "enterSleepBackground"].contains(call.method) {
+          // Sleep data channel - remap foreground/background methods to avoid conflict with workout methods
+          var mappedCall = call
+          if call.method == "enterSleepForeground" {
+              mappedCall = FlutterMethodCall(methodName: "enterForeground", arguments: call.arguments)
+          } else if call.method == "enterSleepBackground" {
+              mappedCall = FlutterMethodCall(methodName: "enterBackground", arguments: call.arguments)
+          }
+          
           if #available(iOS 14.0, *) {
-              SleepDataManager.shared.handle(call, result: result)
+              SleepDataManager.shared.handle(mappedCall, result: result)
           } else {
               result(FlutterError(code: "UNSUPPORTED", message: "Sleep data requires iOS 14.0+", details: nil))
           }

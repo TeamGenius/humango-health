@@ -1,6 +1,7 @@
 //
 // WorkOutService.swift
 // Updated: integrated RouteService registry + endDate 2-hour rule + WorkoutRecordStore touches
+// Uses native iOS lifecycle detection via AppLifecycleManager for automatic mode switching
 //
 
 import Foundation
@@ -8,7 +9,7 @@ import HealthKit
 import WorkoutKit
 
 @available(iOS 17.0, *)
-final class WorkoutService {
+final class WorkoutService: AppLifecycleObserver {
     // public-ish config
     static let liveWindowSeconds: TimeInterval = 2 * 60 * 60 // 2 hours
 
@@ -26,7 +27,6 @@ final class WorkoutService {
     private var importCycling = false
     private var importSwimming = false
     private var excludeImporting : [String] = []
-    private var appIsActive = true
 
     // --- registry of active RouteService instances (only for recent + tracked workouts)
     private var routeServices: [String: RouteService] = [:]
@@ -35,6 +35,14 @@ final class WorkoutService {
     init(startDate: Date) {
         self.startDate = startDate
         self.handleSpotImporting()
+        
+        // Register with AppLifecycleManager for automatic foreground/background switching
+        AppLifecycleManager.shared.addObserver(self)
+        debugPrint("Read Workouts: WorkoutService initialized with native lifecycle observer")
+    }
+    
+    deinit {
+        AppLifecycleManager.shared.removeObserver(self)
     }
     
     func handleSpotImporting(){
@@ -63,17 +71,28 @@ final class WorkoutService {
         await fetchWorkouts()          // initial delta fetch
         startLiveUpdates()
     }
+    
+    // MARK: - AppLifecycleObserver (Native iOS lifecycle)
+    
+    func appDidEnterForeground() {
+        enterForegroundMode()
+    }
+    
+    func appDidEnterBackground() {
+        enterBackgroundMode()
+    }
 
     // MARK: - Foreground / Background switches
 
     // Call to switch into background mode: stop live streaming & enable background observer
     func enterBackgroundMode() {
-        appIsActive = false
+        guard authorized else { return }
+        
         // stop foreground live streaming
         stopLiveUpdates()
         // start background observer/wake-ups
         startBackgroundMonitoring()
-        debugPrint("Read Workouts: WorkoutService -> entered BACKGROUND mode")
+        debugPrint("Read Workouts: WorkoutService -> entered BACKGROUND mode via native lifecycle")
 
         // Propagate to retained route services
         routeServiceQueue.async(flags: .barrier) {
@@ -85,12 +104,13 @@ final class WorkoutService {
 
     // Call to switch back into foreground mode: stop background monitoring & start live streaming
     func enterForegroundMode() {
-        appIsActive = true
+        guard authorized else { return }
+        
         // stop background observer/wake-ups
         stopBackgroundMonitoring()
         // start live streaming in foreground
         startLiveUpdates()
-        debugPrint("Read Workouts: WorkoutService -> entered FOREGROUND mode")
+        debugPrint("Read Workouts: WorkoutService -> entered FOREGROUND mode via native lifecycle")
 
         // Propagate to retained route services
         routeServiceQueue.async(flags: .barrier) {
@@ -289,8 +309,8 @@ final class WorkoutService {
                 // Fetch snapshot first (so we have any already-available routes)
                 await routeService.fetchWorkoutRoute()
 
-                // Start the appropriate mode depending on app state
-                if appIsActive {
+                // Start the appropriate mode depending on app state (from native lifecycle manager)
+                if AppLifecycleManager.shared.isInForeground {
                     // App in foreground — start live streaming
                     routeService.startLiveUpdates()
                     debugPrint("Read Workouts: WorkoutService:  started RouteService live updates for \(deviceId)")
