@@ -122,14 +122,14 @@ public class WorkoutPlanManager: NSObject {
             }
             
             // Try to get workout name and activity type from the plan
-            if let customComposition = plan.workout as? CustomWorkoutComposition {
-                workoutInfo["activityType"] = customComposition.activity.workoutActivityType.name
-                if let displayName = customComposition.displayName {
+            if let customWorkout = plan.workout as? CustomWorkout {
+                workoutInfo["activityType"] = String(describing: customWorkout.activity)
+                if let displayName = customWorkout.displayName {
                     workoutInfo["name"] = displayName
                 }
-            } else if let goalComposition = plan.workout as? SingleGoalWorkoutComposition {
-                workoutInfo["activityType"] = goalComposition.activity.workoutActivityType.name
-            } else if let swimBikeRunComposition = plan.workout as? SwimBikeRunWorkoutComposition {
+            } else if let goalWorkout = plan.workout as? SingleGoalWorkout {
+                workoutInfo["activityType"] = String(describing: goalWorkout.activity)
+            } else if let swimBikeRunWorkout = plan.workout as? SwimBikeRunWorkout {
                 workoutInfo["activityType"] = "Triathlon"
             }
             

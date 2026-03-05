@@ -2,7 +2,11 @@
 
 A Flutter plugin for integrating iOS HealthKit and WorkoutKit functionalities natively into the Humango platform. 
 
-Currently, this plugin specifically supports the **Permission Handling Subsystem**.
+This plugin supports:
+- **Permission Handling** - Request and verify HealthKit permissions
+- **Workout Scheduling** - Push workouts to Apple Watch via WorkoutKit
+- **Activity Reading** - Read workouts and health data from HealthKit
+- **Sleep Data** - Fetch sleep analysis with detailed stage breakdown
 
 ## Requirements
 - **iOS 18.0** minimum deployment target
@@ -469,3 +473,122 @@ void initWorkoutMonitoring() async {
   });
 }
 ```
+
+---
+
+## Sleep Data Reading
+
+The plugin provides access to Apple HealthKit's sleep analysis data (`HKCategoryTypeIdentifier.sleepAnalysis`). It fetches all sleep samples from the last 24 hours and returns both individual samples and aggregated statistics.
+
+### Sleep Stages (iOS 16+)
+
+| Value | Stage | Description |
+|-------|-------|-------------|
+| 0 | `inBed` | User is in bed but not necessarily asleep |
+| 1 | `asleepUnspecified` | User is asleep (stage unknown) |
+| 2 | `awake` | User woke up during sleep |
+| 3 | `asleepCore` | Core/light sleep |
+| 4 | `asleepDeep` | Deep sleep |
+| 5 | `asleepREM` | REM sleep |
+
+### Fetching Sleep Data
+
+```dart
+import 'package:humango_health/humango_health.dart';
+
+final sleepManager = SleepDataManager();
+
+void fetchSleepData() async {
+  try {
+    final response = await sleepManager.getSleepData();
+    
+    if (response.hasSleepData) {
+      print('🛏️ Sleep Summary:');
+      print('   Total sleep: ${response.totalSleepHours.toStringAsFixed(1)} hours');
+      print('   Samples: ${response.sampleCount}');
+      
+      // Stage breakdown
+      print('   Deep sleep: ${response.stageTotals.asleepDeepMinutes.toStringAsFixed(0)} min');
+      print('   REM sleep: ${response.stageTotals.asleepREMMinutes.toStringAsFixed(0)} min');
+      print('   Core sleep: ${response.stageTotals.asleepCoreMinutes.toStringAsFixed(0)} min');
+      print('   Awake: ${response.stageTotals.awakeMinutes.toStringAsFixed(0)} min');
+      
+      // Individual samples with raw JSON
+      for (final sample in response.samples) {
+        print('   ${sample.sleepStage}: ${sample.durationMinutes.toStringAsFixed(0)} min');
+        print('      Source: ${sample.sourceName}');
+        print('      Device: ${sample.device?.name}');
+        print('      Raw JSON: ${sample.rawJson}');
+      }
+      
+      // Access full raw response
+      print('Full response JSON: ${response.rawJson}');
+    } else {
+      print('No sleep data found for the last 24 hours');
+    }
+  } on SleepDataException catch (e) {
+    print('Error: ${e.code} - ${e.message}');
+  }
+}
+```
+
+### Response Structure
+
+The `SleepDataResponse` contains:
+
+| Property | Type | Description |
+|----------|------|-------------|
+| `samples` | `List<SleepSample>` | Individual sleep samples |
+| `sampleCount` | `int` | Number of samples |
+| `totalSleepSeconds` | `double` | Total actual sleep time (excludes inBed/awake) |
+| `totalSleepMinutes` | `double` | Total sleep in minutes |
+| `totalSleepHours` | `double` | Total sleep in hours |
+| `stageTotals` | `SleepStageTotals` | Time spent in each stage |
+| `fetchedFrom` | `DateTime` | Query start time (24h ago) |
+| `fetchedTo` | `DateTime` | Query end time (now) |
+| `rawJson` | `Map<String, dynamic>` | Complete raw response from iOS |
+
+### SleepSample Properties
+
+Each `SleepSample` includes:
+
+| Property | Type | Description |
+|----------|------|-------------|
+| `uuid` | `String` | HealthKit sample UUID |
+| `startDate` | `DateTime` | Sleep segment start |
+| `endDate` | `DateTime` | Sleep segment end |
+| `value` | `int` | Raw sleep stage value (0-5) |
+| `sleepStage` | `String` | Human-readable stage name |
+| `durationSeconds` | `double` | Duration in seconds |
+| `durationMinutes` | `double` | Duration in minutes |
+| `sourceName` | `String?` | Recording app/device name |
+| `sourceBundle` | `String?` | Recording app bundle ID |
+| `device` | `SleepDevice?` | Device information |
+| `metadata` | `Map?` | Additional HealthKit metadata |
+| `rawJson` | `Map<String, dynamic>` | Complete raw sample JSON |
+
+### Permission Requirements
+
+Ensure sleep data read permission is granted before fetching:
+
+```dart
+final permissionManager = PermissionManager();
+
+// Request sleep read permission
+await permissionManager.request(
+  [HealthDataType.sleepAnalysis],  // Read types
+  []  // Write types (none needed for reading)
+);
+
+// Then fetch sleep data
+final sleepManager = SleepDataManager();
+final response = await sleepManager.getSleepData();
+```
+
+### Compatibility
+
+- **iOS 14.0+**: Basic sleep data (inBed, asleepUnspecified, awake)
+- **iOS 16.0+**: Detailed sleep stages (asleepCore, asleepDeep, asleepREM)
+
+**Note:** On devices with iOS < 16, sleep samples will use `asleepUnspecified` instead of detailed stage classification.
+

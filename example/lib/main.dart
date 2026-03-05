@@ -4,6 +4,7 @@ import 'package:url_launcher/url_launcher.dart';
 import 'health_permissions_provider.dart';
 import 'workout_push_screen.dart' as workouts;
 import 'workout_read_screen.dart' as readworkouts;
+import 'sleep_data_screen.dart' as sleep;
 import 'package:humango_health/humango_health.dart';
 
 void main() {
@@ -234,6 +235,7 @@ class _AppTabsScreenState extends State<_AppTabsScreen> {
   final List<Widget> _pages = [
     const workouts.WorkoutPushScreen(),
     const readworkouts.WorkoutReadScreen(),
+    const sleep.SleepDataScreen(),
   ];
 
   @override
@@ -254,6 +256,7 @@ class _AppTabsScreenState extends State<_AppTabsScreen> {
             label: 'Push',
           ),
           BottomNavigationBarItem(icon: Icon(Icons.sync), label: 'Read'),
+          BottomNavigationBarItem(icon: Icon(Icons.bedtime), label: 'Sleep'),
         ],
       ),
     );
