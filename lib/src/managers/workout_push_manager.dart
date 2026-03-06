@@ -8,17 +8,13 @@ import 'package:flutter/services.dart';
 import '../models/workout_push_authorization_result.dart';
 import '../models/workout_push_response.dart';
 import '../models/scheduled_workout_info.dart';
-import '../storage/workout_push_record.dart';
-import '../storage/workout_storage.dart';
-import '../utils/workout_comparator.dart';
+import '../models/workout_removal_result.dart';
 
 /// The central Dart manager for pushing WorkoutPlans to Apple Health via WorkoutKit.
 class WorkoutPushManager {
   static const MethodChannel _channel = MethodChannel(
     'com.humango.workouts/workoutplan',
   );
-
-  final WorkoutStorage _storage = WorkoutStorage();
 
   /// Retrieves the list of currently scheduled workouts from Apple Watch via WorkoutKit.
   ///
@@ -83,16 +79,20 @@ class WorkoutPushManager {
   /// - `blocks`: Non-empty array of interval blocks
   ///
   /// **Validation Behavior:**
-  /// If ANY workout in the batch is missing required fields, the ENTIRE batch
-  /// will be rejected and all workouts will be marked as failed with validation errors.
+  /// Each workout is validated individually. Workouts that fail validation are
+  /// recorded with `validationError` status. The remaining valid workouts are
+  /// sent to native for scheduling. The final response consolidates all results:
+  /// validation failures + native skipped + native scheduled.
   ///
-  /// Handles deduplication offline by calculating raw payload sizes and extracting IDs.
+  /// Handles deduplication offline by calculating raw payload sizes, comparing
+  /// dates, and extracting IDs.
   Future<WorkoutPushResponse> pushRawWorkouts(
     List<Map<String, dynamic>> workouts,
   ) async {
-    // MARK: - Strict Validation (All or Nothing)
-    // Validate ALL workouts first - if ANY fails, reject the entire batch
-    final validationErrors = <Map<String, dynamic>>[];
+    // Per-workout validation — collect failures, continue with valid ones
+    final List<WorkoutPushResult> failedResults = [];
+    final List<Map<String, dynamic>> validWorkouts = [];
+    int failed = 0;
 
     for (int i = 0; i < workouts.length; i++) {
       final jsonMap = workouts[i];
@@ -112,7 +112,6 @@ class WorkoutPushManager {
           "Invalid 'date' type: expected String, got ${dateValue.runtimeType}",
         );
       } else {
-        // Try to parse the date
         final parsedDate = DateTime.tryParse(dateValue);
         if (parsedDate == null) {
           errors.add(
@@ -136,103 +135,35 @@ class WorkoutPushManager {
       }
 
       if (errors.isNotEmpty) {
-        validationErrors.add({
-          'index': i,
-          'schedule_id': jsonMap['schedule_id']?.toString() ?? 'N/A',
-          'errors': errors,
-          'failedJson': jsonMap,
-        });
-      }
-    }
-
-    // If ANY validation errors exist, reject the ENTIRE batch
-    if (validationErrors.isNotEmpty) {
-      final errorDetails = validationErrors
-          .map((error) {
-            final idx = error['index'] as int;
-            final scheduleId = error['schedule_id'] as String;
-            final errs = error['errors'] as List<String>;
-            return "Workout[$idx] (schedule_id: $scheduleId): ${errs.join(', ')}";
-          })
-          .join('; ');
-
-      debugPrint(
-        '\u274c [Humango Health] Validation failed for ${validationErrors.length} workout(s): $errorDetails',
-      );
-
-      // Return all workouts as failed with validation errors
-      final failedResults = <WorkoutPushResult>[];
-      for (var error in validationErrors) {
-        final scheduleId = error['schedule_id'] as String;
-        final errs = error['errors'] as List<String>;
-        final failedJson = error['failedJson'] as Map<String, dynamic>;
-
+        final scheduleId =
+            jsonMap['schedule_id']?.toString() ?? 'N/A';
+        debugPrint(
+          '\u274c [Humango Health] Validation failed for workout[$i] (schedule_id: $scheduleId): ${errors.join(', ')}',
+        );
         failedResults.add(
           WorkoutPushResult(
             workoutId: scheduleId,
             status: WorkoutPushStatus.validationError,
-            errorMessage: errs.join(', '),
-            currentJson: failedJson,
+            errorMessage: errors.join(', '),
+            currentJson: jsonMap,
           ),
         );
+        failed++;
+      } else {
+        validWorkouts.add(jsonMap);
       }
-
-      return WorkoutPushResponse(
-        results: failedResults,
-        totalSubmitted: workouts.length,
-        successful: 0,
-        skipped: 0,
-        failed: workouts.length,
-      );
     }
 
-    // All workouts passed validation, continue with processing
-    List<Map<String, dynamic>> plansToPush = [];
-    List<WorkoutPushResult> finalResults = [];
+    // All deduplication is handled natively — send valid workouts to iOS
+    List<WorkoutPushResult> finalResults = [...failedResults];
     int successful = 0;
     int skipped = 0;
-    int failed = 0;
 
-    for (var jsonMap in workouts) {
-      // Extract schedule_id (guaranteed to exist after validation)
-      final planId = jsonMap['schedule_id'].toString();
-
-      // 2. Check Dart-layer Deduplication
-      final existingRecord = await _storage.getRecord(planId);
-      final currentSize = WorkoutComparator.calculateJsonSize(jsonMap);
-
-      bool needsPush = true;
-      if (existingRecord != null) {
-        if (existingRecord.jsonSizeBytes == currentSize) {
-          needsPush = false;
-        }
-      }
-
-      if (needsPush) {
-        plansToPush.add(jsonMap);
-      } else {
-        // Include both JSONs for user comparison
-        finalResults.add(
-          WorkoutPushResult.skipped(
-            planId,
-            reason: 'dart_dedup_unchanged',
-            currentJson: jsonMap,
-            existingJson: existingRecord?.workoutJson,
-            currentJsonSizeBytes: currentSize,
-            existingJsonSizeBytes: existingRecord?.jsonSizeBytes,
-            workoutPlanId: existingRecord?.workoutPlanId,
-          ),
-        );
-        skipped++;
-      }
-    }
-
-    // 3. Dispatch to Native iOS if work remains
-    if (plansToPush.isNotEmpty) {
+    if (validWorkouts.isNotEmpty) {
       try {
         final response = await _channel.invokeMethod(
           'scheduleWorkoutsFromFlutter',
-          plansToPush,
+          validWorkouts,
         );
 
         if (response != null && response is Map) {
@@ -245,12 +176,10 @@ class WorkoutPushManager {
                 resultData,
               );
 
-              // Check status from iOS response
               final status = recordMap['status'] as String?;
               final workoutId = recordMap['workoutId'] as String? ?? 'unknown';
 
               if (status == 'skipped') {
-                // Skipped by iOS deduplication - extract JSON details for comparison
                 final reason =
                     recordMap['reason'] as String? ?? 'ios_unchanged';
                 final currentJson =
@@ -275,18 +204,61 @@ class WorkoutPushManager {
                   ),
                 );
                 skipped++;
+              } else if (status == 'validation_error') {
+                final reason =
+                    recordMap['reason'] as String? ?? 'native_validation_error';
+                finalResults.add(
+                  WorkoutPushResult(
+                    workoutId: workoutId,
+                    status: WorkoutPushStatus.validationError,
+                    errorMessage: reason,
+                    currentJson:
+                        recordMap['currentJson'] as Map<String, dynamic>?,
+                  ),
+                );
+                failed++;
+              } else if (status == 'device_not_supported') {
+                finalResults.add(
+                  WorkoutPushResult(
+                    workoutId: workoutId,
+                    status: WorkoutPushStatus.failed,
+                    errorMessage:
+                        recordMap['reason'] as String? ??
+                        'Device does not support scheduled workouts',
+                    currentJson:
+                        recordMap['currentJson'] as Map<String, dynamic>?,
+                  ),
+                );
+                failed++;
+              } else if (status == 'scheduled') {
+                // Scheduled successfully — native handles storage
+                finalResults.add(
+                  WorkoutPushResult(
+                    workoutId: workoutId,
+                    status: WorkoutPushStatus.success,
+                    workoutPlanId: recordMap['workoutPlanId'] as String?,
+                    currentJson:
+                        recordMap['workoutJson'] as Map<String, dynamic>?,
+                  ),
+                );
+                successful++;
               } else {
-                // Scheduled successfully
-                final record = WorkoutPushRecord.fromJson(recordMap);
-                await _storage.saveRecord(record);
-                finalResults.add(WorkoutPushResult.success(record));
+                // Unknown status — treat as success
+                finalResults.add(
+                  WorkoutPushResult(
+                    workoutId: workoutId,
+                    status: WorkoutPushStatus.success,
+                    workoutPlanId: recordMap['workoutPlanId'] as String?,
+                  ),
+                );
                 successful++;
               }
             }
           } else {
-            failed += plansToPush.length;
-            for (var p in plansToPush) {
+            failed += validWorkouts.length;
+            for (var p in validWorkouts) {
               final id =
+                  p['schedule_id']?.toString() ??
                   p['id']?.toString() ??
                   p['workout_id']?.toString() ??
                   'unknown';
@@ -295,16 +267,19 @@ class WorkoutPushManager {
                   workoutId: id,
                   status: WorkoutPushStatus.failed,
                   errorMessage:
-                      "Missing detailed scheduled record array from iOS",
+                      'Missing detailed scheduled record array from iOS',
                 ),
               );
             }
           }
         }
       } catch (e) {
-        for (var p in plansToPush) {
+        for (var p in validWorkouts) {
           final id =
-              p['id']?.toString() ?? p['workout_id']?.toString() ?? 'unknown';
+              p['schedule_id']?.toString() ??
+              p['id']?.toString() ??
+              p['workout_id']?.toString() ??
+              'unknown';
           finalResults.add(
             WorkoutPushResult(
               workoutId: id,
@@ -326,8 +301,70 @@ class WorkoutPushManager {
     );
   }
 
-  /// Manually wipe the local cache to force a re-sync on the next push.
-  Future<void> clearDeduplicationCache() async {
-    await _storage.clearAll();
+  /// Clears the native-side deduplication cache (ScheduledWorkoutStore).
+  /// Forces a full re-sync on the next push.
+  Future<bool> clearDeduplicationCache() async {
+    try {
+      final result = await _channel.invokeMethod<bool>(
+        'clearAppleScheduledWorkouts',
+      );
+      return result ?? false;
+    } catch (e) {
+      debugPrint('\u274c [Humango Health] Failed to clear native cache: $e');
+      return false;
+    }
+  }
+
+  /// Removes scheduled workouts from Apple Watch and local storage by their WorkoutPlan IDs.
+  ///
+  /// Accepts a list of `workoutPlanId` strings (the UUIDs assigned by WorkoutKit
+  /// when the workout was originally scheduled).
+  ///
+  /// Returns a list of [WorkoutRemovalResult], one per requested ID, indicating:
+  /// - `success` — removed from both Apple Watch and local storage
+  /// - `partial` — not found on Apple Watch but cleaned from local storage
+  /// - `fail` — not found anywhere
+  ///
+  /// Requires iOS 17.0+.
+  Future<List<WorkoutRemovalResult>> removeScheduledWorkouts(
+    List<String> workoutPlanIds,
+  ) async {
+    if (workoutPlanIds.isEmpty) return [];
+
+    try {
+      final response = await _channel.invokeMethod<List<dynamic>>(
+        'removeScheduledWorkouts',
+        workoutPlanIds,
+      );
+
+      if (response != null) {
+        return response
+            .map(
+              (item) => WorkoutRemovalResult.fromMap(
+                Map<dynamic, dynamic>.from(item as Map),
+              ),
+            )
+            .toList();
+      }
+      return workoutPlanIds
+          .map(
+            (id) => WorkoutRemovalResult(
+              workoutPlanId: id,
+              status: WorkoutRemovalStatus.fail,
+              message: 'No response from native layer',
+            ),
+          )
+          .toList();
+    } catch (e) {
+      return workoutPlanIds
+          .map(
+            (id) => WorkoutRemovalResult(
+              workoutPlanId: id,
+              status: WorkoutRemovalStatus.fail,
+              message: e.toString(),
+            ),
+          )
+          .toList();
+    }
   }
 }

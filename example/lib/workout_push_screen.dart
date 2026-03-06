@@ -137,7 +137,7 @@ class _WorkoutPushScreenState extends State<WorkoutPushScreen> {
         final result = response.results.first;
         if (result.status == WorkoutPushStatus.success) {
           _statusMessage =
-              '✅ Success!\nWorkout ID: ${result.workoutId}\nPlan ID: ${result.record?.workoutPlanId}';
+              '✅ Success!\nWorkout ID: ${result.workoutId}\nPlan ID: ${result.workoutPlanId}';
         } else if (result.status == WorkoutPushStatus.skipped) {
           _statusMessage = '⏭️ Skipped (Already Pushed natively)';
         } else {
@@ -156,9 +156,11 @@ class _WorkoutPushScreenState extends State<WorkoutPushScreen> {
   }
 
   Future<void> _clearCache() async {
-    await _pushManager.clearDeduplicationCache();
+    final cleared = await _pushManager.clearDeduplicationCache();
     setState(() {
-      _statusMessage = 'Local Deduplication Cache Cleared.';
+      _statusMessage = cleared
+          ? 'Native Deduplication Cache Cleared.'
+          : 'Failed to clear native cache.';
     });
   }
 

@@ -65,10 +65,11 @@ final class WorkoutService: AppLifecycleObserver {
 
     // Call this ONCE after you create the service
     // Note: Authorization is handled by PermissionManager before creating this service
+    // startLiveUpdates() uses an open-ended anchored query (startDate → nil) so the first
+    // stream delivery already includes all historical workouts — no separate fetch needed.
     func start() async {
         authorized = true
         debugPrint("Read Workouts: WorkoutService: start")
-        await fetchWorkouts()          // initial delta fetch
         startLiveUpdates()
     }
     

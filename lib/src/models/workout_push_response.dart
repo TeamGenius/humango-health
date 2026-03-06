@@ -3,8 +3,6 @@
 //  humango_health
 //
 
-import '../storage/workout_push_record.dart';
-
 /// The final response returned to Flutter after pushing a batch of workouts.
 class WorkoutPushResponse {
   final List<WorkoutPushResult> results;
@@ -26,7 +24,6 @@ class WorkoutPushResponse {
 class WorkoutPushResult {
   final String workoutId;
   final WorkoutPushStatus status;
-  final WorkoutPushRecord? record;
   final String? errorMessage;
   final String? skipReason;
 
@@ -48,7 +45,6 @@ class WorkoutPushResult {
   WorkoutPushResult({
     required this.workoutId,
     required this.status,
-    this.record,
     this.errorMessage,
     this.skipReason,
     this.currentJson,
@@ -57,16 +53,6 @@ class WorkoutPushResult {
     this.existingJsonSizeBytes,
     this.workoutPlanId,
   });
-
-  factory WorkoutPushResult.success(WorkoutPushRecord record) {
-    return WorkoutPushResult(
-      workoutId: record.workoutId,
-      status: WorkoutPushStatus.success,
-      record: record,
-      currentJson: record.workoutJson,
-      workoutPlanId: record.workoutPlanId,
-    );
-  }
 
   factory WorkoutPushResult.skipped(
     String workoutId, {
@@ -100,7 +86,7 @@ class WorkoutPushResult {
 
 enum WorkoutPushStatus {
   success, // Successfully pushed natively
-  skipped, // Skipped locally due to deduplication (No changes)
+  skipped, // Skipped due to deduplication (No changes)
   failed, // Failed natively or locally
-  validationError, // Failed Dart validation before push
+  validationError, // Failed validation before push
 }

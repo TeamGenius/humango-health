@@ -149,15 +149,39 @@ class WorkoutServiceChannel: NSObject, FlutterStreamHandler {
         
         debugPrint("Read Workouts: Total workouts processed: \(allWorkouts.count)")
         
-        // Convert to JSON strings
+        // Convert to JSON strings, with WorkoutRecordStore byte-level dedup
+        // (same pattern as RouteService.pushWorkout — skip workouts already pushed via background API)
         var workoutsJson: [String] = []
+        var skippedCount = 0
         for workout in allWorkouts {
             if let jsonData = workout.toJson(),
                let jsonString = String(data: jsonData, encoding: .utf8) {
+                
+                let deviceId = workout.deviceActivityId
+                
+                // Check WorkoutRecordStore: SHA256 hash + byte size dedupe
+                let shouldPush = await WorkoutRecordStore.shared.shouldPush(
+                    deviceActivityId: deviceId,
+                    payload: jsonData
+                )
+                
+                if !shouldPush {
+                    debugPrint("Read Workouts: ⏭️ Skipping workout \(deviceId) — already pushed and unchanged (bytes match)")
+                    skippedCount += 1
+                    continue
+                }
+                
+                // Track in record store as pending (so future calls can dedupe)
+                await WorkoutRecordStore.shared.upsertRecordPending(
+                    deviceActivityId: deviceId,
+                    payload: jsonData
+                )
+                
                 workoutsJson.append(jsonString)
             }
         }
         
+        debugPrint("Read Workouts: Returning \(workoutsJson.count) workouts (\(skippedCount) skipped — already pushed via background API)")
         return workoutsJson
     }
     

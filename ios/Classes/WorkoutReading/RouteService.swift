@@ -21,6 +21,12 @@ class RouteService {
     private var workoutRoutes : [HKWorkoutRoute] = []
     private let defaults: UserDefaults
 
+    /// Debounce task: waits 3 minutes after the last route update before pushing the workout.
+    /// If new route data arrives within the window, this task is cancelled and restarted.
+    private var routeDebounceTask: Task<Void, Never>?
+    /// Duration (in seconds) to wait for additional route updates before finalizing the workout push.
+    private static let routeUpdateWaitSeconds: UInt64 = 3 * 60  // 3 minutes
+
     private var apiURL: URL? {
         guard
             let urlString = defaults.string(forKey: UserDefaultsKeys.apiURL),
@@ -125,13 +131,6 @@ class RouteService {
     // MARK: - Descriptor-based fetch of today's / delta route samples (uses your HKAnchoredObjectQueryDescriptor)
     func fetchWorkoutRoute() async {
         debugPrint("🔍 RouteService: fetchWorkoutRoute starting for \(workout.uuid.uuidString)")
-        Task{
-            do {
-                try await self.delay(milliseconds: 120000)
-            } catch {
-                debugPrint("Task cancelled or failed: \(error)")
-            }
-        }
         let pred = HKQuery.predicateForObjects(from: self.workout)
         let desc = HKAnchoredObjectQueryDescriptor(
             predicates: [.workoutRoute(pred)],
@@ -233,7 +232,10 @@ class RouteService {
             }
     }
 
-    // MARK: - Upsert routes + build route data
+    // MARK: - Upsert routes + debounced build/push
+    /// Upserts incoming route samples and starts (or restarts) a 3-minute debounce timer.
+    /// If no new route data arrives within 3 minutes the workout is finalized and pushed.
+    /// Any earlier pending push is discarded when new route data resets the timer.
     func handleWorkoutRoutes(routes: [HKWorkoutRoute]) async {
         debugPrint("📥 RouteService: handleWorkoutRoutes called with \(routes.count) route(s), current workoutRoutes: \(workoutRoutes.count)")
         
@@ -252,22 +254,48 @@ class RouteService {
 
         debugPrint("🗺️ RouteService: After upsert, workoutRoutes.count = \(workoutRoutes.count)")
         
-        // no routes? complete with empty
+        // no routes? complete with empty immediately (nothing to wait for)
         guard !workoutRoutes.isEmpty else {
             debugPrint("⚠️ RouteService: No routes available, calling handleCompleteWorkout with empty location")
+            routeDebounceTask?.cancel()
+            routeDebounceTask = nil
             Task { self.handleCompleteWorkout(location: []) }
             return
         }
 
-        do {
-            debugPrint("🏗️ RouteService: Building route data from \(workoutRoutes.count) route(s)")
-            let locationsData : [CLLocation] = try await buildRouteData(from: workoutRoutes)   // ← get all locations
-            debugPrint("📍 RouteService: Built \(locationsData.count) location points")
-            // touch lastSeen so record store knows about route updates
-            await WorkoutRecordStore.shared.updateLastSeen(deviceActivityId: workout.uuid.uuidString, date: Date())
-            Task { self.handleCompleteWorkout(location: locationsData) }
-        } catch {
-            print("Read Workouts: route read error: \(error)")
+        // Cancel any previously pending debounce — we received fresh route data,
+        // so the earlier workout object is discarded in favor of the updated one.
+        routeDebounceTask?.cancel()
+        debugPrint("⏱️ RouteService: (Re)starting 3-minute route-update debounce timer for \(workout.uuid.uuidString)")
+
+        let workoutUUID = workout.uuid.uuidString
+
+        routeDebounceTask = Task { [weak self] in
+            do {
+                // Wait 3 minutes for additional route updates
+                try await Task.sleep(nanoseconds: RouteService.routeUpdateWaitSeconds * 1_000_000_000)
+
+                // If we reach here the timer expired without cancellation → finalize
+                guard let self = self else { return }
+                guard !Task.isCancelled else { return }
+
+                debugPrint("✅ RouteService: 3-minute debounce timer expired for \(workoutUUID) — finalizing with \(self.workoutRoutes.count) route(s)")
+
+                do {
+                    debugPrint("🏗️ RouteService: Building route data from \(self.workoutRoutes.count) route(s)")
+                    let locationsData: [CLLocation] = try await self.buildRouteData(from: self.workoutRoutes)
+                    debugPrint("📍 RouteService: Built \(locationsData.count) location points")
+                    // touch lastSeen so record store knows about route updates
+                    await WorkoutRecordStore.shared.updateLastSeen(deviceActivityId: workoutUUID, date: Date())
+                    self.handleCompleteWorkout(location: locationsData)
+                } catch {
+                    debugPrint("❌ RouteService: route build error after debounce: \(error)")
+                }
+            } catch {
+                // Task.sleep throws CancellationError when the task is cancelled
+                // (i.e. new route data arrived and reset the timer) — this is expected.
+                debugPrint("🔄 RouteService: Debounce timer cancelled for \(workoutUUID) — newer route data arrived, previous workout object discarded")
+            }
         }
     }
 
@@ -466,6 +494,8 @@ class RouteService {
     func invalidate() {
         stopLiveUpdates()
         stopBackgroundMonitoring()
+        routeDebounceTask?.cancel()
+        routeDebounceTask = nil
         workoutRoutes.removeAll()
     }
 }

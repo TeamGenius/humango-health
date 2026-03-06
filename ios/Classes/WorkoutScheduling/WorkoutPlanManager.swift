@@ -87,6 +87,23 @@ public class WorkoutPlanManager: NSObject {
                 result(FlutterError(code: "UNSUPPORTED", message: "WorkoutKit requires iOS 17.0+", details: nil))
             }
             
+        case "removeScheduledWorkouts":
+            guard let planIds = call.arguments as? [String], !planIds.isEmpty else {
+                result(FlutterError(code: "INVALID_ARGS", message: "Expected a non-empty array of workoutPlanId strings", details: nil))
+                return
+            }
+            
+            if #available(iOS 17.0, *) {
+                Task {
+                    let response = await self.removeScheduledWorkouts(workoutPlanIds: planIds)
+                    DispatchQueue.main.async {
+                        result(response)
+                    }
+                }
+            } else {
+                result(FlutterError(code: "UNSUPPORTED", message: "WorkoutKit requires iOS 17.0+", details: nil))
+            }
+            
         default:
             result(FlutterMethodNotImplemented)
         }
@@ -194,33 +211,114 @@ public class WorkoutPlanManager: NSObject {
         }
     }
 
+    // MARK: - Remove Scheduled Workouts
+
+    /// Removes scheduled workouts from Apple Watch and local storage by their WorkoutPlan IDs.
+    /// Returns a per-ID response indicating success or failure.
+    @available(iOS 17.0, *)
+    private func removeScheduledWorkouts(workoutPlanIds: [String]) async -> [[String: Any]] {
+        // Build a lookup: planId → ScheduledWorkoutPlan from the current Apple schedule
+        let allScheduled = await WorkoutScheduler.shared.scheduledWorkouts
+        var scheduledByPlanId: [String: ScheduledWorkoutPlan] = [:]
+        for sw in allScheduled {
+            scheduledByPlanId[sw.plan.id.uuidString] = sw
+        }
+
+        var results: [[String: Any]] = []
+
+        for planId in workoutPlanIds {
+            var entry: [String: Any] = ["workoutPlanId": planId]
+
+            // 1. Find the matching workout on Apple Watch
+            guard let scheduledWorkout = scheduledByPlanId[planId] else {
+                // Not found in Apple's scheduler — still try to clean local storage
+                let localWorkoutId = store.findWorkoutByPlanId(planId)
+                if let wId = localWorkoutId {
+                    store.removeRecord(for: wId)
+                    entry["workoutId"] = wId
+                    entry["status"] = "partial"
+                    entry["message"] = "Not found on Apple Watch (may have already been completed or removed), but removed from local storage"
+                    print("⚠️ [Humango Health] Remove: planId \(planId) not in Apple scheduler, local record for \(wId) removed")
+                } else {
+                    entry["status"] = "fail"
+                    entry["message"] = "Not found on Apple Watch or in local storage"
+                    print("❌ [Humango Health] Remove: planId \(planId) not found anywhere")
+                }
+                results.append(entry)
+                continue
+            }
+
+            // 2. Remove from Apple Watch
+            await WorkoutScheduler.shared.remove(scheduledWorkout.plan, at: scheduledWorkout.date)
+            print("✅ [Humango Health] Removed planId \(planId) from Apple Watch")
+
+            // 3. Remove from local storage
+            if let localWorkoutId = store.findWorkoutByPlanId(planId) {
+                store.removeRecord(for: localWorkoutId)
+                entry["workoutId"] = localWorkoutId
+                print("✅ [Humango Health] Removed local record for workoutId \(localWorkoutId) (planId \(planId))")
+            }
+
+            entry["status"] = "success"
+            entry["message"] = "Removed from Apple Watch and local storage"
+
+            results.append(entry)
+        }
+
+        print("📋 [Humango Health] Remove results: \(results.count) items processed")
+        return results
+    }
+
     // MARK: - Core Scheduling Logic
 
     @available(iOS 17.4, *)
     func scheduleWorkouts(jsonArray: [[String: Any]]) async throws -> [[String: Any]] {
         
-        // MARK: - Strict Validation (All or Nothing)
-        // Validate ALL workouts first - if ANY fails, reject the entire batch
-        var validationErrors: [[String: Any]] = []
+        // Check if the current device supports scheduled workouts
+        guard WorkoutScheduler.isSupported else {
+            print("❌ [Humango Health] WorkoutScheduler.isSupported is false — device does not support scheduled workouts")
+            return jsonArray.map { dict in
+                let scheduleId = dict["schedule_id"] ?? "N/A"
+                return [
+                    "workoutId": "\(scheduleId)",
+                    "status": "device_not_supported",
+                    "reason": "This device does not support scheduled workouts (WorkoutScheduler.isSupported = false)",
+                    "currentJson": dict
+                ] as [String: Any]
+            }
+        }
         
+        let isoFormatter = ISO8601DateFormatter()
+        isoFormatter.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
+
+        let now = Date()
+        let sevenDaysFromNow = Calendar.current.date(byAdding: .day, value: 7, to: now)!
+        
+        var validJsonArray: [[String: Any]] = []
+        var skippedRecords: [[String: Any]] = []
+
+        // 1. Per-workout validation + date range filtering + dedup — never reject the entire batch
         for (index, dict) in jsonArray.enumerated() {
             var errors: [String] = []
             
-            // 1. Validate schedule_id (REQUIRED)
+            // Validate schedule_id
             let hasScheduleId = dict["schedule_id"] != nil
             if !hasScheduleId {
                 errors.append("Missing required field: 'schedule_id'")
             }
             
-            // 2. Validate date (REQUIRED)
+            // Validate date
             let dateStr = dict["date"] as? String
+            var workoutDate: Date? = nil
             if dateStr == nil {
                 errors.append("Missing required field: 'date'")
-            } else if DateUtils.parseDate(from: dateStr!) == nil {
+            } else if let parsed = DateUtils.parseDate(from: dateStr!) {
+                workoutDate = parsed
+            } else {
                 errors.append("Invalid date format: '\(dateStr!)'. Expected ISO8601 format.")
             }
             
-            // 3. Validate blocks (REQUIRED and non-empty)
+            // Validate blocks
             if let blocks = dict["blocks"] as? [[String: Any]] {
                 if blocks.isEmpty {
                     errors.append("'blocks' array cannot be empty")
@@ -229,111 +327,73 @@ public class WorkoutPlanManager: NSObject {
                 errors.append("Missing required field: 'blocks' (must be a non-empty array)")
             }
             
+            // If validation failed for this workout, record it as failed and continue
             if !errors.isEmpty {
-                validationErrors.append([
-                    "index": index,
-                    "schedule_id": dict["schedule_id"] ?? "N/A",
-                    "errors": errors,
-                    "failedJson": dict
+                let scheduleId = dict["schedule_id"] ?? "N/A"
+                print("❌ [Humango Health] Validation failed for workout[\(index)] (schedule_id: \(scheduleId)): \(errors.joined(separator: ", "))")
+                skippedRecords.append([
+                    "workoutId": "\(scheduleId)",
+                    "status": "validation_error",
+                    "reason": errors.joined(separator: "; "),
+                    "currentJson": dict
                 ])
+                continue
             }
-        }
-        
-        // If ANY validation errors exist, reject the ENTIRE batch
-        if !validationErrors.isEmpty {
-            let errorDetails = validationErrors.map { error -> String in
-                let idx = error["index"] as? Int ?? -1
-                let scheduleId = error["schedule_id"] ?? "N/A"
-                let errs = error["errors"] as? [String] ?? []
-                return "Workout[\(idx)] (schedule_id: \(scheduleId)): \(errs.joined(separator: ", "))"
-            }.joined(separator: "; ")
             
-            print("❌ [Humango Health] Validation failed for \(validationErrors.count) workout(s): \(errorDetails)")
+            // Date range check
+            guard let date = workoutDate, date > now, date <= sevenDaysFromNow else {
+                let scheduleId = dict["schedule_id"] ?? "N/A"
+                print("⏭️ [Humango Health] Workout \(scheduleId) date outside 7-day window: \(dateStr ?? "nil")")
+                skippedRecords.append([
+                    "workoutId": "\(scheduleId)",
+                    "status": "skipped",
+                    "reason": "date_outside_window",
+                    "currentJson": dict
+                ])
+                continue
+            }
             
-            throw NSError(domain: "WorkoutValidation", code: 400, userInfo: [
-                NSLocalizedDescriptionKey: "Validation failed: \(errorDetails)",
-                "validationErrors": validationErrors
-            ])
-        }
-        
-        // All workouts passed validation, continue with processing
-        let isoFormatter = ISO8601DateFormatter()
-        isoFormatter.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
-        let isoFormatterNoFrac = ISO8601DateFormatter()
-        isoFormatterNoFrac.formatOptions = [.withInternetDateTime]
-        
-        // Fallback for Flutter's local toIso8601String() which omits timezone 'Z'
-        let fallbackFormatter = DateFormatter()
-        fallbackFormatter.locale = Locale(identifier: "en_US_POSIX")
-        fallbackFormatter.dateFormat = "yyyy-MM-dd'T'HH:mm:ss.SSS"
-        let fallbackFormatterNoFrac = DateFormatter()
-        fallbackFormatterNoFrac.locale = Locale(identifier: "en_US_POSIX")
-        fallbackFormatterNoFrac.dateFormat = "yyyy-MM-dd'T'HH:mm:ss"
-
-        let now = Date()
-        let sevenDaysFromNow = Calendar.current.date(byAdding: .day, value: 7, to: now)!
-        
-        var validJsonArray: [[String: Any]] = []
-        var skippedRecords: [[String: Any]] = []
-
-        // 2. Date Range Filtering + Deduplication Check (validation already passed)
-        for dict in jsonArray {
-            let dateStr = dict["date"] as! String
-            let workoutDate = DateUtils.parseDate(from: dateStr)!
-            
-            if workoutDate > now && workoutDate <= sevenDaysFromNow {
-                // Check deduplication using JSON bytes comparison
-                if let workoutId = store.extractWorkoutId(from: dict) {
-                    let (needsPush, reason) = store.checkDeduplication(workoutId: workoutId, jsonDict: dict)
-                    if needsPush {
-                        validJsonArray.append(dict)
-                        print("📤 [Humango Health] Workout \(workoutId) will be scheduled (reason: \(reason))")
-                    } else {
-                        // Already exists with same content, skip - include both JSONs for comparison
-                        var skippedRecord: [String: Any] = [
-                            "workoutId": workoutId,
-                            "status": "skipped",
-                            "reason": reason,
-                            "currentJson": dict  // The JSON being pushed now
-                        ]
-                        
-                        // Include existing JSON from store
-                        if let existingRecord = store.getRecord(for: workoutId) {
-                            let existingJsonDict = existingRecord.workoutJson.mapValues { $0.value }
-                            skippedRecord["existingJson"] = existingJsonDict
-                            skippedRecord["existingJsonSizeBytes"] = existingRecord.jsonBytes.count
-                            skippedRecord["workoutPlanId"] = existingRecord.workoutPlanId
-                        }
-                        
-                        // Calculate current JSON size
-                        if let currentJsonBytes = try? JSONSerialization.data(withJSONObject: dict, options: .sortedKeys) {
-                            skippedRecord["currentJsonSizeBytes"] = currentJsonBytes.count
-                        }
-                        
-                        skippedRecords.append(skippedRecord)
-                        print("⏭️ [Humango Health] Skipping workout \(workoutId) — \(reason)")
-                    }
+            // Deduplication check
+            if let workoutId = store.extractWorkoutId(from: dict) {
+                let (needsPush, reason) = store.checkDeduplication(workoutId: workoutId, jsonDict: dict)
+                if needsPush {
+                    validJsonArray.append(dict)
+                    print("📤 [Humango Health] Workout \(workoutId) will be scheduled (reason: \(reason))")
                 } else {
-                    // This should never happen since validation requires schedule_id
-                    // But just in case, throw an error
-                    throw NSError(domain: "WorkoutValidation", code: 400, userInfo: [
-                        NSLocalizedDescriptionKey: "Internal error: workout passed validation but has no schedule_id"
-                    ])
+                    var skippedRecord: [String: Any] = [
+                        "workoutId": workoutId,
+                        "status": "skipped",
+                        "reason": reason,
+                        "currentJson": dict
+                    ]
+                    if let existingRecord = store.getRecord(for: workoutId) {
+                        let existingJsonDict = existingRecord.workoutJson.mapValues { $0.value }
+                        skippedRecord["existingJson"] = existingJsonDict
+                        skippedRecord["existingJsonSizeBytes"] = existingRecord.jsonBytes.count
+                        skippedRecord["workoutPlanId"] = existingRecord.workoutPlanId
+                    }
+                    if let currentJsonBytes = try? JSONSerialization.data(withJSONObject: dict, options: .sortedKeys) {
+                        skippedRecord["currentJsonSizeBytes"] = currentJsonBytes.count
+                    }
+                    skippedRecords.append(skippedRecord)
+                    print("⏭️ [Humango Health] Skipping workout \(workoutId) — \(reason)")
                 }
             } else {
-                 // Date outside 7-day window - this is also a validation failure
-                 throw NSError(domain: "WorkoutValidation", code: 400, userInfo: [
-                     NSLocalizedDescriptionKey: "Workout date '\(dateStr)' is outside the valid 7-day scheduling window (must be in the future and within 7 days)"
-                 ])
+                // Should never happen after validation, but handle gracefully
+                skippedRecords.append([
+                    "workoutId": "N/A",
+                    "status": "validation_error",
+                    "reason": "Internal error: no schedule_id after validation",
+                    "currentJson": dict
+                ])
             }
         }
 
         print("ValidJsonArray (after dedup): \(validJsonArray.count), Skipped: \(skippedRecords.count)")
         
-        
         guard !validJsonArray.isEmpty else { return skippedRecords }
 
-        // 2. Decode into Models using the provided User schema
+        // 2. Decode into Models
         let decoder = JSONDecoder()
         decoder.dateDecodingStrategy = .iso8601
         
@@ -341,7 +401,7 @@ public class WorkoutPlanManager: NSObject {
         print("jsonData \(jsonData)")
         let instanceModels = try decoder.decode([WorkoutInstanceModelElement].self, from: jsonData)
 
-        // 3. Build native WorkoutKit items using reference Builder logic
+        // 3. Build native WorkoutKit items
         let items: [ScheduledWorkoutItem]
         do {
             items = try builder.createCustomWorkouts(workouts: instanceModels)
@@ -351,7 +411,7 @@ public class WorkoutPlanManager: NSObject {
             ])
         }
         
-        // 3.5 Check and Request WorkoutKit specific Authorization
+        // 3.5 Check and Request WorkoutKit Authorization
         if #available(iOS 17.0, *) {
             let authState = await WorkoutScheduler.shared.authorizationState
             if authState == .notDetermined {
@@ -369,8 +429,32 @@ public class WorkoutPlanManager: NSObject {
 
         var returnRecords: [[String: Any]] = []
 
+        // Pre-fetch current Apple Watch schedule once (used for rescheduling lookups)
+        var currentScheduledByPlanId: [String: ScheduledWorkoutPlan] = [:]
+        for sw in await WorkoutScheduler.shared.scheduledWorkouts {
+            currentScheduledByPlanId[sw.plan.id.uuidString] = sw
+        }
+
         // 4. Schedule each via WorkoutScheduler
         for (index, item) in items.enumerated() {
+            let fullJsonDict = validJsonArray[index]
+            guard let workoutId = store.extractWorkoutId(from: fullJsonDict) else { continue }
+            
+            // --- If this workout already exists (rescheduling), remove the old one from Apple Watch first ---
+            if let existingRecord = store.getRecord(for: workoutId) {
+                let oldPlanId = existingRecord.workoutPlanId
+                // Find the old scheduled workout on Apple Watch and remove it
+                if let oldScheduled = currentScheduledByPlanId[oldPlanId] {
+                    await WorkoutScheduler.shared.remove(oldScheduled.plan, at: oldScheduled.date)
+                    currentScheduledByPlanId.removeValue(forKey: oldPlanId)
+                    print("🔄 [Humango Health] Removed old schedule for \(workoutId) (planId: \(oldPlanId)) before rescheduling")
+                } else {
+                    print("⚠️ [Humango Health] Old planId \(oldPlanId) for \(workoutId) not found on Apple Watch (may have expired/completed)")
+                }
+                // Remove old local record (will be replaced below)
+                store.removeRecord(for: workoutId)
+            }
+            
             let workoutPlanNative = WorkoutPlan(item.workout)
             let workoutPlanId = workoutPlanNative.id.uuidString
             print("✅ WorkoutPlan id : \(workoutPlanId)")
@@ -386,33 +470,29 @@ public class WorkoutPlanManager: NSObject {
                 
                 await WorkoutScheduler.shared.schedule(scheduledWorkout.plan, at: scheduledWorkout.date)
                 
-                // Safe name extraction wrapper from reference
                 let name = item.workoutModel.summary?.name ?? "Unnamed Work"
                 print("✅ [Humango Health] Natively Scheduled '\(name)' | PlanId: \(workoutPlanId)")
             }
 
             // 5. Save record with WorkoutPlan ID
-            let fullJsonDict = validJsonArray[index] // Re-grab original JSON
-            if let workoutId = store.extractWorkoutId(from: fullJsonDict) {
-                store.saveRecord(
-                    workoutId: workoutId,
-                    workoutPlanId: workoutPlanId,
-                    jsonDict: fullJsonDict,
-                    scheduledDate: item.scheduledDate
-                )
-                
-                let jsonBytes = try JSONSerialization.data(withJSONObject: fullJsonDict, options: []).count
-                
-                returnRecords.append([
-                    "workoutId": workoutId,
-                    "workoutPlanId": workoutPlanId,
-                    "scheduledDateTime": fullJsonDict["date"],
-                    "jsonSizeBytes": jsonBytes,
-                    "status": "scheduled",
-                    "pushedAt": isoFormatter.string(from: Date()),
-                    "workoutJson": fullJsonDict  // Include the full JSON in response
-                ])
-            }
+            store.saveRecord(
+                workoutId: workoutId,
+                workoutPlanId: workoutPlanId,
+                jsonDict: fullJsonDict,
+                scheduledDate: item.scheduledDate
+            )
+            
+            let jsonBytes = (try? JSONSerialization.data(withJSONObject: fullJsonDict, options: []).count) ?? 0
+            
+            returnRecords.append([
+                "workoutId": workoutId,
+                "workoutPlanId": workoutPlanId,
+                "scheduledDateTime": fullJsonDict["date"] as? String ?? "",
+                "jsonSizeBytes": jsonBytes,
+                "status": "scheduled",
+                "pushedAt": isoFormatter.string(from: Date()),
+                "workoutJson": fullJsonDict
+            ])
         }
         
         // Include skipped records in the response

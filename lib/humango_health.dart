@@ -18,7 +18,7 @@ export 'src/models/workout_plan.dart';
 export 'src/models/workout_push_response.dart';
 export 'src/models/workout_push_authorization_result.dart';
 export 'src/models/scheduled_workout_info.dart';
-export 'src/storage/workout_push_record.dart';
+export 'src/models/workout_removal_result.dart';
 
 export 'src/managers/workout_push_manager.dart';
 
