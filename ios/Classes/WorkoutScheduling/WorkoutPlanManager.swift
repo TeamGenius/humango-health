@@ -151,9 +151,10 @@ public class WorkoutPlanManager: NSObject {
             }
             
             // Try to match with local store record using WorkoutPlan ID and include full JSON
-            if let localWorkoutId = store.findWorkoutByPlanId(planId) {
-                workoutInfo["workoutId"] = localWorkoutId
-                if let storedRecord = store.getRecord(for: localWorkoutId) {
+            if let localScheduleId = store.findWorkoutByPlanId(planId) {
+                workoutInfo["scheduleId"] = localScheduleId
+                if let storedRecord = store.getRecord(forScheduleId: localScheduleId) {
+                    workoutInfo["workoutId"] = storedRecord.workoutId
                     // Extract additional info from stored JSON
                     if let summary = storedRecord.workoutJson["summary"]?.value as? [String: Any],
                        let name = summary["name"] as? String {
@@ -232,13 +233,15 @@ public class WorkoutPlanManager: NSObject {
             // 1. Find the matching workout on Apple Watch
             guard let scheduledWorkout = scheduledByPlanId[planId] else {
                 // Not found in Apple's scheduler — still try to clean local storage
-                let localWorkoutId = store.findWorkoutByPlanId(planId)
-                if let wId = localWorkoutId {
-                    store.removeRecord(for: wId)
-                    entry["workoutId"] = wId
+                let localScheduleId = store.findWorkoutByPlanId(planId)
+                if let sId = localScheduleId {
+                    let storedWorkoutId = store.getRecord(forScheduleId: sId)?.workoutId
+                    store.removeRecord(forScheduleId: sId)
+                    entry["scheduleId"] = sId
+                    if let wId = storedWorkoutId { entry["workoutId"] = wId }
                     entry["status"] = "partial"
                     entry["message"] = "Not found on Apple Watch (may have already been completed or removed), but removed from local storage"
-                    print("⚠️ [Humango Health] Remove: planId \(planId) not in Apple scheduler, local record for \(wId) removed")
+                    print("⚠️ [Humango Health] Remove: planId \(planId) not in Apple scheduler, local record for \(sId) removed")
                 } else {
                     entry["status"] = "fail"
                     entry["message"] = "Not found on Apple Watch or in local storage"
@@ -253,10 +256,12 @@ public class WorkoutPlanManager: NSObject {
             print("✅ [Humango Health] Removed planId \(planId) from Apple Watch")
 
             // 3. Remove from local storage
-            if let localWorkoutId = store.findWorkoutByPlanId(planId) {
-                store.removeRecord(for: localWorkoutId)
-                entry["workoutId"] = localWorkoutId
-                print("✅ [Humango Health] Removed local record for workoutId \(localWorkoutId) (planId \(planId))")
+            if let localScheduleId = store.findWorkoutByPlanId(planId) {
+                let storedWorkoutId = store.getRecord(forScheduleId: localScheduleId)?.workoutId
+                store.removeRecord(forScheduleId: localScheduleId)
+                entry["scheduleId"] = localScheduleId
+                if let wId = storedWorkoutId { entry["workoutId"] = wId }
+                print("✅ [Humango Health] Removed local record for scheduleId \(localScheduleId) (planId \(planId))")
             }
 
             entry["status"] = "success"
@@ -279,8 +284,10 @@ public class WorkoutPlanManager: NSObject {
             print("❌ [Humango Health] WorkoutScheduler.isSupported is false — device does not support scheduled workouts")
             return jsonArray.map { dict in
                 let scheduleId = dict["schedule_id"] ?? "N/A"
+                let workoutId = dict["workout_id"] ?? "N/A"
                 return [
-                    "workoutId": "\(scheduleId)",
+                    "scheduleId": "\(scheduleId)",
+                    "workoutId": "\(workoutId)",
                     "status": "device_not_supported",
                     "reason": "This device does not support scheduled workouts (WorkoutScheduler.isSupported = false)",
                     "currentJson": dict
@@ -330,9 +337,11 @@ public class WorkoutPlanManager: NSObject {
             // If validation failed for this workout, record it as failed and continue
             if !errors.isEmpty {
                 let scheduleId = dict["schedule_id"] ?? "N/A"
+                let workoutId = dict["workout_id"] ?? "N/A"
                 print("❌ [Humango Health] Validation failed for workout[\(index)] (schedule_id: \(scheduleId)): \(errors.joined(separator: ", "))")
                 skippedRecords.append([
-                    "workoutId": "\(scheduleId)",
+                    "scheduleId": "\(scheduleId)",
+                    "workoutId": "\(workoutId)",
                     "status": "validation_error",
                     "reason": errors.joined(separator: "; "),
                     "currentJson": dict
@@ -343,9 +352,11 @@ public class WorkoutPlanManager: NSObject {
             // Date range check
             guard let date = workoutDate, date > now, date <= sevenDaysFromNow else {
                 let scheduleId = dict["schedule_id"] ?? "N/A"
-                print("⏭️ [Humango Health] Workout \(scheduleId) date outside 7-day window: \(dateStr ?? "nil")")
+                let workoutId = dict["workout_id"] ?? "N/A"
+                print("⏭️ [Humango Health] Schedule \(scheduleId) date outside 7-day window: \(dateStr ?? "nil")")
                 skippedRecords.append([
-                    "workoutId": "\(scheduleId)",
+                    "scheduleId": "\(scheduleId)",
+                    "workoutId": "\(workoutId)",
                     "status": "skipped",
                     "reason": "date_outside_window",
                     "currentJson": dict
@@ -354,19 +365,21 @@ public class WorkoutPlanManager: NSObject {
             }
             
             // Deduplication check
-            if let workoutId = store.extractWorkoutId(from: dict) {
-                let (needsPush, reason) = store.checkDeduplication(workoutId: workoutId, jsonDict: dict)
+            if let scheduleId = store.extractScheduleId(from: dict) {
+                let workoutId = store.extractWorkoutId(from: dict) ?? "N/A"
+                let (needsPush, reason) = store.checkDeduplication(scheduleId: scheduleId, jsonDict: dict)
                 if needsPush {
                     validJsonArray.append(dict)
-                    print("📤 [Humango Health] Workout \(workoutId) will be scheduled (reason: \(reason))")
+                    print("📤 [Humango Health] Schedule \(scheduleId) will be scheduled (reason: \(reason))")
                 } else {
                     var skippedRecord: [String: Any] = [
+                        "scheduleId": scheduleId,
                         "workoutId": workoutId,
                         "status": "skipped",
                         "reason": reason,
                         "currentJson": dict
                     ]
-                    if let existingRecord = store.getRecord(for: workoutId) {
+                    if let existingRecord = store.getRecord(forScheduleId: scheduleId) {
                         let existingJsonDict = existingRecord.workoutJson.mapValues { $0.value }
                         skippedRecord["existingJson"] = existingJsonDict
                         skippedRecord["existingJsonSizeBytes"] = existingRecord.jsonBytes.count
@@ -376,11 +389,12 @@ public class WorkoutPlanManager: NSObject {
                         skippedRecord["currentJsonSizeBytes"] = currentJsonBytes.count
                     }
                     skippedRecords.append(skippedRecord)
-                    print("⏭️ [Humango Health] Skipping workout \(workoutId) — \(reason)")
+                    print("⏭️ [Humango Health] Skipping schedule \(scheduleId) — \(reason)")
                 }
             } else {
                 // Should never happen after validation, but handle gracefully
                 skippedRecords.append([
+                    "scheduleId": "N/A",
                     "workoutId": "N/A",
                     "status": "validation_error",
                     "reason": "Internal error: no schedule_id after validation",
@@ -438,21 +452,22 @@ public class WorkoutPlanManager: NSObject {
         // 4. Schedule each via WorkoutScheduler
         for (index, item) in items.enumerated() {
             let fullJsonDict = validJsonArray[index]
-            guard let workoutId = store.extractWorkoutId(from: fullJsonDict) else { continue }
+            guard let scheduleId = store.extractScheduleId(from: fullJsonDict) else { continue }
+            let workoutId = store.extractWorkoutId(from: fullJsonDict) ?? "N/A"
             
-            // --- If this workout already exists (rescheduling), remove the old one from Apple Watch first ---
-            if let existingRecord = store.getRecord(for: workoutId) {
+            // --- If this schedule already exists (rescheduling), remove the old one from Apple Watch first ---
+            if let existingRecord = store.getRecord(forScheduleId: scheduleId) {
                 let oldPlanId = existingRecord.workoutPlanId
                 // Find the old scheduled workout on Apple Watch and remove it
                 if let oldScheduled = currentScheduledByPlanId[oldPlanId] {
                     await WorkoutScheduler.shared.remove(oldScheduled.plan, at: oldScheduled.date)
                     currentScheduledByPlanId.removeValue(forKey: oldPlanId)
-                    print("🔄 [Humango Health] Removed old schedule for \(workoutId) (planId: \(oldPlanId)) before rescheduling")
+                    print("🔄 [Humango Health] Removed old schedule for \(scheduleId) (planId: \(oldPlanId)) before rescheduling")
                 } else {
-                    print("⚠️ [Humango Health] Old planId \(oldPlanId) for \(workoutId) not found on Apple Watch (may have expired/completed)")
+                    print("⚠️ [Humango Health] Old planId \(oldPlanId) for \(scheduleId) not found on Apple Watch (may have expired/completed)")
                 }
                 // Remove old local record (will be replaced below)
-                store.removeRecord(for: workoutId)
+                store.removeRecord(forScheduleId: scheduleId)
             }
             
             let workoutPlanNative = WorkoutPlan(item.workout)
@@ -476,6 +491,7 @@ public class WorkoutPlanManager: NSObject {
 
             // 5. Save record with WorkoutPlan ID
             store.saveRecord(
+                scheduleId: scheduleId,
                 workoutId: workoutId,
                 workoutPlanId: workoutPlanId,
                 jsonDict: fullJsonDict,
@@ -485,6 +501,7 @@ public class WorkoutPlanManager: NSObject {
             let jsonBytes = (try? JSONSerialization.data(withJSONObject: fullJsonDict, options: []).count) ?? 0
             
             returnRecords.append([
+                "scheduleId": scheduleId,
                 "workoutId": workoutId,
                 "workoutPlanId": workoutPlanId,
                 "scheduledDateTime": fullJsonDict["date"] as? String ?? "",

@@ -20,7 +20,10 @@ class WorkoutRemovalResult {
   /// The WorkoutPlan ID that was requested for removal.
   final String workoutPlanId;
 
-  /// The local workout ID (schedule_id), if matched in local storage.
+  /// The schedule_id of the matched local record, if found.
+  final String? scheduleId;
+
+  /// The workout_id of the matched local record, if found.
   final String? workoutId;
 
   /// The status of the removal operation.
@@ -31,6 +34,7 @@ class WorkoutRemovalResult {
 
   const WorkoutRemovalResult({
     required this.workoutPlanId,
+    this.scheduleId,
     this.workoutId,
     required this.status,
     required this.message,
@@ -52,6 +56,7 @@ class WorkoutRemovalResult {
 
     return WorkoutRemovalResult(
       workoutPlanId: map['workoutPlanId'] as String? ?? '',
+      scheduleId: map['scheduleId'] as String?,
       workoutId: map['workoutId'] as String?,
       status: status,
       message: map['message'] as String? ?? '',
@@ -59,13 +64,14 @@ class WorkoutRemovalResult {
   }
 
   Map<String, dynamic> toMap() => {
-        'workoutPlanId': workoutPlanId,
-        if (workoutId != null) 'workoutId': workoutId,
-        'status': status.name,
-        'message': message,
-      };
+    'workoutPlanId': workoutPlanId,
+    if (scheduleId != null) 'scheduleId': scheduleId,
+    if (workoutId != null) 'workoutId': workoutId,
+    'status': status.name,
+    'message': message,
+  };
 
   @override
   String toString() =>
-      'WorkoutRemovalResult(planId: $workoutPlanId, workoutId: $workoutId, status: ${status.name}, message: $message)';
+      'WorkoutRemovalResult(planId: $workoutPlanId, scheduleId: $scheduleId, workoutId: $workoutId, status: ${status.name}, message: $message)';
 }

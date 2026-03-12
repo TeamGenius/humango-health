@@ -22,7 +22,8 @@ class WorkoutPushResponse {
 
 /// The result for an individual workout push attempt.
 class WorkoutPushResult {
-  final String workoutId;
+  final String scheduleId; // schedule_id from JSON (UUID)
+  final String workoutId; // workout_id from JSON (e.g., "232550")
   final WorkoutPushStatus status;
   final String? errorMessage;
   final String? skipReason;
@@ -43,6 +44,7 @@ class WorkoutPushResult {
   final String? workoutPlanId;
 
   WorkoutPushResult({
+    required this.scheduleId,
     required this.workoutId,
     required this.status,
     this.errorMessage,
@@ -55,6 +57,7 @@ class WorkoutPushResult {
   });
 
   factory WorkoutPushResult.skipped(
+    String scheduleId,
     String workoutId, {
     String? reason,
     Map<String, dynamic>? currentJson,
@@ -64,6 +67,7 @@ class WorkoutPushResult {
     String? workoutPlanId,
   }) {
     return WorkoutPushResult(
+      scheduleId: scheduleId,
       workoutId: workoutId,
       status: WorkoutPushStatus.skipped,
       skipReason: reason ?? 'unchanged',
@@ -75,8 +79,13 @@ class WorkoutPushResult {
     );
   }
 
-  factory WorkoutPushResult.validationError(String workoutId, String error) {
+  factory WorkoutPushResult.validationError(
+    String scheduleId,
+    String workoutId,
+    String error,
+  ) {
     return WorkoutPushResult(
+      scheduleId: scheduleId,
       workoutId: workoutId,
       status: WorkoutPushStatus.validationError,
       errorMessage: error,

@@ -20,7 +20,8 @@ class WorkoutPushManager {
   ///
   /// Returns a list of [ScheduledWorkoutInfo] containing details about each scheduled workout:
   /// - `id`: The WorkoutKit UUID
-  /// - `workoutId`: The original schedule_id (if matched with local records)
+  /// - `scheduleId`: The original schedule_id UUID from the push JSON
+  /// - `workoutId`: The original workout_id from the push JSON
   /// - `scheduledDate`: When the workout is scheduled
   /// - `name`: The workout name
   /// - `activityType`: The activity type (Running, Cycling, etc.)
@@ -135,14 +136,15 @@ class WorkoutPushManager {
       }
 
       if (errors.isNotEmpty) {
-        final scheduleId =
-            jsonMap['schedule_id']?.toString() ?? 'N/A';
+        final scheduleId = jsonMap['schedule_id']?.toString() ?? 'N/A';
+        final workoutId = jsonMap['workout_id']?.toString() ?? 'N/A';
         debugPrint(
           '\u274c [Humango Health] Validation failed for workout[$i] (schedule_id: $scheduleId): ${errors.join(', ')}',
         );
         failedResults.add(
           WorkoutPushResult(
-            workoutId: scheduleId,
+            scheduleId: scheduleId,
+            workoutId: workoutId,
             status: WorkoutPushStatus.validationError,
             errorMessage: errors.join(', '),
             currentJson: jsonMap,
@@ -177,6 +179,8 @@ class WorkoutPushManager {
               );
 
               final status = recordMap['status'] as String?;
+              final scheduleId =
+                  recordMap['scheduleId'] as String? ?? 'unknown';
               final workoutId = recordMap['workoutId'] as String? ?? 'unknown';
 
               if (status == 'skipped') {
@@ -194,6 +198,7 @@ class WorkoutPushManager {
 
                 finalResults.add(
                   WorkoutPushResult.skipped(
+                    scheduleId,
                     workoutId,
                     reason: reason,
                     currentJson: currentJson,
@@ -209,6 +214,7 @@ class WorkoutPushManager {
                     recordMap['reason'] as String? ?? 'native_validation_error';
                 finalResults.add(
                   WorkoutPushResult(
+                    scheduleId: scheduleId,
                     workoutId: workoutId,
                     status: WorkoutPushStatus.validationError,
                     errorMessage: reason,
@@ -220,6 +226,7 @@ class WorkoutPushManager {
               } else if (status == 'device_not_supported') {
                 finalResults.add(
                   WorkoutPushResult(
+                    scheduleId: scheduleId,
                     workoutId: workoutId,
                     status: WorkoutPushStatus.failed,
                     errorMessage:
@@ -234,6 +241,7 @@ class WorkoutPushManager {
                 // Scheduled successfully — native handles storage
                 finalResults.add(
                   WorkoutPushResult(
+                    scheduleId: scheduleId,
                     workoutId: workoutId,
                     status: WorkoutPushStatus.success,
                     workoutPlanId: recordMap['workoutPlanId'] as String?,
@@ -246,6 +254,7 @@ class WorkoutPushManager {
                 // Unknown status — treat as success
                 finalResults.add(
                   WorkoutPushResult(
+                    scheduleId: scheduleId,
                     workoutId: workoutId,
                     status: WorkoutPushStatus.success,
                     workoutPlanId: recordMap['workoutPlanId'] as String?,
@@ -257,13 +266,14 @@ class WorkoutPushManager {
           } else {
             failed += validWorkouts.length;
             for (var p in validWorkouts) {
+              final scheduleId = p['schedule_id']?.toString() ?? 'unknown';
               final id =
-                  p['schedule_id']?.toString() ??
-                  p['id']?.toString() ??
                   p['workout_id']?.toString() ??
+                  p['id']?.toString() ??
                   'unknown';
               finalResults.add(
                 WorkoutPushResult(
+                  scheduleId: scheduleId,
                   workoutId: id,
                   status: WorkoutPushStatus.failed,
                   errorMessage:
@@ -275,13 +285,12 @@ class WorkoutPushManager {
         }
       } catch (e) {
         for (var p in validWorkouts) {
+          final scheduleId = p['schedule_id']?.toString() ?? 'unknown';
           final id =
-              p['schedule_id']?.toString() ??
-              p['id']?.toString() ??
-              p['workout_id']?.toString() ??
-              'unknown';
+              p['workout_id']?.toString() ?? p['id']?.toString() ?? 'unknown';
           finalResults.add(
             WorkoutPushResult(
+              scheduleId: scheduleId,
               workoutId: id,
               status: WorkoutPushStatus.failed,
               errorMessage: e.toString(),

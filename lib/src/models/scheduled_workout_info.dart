@@ -7,7 +7,11 @@ class ScheduledWorkoutInfo {
   /// This is the stable identifier used to track the workout in WorkoutScheduler.
   final String? workoutPlanId;
 
-  /// The workout ID from the original push (schedule_id).
+  /// The schedule_id from the original push JSON (UUID).
+  /// May be null if the workout was not matched with local records.
+  final String? scheduleId;
+
+  /// The workout_id from the original push JSON (e.g., "232550").
   /// May be null if the workout was not matched with local records.
   final String? workoutId;
 
@@ -30,6 +34,7 @@ class ScheduledWorkoutInfo {
   ScheduledWorkoutInfo({
     required this.id,
     this.workoutPlanId,
+    this.scheduleId,
     this.workoutId,
     this.scheduledDate,
     this.name,
@@ -53,6 +58,7 @@ class ScheduledWorkoutInfo {
     return ScheduledWorkoutInfo(
       id: map['id'] as String? ?? '',
       workoutPlanId: map['workoutPlanId'] as String?,
+      scheduleId: map['scheduleId'] as String?,
       workoutId: map['workoutId'] as String?,
       scheduledDate: scheduledDate,
       name: map['name'] as String?,
@@ -64,6 +70,6 @@ class ScheduledWorkoutInfo {
 
   @override
   String toString() {
-    return 'ScheduledWorkoutInfo(id: $id, workoutPlanId: $workoutPlanId, workoutId: $workoutId, scheduledDate: $scheduledDate, name: $name, activityType: $activityType, jsonSizeBytes: $jsonSizeBytes)';
+    return 'ScheduledWorkoutInfo(id: $id, workoutPlanId: $workoutPlanId, scheduleId: $scheduleId, workoutId: $workoutId, scheduledDate: $scheduledDate, name: $name, activityType: $activityType, jsonSizeBytes: $jsonSizeBytes)';
   }
 }

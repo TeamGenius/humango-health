@@ -5,7 +5,8 @@
 
 /// Represents a local record of a pushed workout for deduplication.
 class WorkoutPushRecord {
-  final String workoutId;
+  final String scheduleId; // schedule_id from JSON (UUID)
+  final String workoutId; // workout_id from JSON (e.g., "232550")
   final String workoutPlanId; // Apple's WorkoutPlan UUID
   final String scheduledDateTime; // ISO 8601
   final int jsonSizeBytes;
@@ -13,6 +14,7 @@ class WorkoutPushRecord {
   final Map<String, dynamic>? workoutJson; // The full workout JSON
 
   WorkoutPushRecord({
+    required this.scheduleId,
     required this.workoutId,
     required this.workoutPlanId,
     required this.scheduledDateTime,
@@ -23,6 +25,7 @@ class WorkoutPushRecord {
 
   Map<String, dynamic> toJson() {
     return {
+      'scheduleId': scheduleId,
       'workoutId': workoutId,
       'workoutPlanId': workoutPlanId,
       'scheduledDateTime': scheduledDateTime,
@@ -39,7 +42,10 @@ class WorkoutPushRecord {
     }
 
     return WorkoutPushRecord(
-      workoutId: json['workoutId'] as String,
+      // Backward-compat: fall back to legacy 'workoutId' key if scheduleId absent
+      scheduleId:
+          json['scheduleId'] as String? ?? json['workoutId'] as String? ?? '',
+      workoutId: json['workoutId'] as String? ?? '',
       workoutPlanId: json['workoutPlanId'] as String? ?? '',
       scheduledDateTime: json['scheduledDateTime'] as String,
       jsonSizeBytes: json['jsonSizeBytes'] as int,

@@ -9,8 +9,9 @@ import HealthKit
 // MARK: - Record Model
 
 struct ScheduledWorkoutRecord: Codable {
-    let workoutId: String
-    let workoutPlanId: String
+    let scheduleId: String        // schedule_id from JSON (UUID e.g. "8de52c5d-...")
+    let workoutId: String         // workout_id from JSON (e.g. "232550")
+    let workoutPlanId: String     // Apple WorkoutKit plan UUID
     let workoutJson: [String: AnyCodable]
     let jsonBytes: Data
     let scheduledDate: Date
@@ -80,6 +81,7 @@ class ScheduledWorkoutStore {
 
     /// Save a workout record after scheduling natively.
     func saveRecord(
+        scheduleId: String,
         workoutId: String,
         workoutPlanId: String,
         jsonDict: [String: Any],
@@ -90,6 +92,7 @@ class ScheduledWorkoutStore {
         let jsonBytes = (try? JSONSerialization.data(withJSONObject: jsonDict, options: .sortedKeys)) ?? Data()
 
         let record = ScheduledWorkoutRecord(
+            scheduleId: scheduleId,
             workoutId: workoutId,
             workoutPlanId: workoutPlanId,
             workoutJson: codableDict,
@@ -97,13 +100,13 @@ class ScheduledWorkoutStore {
             scheduledDate: scheduledDate
         )
 
-        records[workoutId] = record
+        records[scheduleId] = record
         saveToDisk()
-        print("💾 [Humango Health] Saved record for workout ID: \(workoutId), planId: \(workoutPlanId), bytes: \(jsonBytes.count)")
+        print("💾 [Humango Health] Saved record for scheduleId: \(scheduleId), workoutId: \(workoutId), planId: \(workoutPlanId), bytes: \(jsonBytes.count)")
     }
 
-    func getRecord(for workoutId: String) -> ScheduledWorkoutRecord? {
-        return records[workoutId]
+    func getRecord(forScheduleId scheduleId: String) -> ScheduledWorkoutRecord? {
+        return records[scheduleId]
     }
 
     func getAllRecords() -> [String: ScheduledWorkoutRecord] {
@@ -111,11 +114,11 @@ class ScheduledWorkoutStore {
     }
 
     @discardableResult
-    func removeRecord(for workoutId: String) -> ScheduledWorkoutRecord? {
-        let removed = records.removeValue(forKey: workoutId)
+    func removeRecord(forScheduleId scheduleId: String) -> ScheduledWorkoutRecord? {
+        let removed = records.removeValue(forKey: scheduleId)
         if removed != nil {
             saveToDisk()
-            print("🗑️ [Humango Health] Removed native record for workout ID: \(workoutId)")
+            print("🗑️ [Humango Health] Removed native record for scheduleId: \(scheduleId)")
         }
         return removed
     }
@@ -141,16 +144,17 @@ class ScheduledWorkoutStore {
         print("🗑️ [Humango Health] Cleared all native workout records")
     }
 
-    func extractWorkoutId(from jsonDict: [String: Any]) -> String? {
+    func extractScheduleId(from jsonDict: [String: Any]) -> String? {
         if let id = jsonDict["schedule_id"] as? String {
             return id
         } else if let id = jsonDict["schedule_id"] as? Int {
             return String(id)
-        } else if let id = jsonDict["id"] as? String {
-            return id
-        } else if let id = jsonDict["id"] as? Int {
-            return String(id)
-        } else if let id = jsonDict["workout_id"] as? String {
+        }
+        return nil
+    }
+
+    func extractWorkoutId(from jsonDict: [String: Any]) -> String? {
+        if let id = jsonDict["workout_id"] as? String {
             return id
         } else if let id = jsonDict["workout_id"] as? Int {
             return String(id)
@@ -160,22 +164,22 @@ class ScheduledWorkoutStore {
     
     // MARK: - Workout Matching
     
-    /// Find scheduled workout by WorkoutPlan ID (UUID)
+    /// Find scheduleId by WorkoutPlan ID (UUID)
     /// This is the most reliable matching method for iOS 17.0+
     func findWorkoutByPlanId(_ planId: String) -> String? {
-        for (workoutId, record) in records {
+        for (scheduleId, record) in records {
             if record.workoutPlanId == planId {
-                debugPrint("🎯 ScheduledWorkoutStore: Found workout \(workoutId) by planId \(planId)")
-                return workoutId
+                debugPrint("🎯 ScheduledWorkoutStore: Found scheduleId \(scheduleId) by planId \(planId)")
+                return scheduleId
             }
         }
-        debugPrint("⚠️ ScheduledWorkoutStore: No workout found for planId \(planId)")
+        debugPrint("⚠️ ScheduledWorkoutStore: No schedule found for planId \(planId)")
         return nil
     }
     
-    /// Get the WorkoutPlan ID for a given workout ID (schedule_id)
-    func getPlanId(for workoutId: String) -> String? {
-        return records[workoutId]?.workoutPlanId
+    /// Get the WorkoutPlan ID for a given scheduleId (schedule_id)
+    func getPlanId(forScheduleId scheduleId: String) -> String? {
+        return records[scheduleId]?.workoutPlanId
     }
     
     // MARK: - Deduplication
@@ -185,8 +189,8 @@ class ScheduledWorkoutStore {
     /// - If workout doesn't exist: needsPush = true, reason = "new"
     /// - If JSON bytes changed: needsPush = true, reason = "modified"
     /// - If JSON bytes are identical: needsPush = false, reason = "unchanged"
-    func checkDeduplication(workoutId: String, jsonDict: [String: Any]) -> (needsPush: Bool, reason: String) {
-        guard let existingRecord = records[workoutId] else {
+    func checkDeduplication(scheduleId: String, jsonDict: [String: Any]) -> (needsPush: Bool, reason: String) {
+        guard let existingRecord = records[scheduleId] else {
             return (true, "new")
         }
         
@@ -205,34 +209,34 @@ class ScheduledWorkoutStore {
         
         // Compare byte sizes first (fast check)
         if incomingJsonBytes.count != existingJsonBytes.count {
-            print("📊 [Humango Health] Dedup: Workout \(workoutId) size changed (\(existingJsonBytes.count) → \(incomingJsonBytes.count) bytes)")
+            print("📊 [Humango Health] Dedup: Schedule \(scheduleId) size changed (\(existingJsonBytes.count) → \(incomingJsonBytes.count) bytes)")
             return (true, "size_changed")
         }
         
         // Compare actual bytes (content check)
         if incomingJsonBytes != existingJsonBytes {
-            print("📊 [Humango Health] Dedup: Workout \(workoutId) content changed (same size: \(incomingJsonBytes.count) bytes)")
+            print("📊 [Humango Health] Dedup: Schedule \(scheduleId) content changed (same size: \(incomingJsonBytes.count) bytes)")
             return (true, "content_changed")
         }
         
-        print("⏭️ [Humango Health] Dedup: Workout \(workoutId) unchanged (\(incomingJsonBytes.count) bytes)")
+        print("⏭️ [Humango Health] Dedup: Schedule \(scheduleId) unchanged (\(incomingJsonBytes.count) bytes)")
         return (false, "unchanged")
     }
     
-    /// Get the stored JSON byte size for a workout
-    func getJsonBytesSize(for workoutId: String) -> Int? {
-        return records[workoutId]?.jsonBytes.count
+    /// Get the stored JSON byte size for a scheduled workout
+    func getJsonBytesSize(forScheduleId scheduleId: String) -> Int? {
+        return records[scheduleId]?.jsonBytes.count
     }
     
     /// Find the scheduled workout that matches a completed workout
-    /// Returns the workout ID (schedule_id) if found, nil otherwise
+    /// Returns the scheduleId (schedule_id value) if found, nil otherwise
     /// Matches by date (within 10 minutes) and activity type
     func findMatchingScheduledWorkout(startDate: Date, activityType: HKWorkoutActivityType) -> String? {
         let tolerance: TimeInterval = 10 * 60 // 10 minutes
         
         var bestMatch: (id: String, timeDiff: TimeInterval)? = nil
         
-        for (workoutId, record) in records {
+        for (scheduleId, record) in records {
             let timeDifference = abs(record.scheduledDate.timeIntervalSince(startDate))
             
             // Check if dates match within tolerance
@@ -254,7 +258,7 @@ class ScheduledWorkoutStore {
                 if typeMatches {
                     // Keep the closest time match
                     if bestMatch == nil || timeDifference < bestMatch!.timeDiff {
-                        bestMatch = (workoutId, timeDifference)
+                        bestMatch = (scheduleId, timeDifference)
                     }
                 }
             }

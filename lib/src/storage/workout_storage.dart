@@ -7,7 +7,7 @@ import 'dart:convert';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'workout_push_record.dart';
 
-/// Dart-layer persistent storage mapping `workoutId` to a `WorkoutPushRecord`.
+/// Dart-layer persistent storage mapping `scheduleId` to a `WorkoutPushRecord`.
 class WorkoutStorage {
   static const String _storageKey = "com.humango.workouts.pushed";
   SharedPreferences? _prefs;
@@ -17,10 +17,10 @@ class WorkoutStorage {
     _prefs ??= await SharedPreferences.getInstance();
   }
 
-  /// Get a single record by workoutId.
-  Future<WorkoutPushRecord?> getRecord(String workoutId) async {
+  /// Get a single record by scheduleId.
+  Future<WorkoutPushRecord?> getRecord(String scheduleId) async {
     await init();
-    final String? jsonStr = _prefs!.getString('${_storageKey}_$workoutId');
+    final String? jsonStr = _prefs!.getString('${_storageKey}_$scheduleId');
     if (jsonStr == null) return null;
 
     try {
@@ -35,19 +35,19 @@ class WorkoutStorage {
   Future<void> saveRecord(WorkoutPushRecord record) async {
     await init();
     final String jsonStr = jsonEncode(record.toJson());
-    await _prefs!.setString('${_storageKey}_${record.workoutId}', jsonStr);
+    await _prefs!.setString('${_storageKey}_${record.scheduleId}', jsonStr);
   }
 
   /// Delete a record.
-  Future<void> deleteRecord(String workoutId) async {
+  Future<void> deleteRecord(String scheduleId) async {
     await init();
-    await _prefs!.remove('${_storageKey}_$workoutId');
+    await _prefs!.remove('${_storageKey}_$scheduleId');
   }
 
   /// Check if a workout is already pushed based on the local cache
-  Future<bool> hasRecord(String workoutId) async {
+  Future<bool> hasRecord(String scheduleId) async {
     await init();
-    return _prefs!.containsKey('${_storageKey}_$workoutId');
+    return _prefs!.containsKey('${_storageKey}_$scheduleId');
   }
 
   /// Clears all pushed workout records locally.
