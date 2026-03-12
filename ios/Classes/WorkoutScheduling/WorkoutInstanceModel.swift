@@ -25,6 +25,7 @@ struct WorkoutInstanceModelElement: Codable {
     let duration: Int?
     let durationRiAdjusted: Double?
     let id, index, priority: Int?
+    let poolSize: String?
     let sport: Sport
     let summary: Summary?
     let tiz: [Int]?
@@ -41,7 +42,9 @@ struct WorkoutInstanceModelElement: Codable {
         case distanceRiAdjusted = "distance_ri_adjusted"
         case duration
         case durationRiAdjusted = "duration_ri_adjusted"
-        case id, index, priority, sport, summary, tiz
+        case id, index, priority
+        case poolSize = "pool_size"
+        case sport, summary, tiz
         case trainingLoad = "training_load"
         case workoutChart = "workout_chart"
         case workoutID = "workout_id"

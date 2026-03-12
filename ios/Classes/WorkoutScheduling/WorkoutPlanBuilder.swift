@@ -60,11 +60,22 @@ class WorkoutPlanBuilder {
         let activity = workout.sport.hkWorkoutType   // .swimming
         let location = workout.summary?.indoorOutdoor?.hkLocationType ?? .unknown
 
+        // Mirror Flutter poolSize logic:
+        // nil or contains "m" (e.g. "25m", "50m") → meters; otherwise (e.g. "25y") → yards.
+        // Prefer explicit poolSize over summary.measurementUnit so the caller's intent wins.
+        let effectiveMeasurementUnit: String?
+        if let ps = workout.poolSize {
+            effectiveMeasurementUnit = (!ps.isEmpty && !ps.lowercased().contains("m")) ? "yard" : "meter"
+            print("  → pool_size='\(ps)' resolved to measurement unit: \(effectiveMeasurementUnit!)")
+        } else {
+            effectiveMeasurementUnit = workout.summary?.measurementUnit
+        }
+
         // Derive a meaningful top-level goal from the workout summary fields
         let goal = resolveTopLevelGoal(
             distance: workout.distance,
             duration: workout.duration,
-            measurementUnit: workout.summary?.measurementUnit
+            measurementUnit: effectiveMeasurementUnit
         )
 
         print("  → SingleGoalWorkout | goal=\(goal) | location=\(location)")
@@ -126,22 +137,53 @@ class WorkoutPlanBuilder {
         let allBlocks = workout.blocks ?? []
 
         // ── Split by type ────────────────────────────────────────────────
-        let warmupBlocks   = allBlocks.filter { $0.type?.uppercased() == "WARMUP"   }
-        let cooldownBlocks = allBlocks.filter { $0.type?.uppercased() == "COOLDOWN" }
-        let mainBlocks     = allBlocks.filter {
+        let warmupBlocksList   = allBlocks.filter { $0.type?.uppercased() == "WARMUP"   }
+        let cooldownBlocksList = allBlocks.filter { $0.type?.uppercased() == "COOLDOWN" }
+        let intervalBlocksList = allBlocks.filter {
             let t = $0.type?.uppercased() ?? ""
             return t != "WARMUP" && t != "COOLDOWN"
         }
 
-        let warmupStep:   WorkoutStep? = warmupBlocks.isEmpty
-            ? nil
-            : buildWorkoutStep(from: warmupBlocks.first!, sport: sport, activity: activity, location: location)
+        let hasWarmup   = !warmupBlocksList.isEmpty
+        let hasCooldown = !cooldownBlocksList.isEmpty
+        let hasInterval = !intervalBlocksList.isEmpty
 
-        let cooldownStep: WorkoutStep? = cooldownBlocks.isEmpty
-            ? nil
-            : buildWorkoutStep(from: cooldownBlocks.last!, sport: sport, activity: activity, location: location)
+        // ── Assign sections based on what is present ─────────────────────
+        //
+        // has interval blocks → assign warmup/cooldown to their proper slots
+        // no interval + warmup + cooldown  → fold both into intervals
+        // no interval + no warmup          → fold cooldown into intervals
+        // no interval + no cooldown        → fold warmup into intervals
+        let warmupStep:   WorkoutStep?
+        let cooldownStep: WorkoutStep?
+        let mainForInterval: [WorkoutInstanceModelBlock]
 
-        let intervalBlocks = buildIntervalBlocks(from: mainBlocks, sport: sport, activity: activity, location: location)
+        if hasInterval {
+            warmupStep      = hasWarmup
+                ? buildWorkoutStep(from: warmupBlocksList.first!, sport: sport, activity: activity, location: location)
+                : nil
+            cooldownStep    = hasCooldown
+                ? buildWorkoutStep(from: cooldownBlocksList.last!, sport: sport, activity: activity, location: location)
+                : nil
+            mainForInterval = intervalBlocksList
+        } else if hasWarmup && hasCooldown {
+            // No interval blocks — fold warmup into the interval section, drop cooldown
+            warmupStep      = nil
+            cooldownStep    = nil
+            mainForInterval = warmupBlocksList
+        } else if hasCooldown {
+            // No interval, no warmup — cooldown fills the interval section
+            warmupStep      = nil
+            cooldownStep    = nil
+            mainForInterval = cooldownBlocksList
+        } else {
+            // Only warmup (or nothing) — warmup fills the interval section
+            warmupStep      = nil
+            cooldownStep    = nil
+            mainForInterval = warmupBlocksList
+        }
+
+        let intervalBlocks = buildIntervalBlocks(from: mainForInterval, sport: sport, activity: activity, location: location)
 
         print("  warmup=\(warmupStep != nil) blocks=\(intervalBlocks.count) cooldown=\(cooldownStep != nil)")
 

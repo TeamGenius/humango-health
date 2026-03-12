@@ -6,7 +6,6 @@
 import 'validation_errors.dart';
 import '../models/workout_plan.dart';
 import '../models/workouts/custom_workout.dart';
-import '../models/workout_components/interval_block.dart';
 
 /// Centralized validation engine for evaluating batches of WorkoutPlans against iOS constraints.
 class WorkoutValidator {
@@ -45,17 +44,15 @@ class WorkoutValidator {
       errors.add(InvalidWorkoutStructureError("Workout structure failed serialization checks."));
     }
 
-    // 4. Custom Workout Interval limitations
+    // 4. Custom Workout structure: accept if any of warmup, interval blocks, or cooldown is present
     if (plan.workout is CustomWorkout) {
       final custom = plan.workout as CustomWorkout;
-      if (custom.blocks.isEmpty && custom.warmup == null && custom.cooldown == null) {
-        errors.add(InvalidWorkoutStructureError("CustomWorkout must have at least one step or block."));
-      }
-
-      for (var block in custom.blocks) {
-        if (block.steps.isEmpty) {
-          errors.add(EmptyIntervalBlockError("IntervalBlock cannot be empty. It must contain at least one step."));
-        }
+      final bool hasContent = custom.warmup != null ||
+                              custom.blocks.isNotEmpty ||
+                              custom.cooldown != null;
+      if (!hasContent) {
+        errors.add(InvalidWorkoutStructureError(
+            "CustomWorkout must have at least one of: warmup, interval block, or cooldown."));
       }
     }
 
