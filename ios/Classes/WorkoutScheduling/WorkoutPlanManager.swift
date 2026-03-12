@@ -39,63 +39,51 @@ public class WorkoutPlanManager: NSObject {
                 return
             }
             
-            if #available(iOS 17.0, *) {
-                Task {
-                    do {
-                        if #available(iOS 17.4, *) {
-                           let scheduledRecords = try await scheduleWorkouts(jsonArray: args)
-                           DispatchQueue.main.async {
-                               result(["scheduledRecords": scheduledRecords])
-                           }
-                        } else {
-                            DispatchQueue.main.async {
-                                result(FlutterError(code: "UNSUPPORTED", message: "Workout scheduling requires iOS 17.4+", details: nil))
-                            }
-                        }
-                    } catch {
-                        DispatchQueue.main.async {
-                            result(FlutterError(code: "SCHEDULE_ERROR", message: error.localizedDescription, details: nil))
-                        }
+            Task {
+                do {
+                    let scheduledRecords = try await scheduleWorkouts(jsonArray: args)
+                    DispatchQueue.main.async {
+                        result(["scheduledRecords": scheduledRecords])
+                    }
+                } catch {
+                    DispatchQueue.main.async {
+                        result(FlutterError(code: "SCHEDULE_ERROR", message: error.localizedDescription, details: nil))
                     }
                 }
-            } else {
-                result(FlutterError(code: "UNSUPPORTED", message: "WorkoutKit requires iOS 17.0+", details: nil))
             }
             
         case "clearAppleScheduledWorkouts":
            store.clearAll()
            result(true)
+
+        case "removeAllScheduledWorkouts":
+            Task {
+                let response = await self.removeAllScheduledWorkouts()
+                DispatchQueue.main.async {
+                    result(response)
+                }
+            }
             
         case "requestAuthorizationForWorkoutPush":
-            if #available(iOS 17.0, *) {
-                Task {
-                    do {
-                        let authResult = try await self.requestWorkoutPushAuthorization()
-                        DispatchQueue.main.async {
-                            result(authResult)
-                        }
-                    } catch {
-                        DispatchQueue.main.async {
-                            result(FlutterError(code: "AUTH_ERROR", message: error.localizedDescription, details: nil))
-                        }
+            Task {
+                do {
+                    let authResult = try await self.requestWorkoutPushAuthorization()
+                    DispatchQueue.main.async {
+                        result(authResult)
+                    }
+                } catch {
+                    DispatchQueue.main.async {
+                        result(FlutterError(code: "AUTH_ERROR", message: error.localizedDescription, details: nil))
                     }
                 }
-            } else {
-                result(FlutterError(code: "UNSUPPORTED", message: "WorkoutKit requires iOS 17.0+", details: nil))
             }
             
         case "getScheduledWorkouts":
-            if #available(iOS 17.0, *) {
-                Task {
-                    do {
-                        let workouts = await self.getScheduledWorkouts()
-                        DispatchQueue.main.async {
-                            result(workouts)
-                        }
-                    }
+            Task {
+                let workouts = await self.getScheduledWorkouts()
+                DispatchQueue.main.async {
+                    result(workouts)
                 }
-            } else {
-                result(FlutterError(code: "UNSUPPORTED", message: "WorkoutKit requires iOS 17.0+", details: nil))
             }
             
         case "removeScheduledWorkouts":
@@ -104,15 +92,11 @@ public class WorkoutPlanManager: NSObject {
                 return
             }
             
-            if #available(iOS 17.0, *) {
-                Task {
-                    let response = await self.removeScheduledWorkouts(workoutPlanIds: planIds)
-                    DispatchQueue.main.async {
-                        result(response)
-                    }
+            Task {
+                let response = await self.removeScheduledWorkouts(workoutPlanIds: planIds)
+                DispatchQueue.main.async {
+                    result(response)
                 }
-            } else {
-                result(FlutterError(code: "UNSUPPORTED", message: "WorkoutKit requires iOS 17.0+", details: nil))
             }
             
         default:
@@ -122,7 +106,6 @@ public class WorkoutPlanManager: NSObject {
     
     // MARK: - Get Scheduled Workouts
     
-    @available(iOS 17.0, *)
     private func getScheduledWorkouts() async -> [[String: Any]] {
         let scheduledWorkouts = await WorkoutScheduler.shared.scheduledWorkouts
         let isoFormatter = ISO8601DateFormatter()
@@ -186,7 +169,6 @@ public class WorkoutPlanManager: NSObject {
     
     // MARK: - Workout Push Authorization
     
-    @available(iOS 17.0, *)
     private func requestWorkoutPushAuthorization() async throws -> [String: Any] {
         let authState = await WorkoutScheduler.shared.authorizationState
         
@@ -209,7 +191,6 @@ public class WorkoutPlanManager: NSObject {
         }
     }
     
-    @available(iOS 17.0, *)
     private func authorizationStatusMap(from state: WorkoutScheduler.AuthorizationState) -> [String: Any] {
         switch state {
         case .notDetermined:
@@ -223,11 +204,31 @@ public class WorkoutPlanManager: NSObject {
         }
     }
 
+    // MARK: - Remove All Scheduled Workouts
+
+    /// Removes every scheduled workout from Apple Watch and clears the entire local store.
+    private func removeAllScheduledWorkouts() async -> [String: Any] {
+        let allScheduled = await WorkoutScheduler.shared.scheduledWorkouts
+        var removedFromWatch = 0
+        for sw in allScheduled {
+            await WorkoutScheduler.shared.remove(sw.plan, at: sw.date)
+            removedFromWatch += 1
+            print("✅ [Humango Health] removeAll: removed planId \(sw.plan.id.uuidString) from Apple Watch")
+        }
+        let storeCount = store.getAllRecords().count
+        store.clearAll()
+        print("✅ [Humango Health] removeAll: cleared \(storeCount) local store records (watch removed: \(removedFromWatch))")
+        return [
+            "removedFromWatch": removedFromWatch,
+            "storeCleared": true,
+            "localRecordsCleared": storeCount,
+        ]
+    }
+
     // MARK: - Remove Scheduled Workouts
 
     /// Removes scheduled workouts from Apple Watch and local storage by their WorkoutPlan IDs.
     /// Returns a per-ID response indicating success or failure.
-    @available(iOS 17.0, *)
     private func removeScheduledWorkouts(workoutPlanIds: [String]) async -> [[String: Any]] {
         // Build a lookup: planId → ScheduledWorkoutPlan from the current Apple schedule
         let allScheduled = await WorkoutScheduler.shared.scheduledWorkouts
@@ -287,7 +288,6 @@ public class WorkoutPlanManager: NSObject {
 
     // MARK: - Core Scheduling Logic
 
-    @available(iOS 17.4, *)
     func scheduleWorkouts(jsonArray: [[String: Any]]) async throws -> [[String: Any]] {
         
         // Check if the current device supports scheduled workouts
@@ -439,19 +439,17 @@ public class WorkoutPlanManager: NSObject {
         }
         
         // 3.5 Check and Request WorkoutKit Authorization
-        if #available(iOS 17.0, *) {
-            let authState = await WorkoutScheduler.shared.authorizationState
-            if authState == .notDetermined {
-                do {
-                    try await WorkoutScheduler.shared.requestAuthorization()
-                } catch {
-                    print("⚠️ [Humango Health] WorkoutScheduler requestAuthorization failed: \(error)")
-                }
-            } else if authState == .denied {
-                throw NSError(domain: "WorkoutKit", code: 0, userInfo: [
-                    NSLocalizedDescriptionKey: "WorkoutKit authorization was denied. Please go to Settings -> Health -> Data Access to permit Workout scheduling."
-                ])
+        let authState = await WorkoutScheduler.shared.authorizationState
+        if authState == .notDetermined {
+            do {
+                try await WorkoutScheduler.shared.requestAuthorization()
+            } catch {
+                print("⚠️ [Humango Health] WorkoutScheduler requestAuthorization failed: \(error)")
             }
+        } else if authState == .denied {
+            throw NSError(domain: "WorkoutKit", code: 0, userInfo: [
+                NSLocalizedDescriptionKey: "WorkoutKit authorization was denied. Please go to Settings -> Health -> Data Access to permit Workout scheduling."
+            ])
         }
 
         var returnRecords: [[String: Any]] = []
@@ -489,18 +487,16 @@ public class WorkoutPlanManager: NSObject {
             let dateComponents = Calendar.current.dateComponents([.year, .month, .day, .hour, .minute], from: item.scheduledDate)
             let scheduledWorkout = ScheduledWorkoutPlan(workoutPlanNative, date: dateComponents)
             
-            if #available(iOS 17.0, *) {
-                // Check if we hit the limit
-                if await WorkoutScheduler.shared.scheduledWorkouts.count >= WorkoutScheduler.maxAllowedScheduledWorkoutCount {
-                    print("⚠️ [Humango Health] Reached maximum allowed scheduled workouts. Stopping.")
-                    break
-                }
-                
-                await WorkoutScheduler.shared.schedule(scheduledWorkout.plan, at: scheduledWorkout.date)
-                
-                let name = item.workoutModel.summary?.name ?? "Unnamed Work"
-                print("✅ [Humango Health] Natively Scheduled '\(name)' | PlanId: \(workoutPlanId)")
+            // Check if we hit the limit
+            if await WorkoutScheduler.shared.scheduledWorkouts.count >= WorkoutScheduler.maxAllowedScheduledWorkoutCount {
+                print("⚠️ [Humango Health] Reached maximum allowed scheduled workouts. Stopping.")
+                break
             }
+            
+            await WorkoutScheduler.shared.schedule(scheduledWorkout.plan, at: scheduledWorkout.date)
+            
+            let name = item.workoutModel.summary?.name ?? "Unnamed Work"
+            print("✅ [Humango Health] Natively Scheduled '\(name)' | PlanId: \(workoutPlanId)")
 
             // 5. Save record with WorkoutPlan ID
             store.saveRecord(

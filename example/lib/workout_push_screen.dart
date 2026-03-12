@@ -324,6 +324,159 @@ class _WorkoutPushScreenState extends State<WorkoutPushScreen> {
         },
       ],
     ),
+    _Scenario(
+      label: '1 Mile Tempo (Real Workout)',
+      icon: Icons.route,
+      color: Colors.deepPurple,
+      workouts: [
+        {
+          'average_intensity': 75,
+          'blocks': [
+            {
+              'description': 'Aim to reach Z2 by the end of your warm up',
+              'distance': 550.0,
+              'duration': 300,
+              'equipment_type': '',
+              'measurement_unit': 'second',
+              'sport': 'RUNNING',
+              'target_range': {'high': 434, 'low': 720},
+              'training_load': 3,
+              'type': 'WARMUP',
+              'zone_target': {
+                'range': {'focus_max_range': 83, 'focus_min_range': 50},
+              },
+              'zone_unit': 'PACE',
+            },
+            {
+              'distance': 625.0,
+              'duration': 300,
+              'equipment_type': '',
+              'measurement_unit': 'second',
+              'sport': 'RUNNING',
+              'target_range': {'high': 434, 'low': 492},
+              'training_load': 4,
+              'type': 'WARMUP',
+              'zone_target': {'zone': 'ENDURANCE'},
+              'zone_unit': 'PACE',
+            },
+            {
+              'blocks': [
+                {
+                  'description': 'Build to Threshold',
+                  'distance': 82.0,
+                  'duration': 30,
+                  'equipment_type': '',
+                  'measurement_unit': 'second',
+                  'sport': 'RUNNING',
+                  'target_range': {'high': 364, 'low': 390},
+                  'training_load': 0,
+                  'type': 'INTERVAL',
+                  'zone_target': {'zone': 'THRESHOLD'},
+                  'zone_unit': 'PACE',
+                },
+                {
+                  'description': 'Super Easy - walking is fine',
+                  'distance': 39.0,
+                  'duration': 30,
+                  'equipment_type': '',
+                  'measurement_unit': 'second',
+                  'sport': 'RUNNING',
+                  'target_range': {'high': 554, 'low': 1200},
+                  'training_load': 0,
+                  'type': 'RECOVERY',
+                  'zone_target': {
+                    'range': {'focus_max_range': 65, 'focus_min_range': 30},
+                  },
+                  'zone_unit': 'PACE',
+                },
+              ],
+              'distance': 605.0,
+              'duration': 300,
+              'repeat': 5,
+              'training_load': 4,
+              'type': 'REPEAT',
+            },
+            {
+              'blocks': [
+                {
+                  'distance': 1609.0,
+                  'duration': 666,
+                  'equipment_type': '',
+                  'measurement_unit': 'meter',
+                  'sport': 'RUNNING',
+                  'target_range': {'high': 391, 'low': 433},
+                  'training_load': 14,
+                  'type': 'INTERVAL',
+                  'zone_target': {'zone': 'TEMPO'},
+                  'zone_unit': 'PACE',
+                },
+                {
+                  'description': 'Very easy for maximum recovery',
+                  'distance': 365.76,
+                  'duration': 216,
+                  'equipment_type': '',
+                  'measurement_unit': 'meter',
+                  'sport': 'RUNNING',
+                  'target_range': {'high': 493, 'low': 616},
+                  'training_load': 2,
+                  'type': 'RECOVERY',
+                  'zone_target': {'zone': 'RECOVERY'},
+                  'zone_unit': 'PACE',
+                },
+              ],
+              'distance': 3949.52,
+              'duration': 1764,
+              'repeat': 2,
+              'training_load': 32,
+              'type': 'REPEAT',
+            },
+            {
+              'description':
+                  'Gradually lower heart rate to Z1 by the end of your warm down',
+              'distance': 1017.0,
+              'duration': 600,
+              'equipment_type': '',
+              'measurement_unit': 'second',
+              'sport': 'RUNNING',
+              'target_range': {'high': 493, 'low': 616},
+              'training_load': 6,
+              'type': 'COOLDOWN',
+              'zone_target': {'zone': 'RECOVERY'},
+              'zone_unit': 'PACE',
+            },
+          ],
+          'brick_summaries': [],
+          'distance': 6746.52,
+          'distance_ri_adjusted': 4895.57,
+          'duration': 3264,
+          'duration_ri_adjusted': 1006.5,
+          'id': 16314,
+          'index': 0,
+          'priority': 0,
+          'sport': 'RUNNING',
+          'summary': {
+            'brick': false,
+            'description': {
+              'general':
+                  'This workout will build your ability to work at higher intensity for longer periods without fatigue impacting your output. Settle into these 1 mile Z3 efforts while focusing on a steady and deliberate breathing rate.',
+            },
+            'elevation': 'FLAT',
+            'form': false,
+            'index_max': 9,
+            'measurement_unit': 'meter',
+            'name': '1 mile tempo',
+            'sport': 'RUNNING',
+            'tags': '',
+            'test_workout': false,
+            'zone_unit': 'PACE',
+          },
+          'training_load': 51,
+          'workout_id': 116246,
+          'zone_target': 'TEMPO',
+          'schedule_id': '9e917486-147c-4b1c-861d-a2278a3c9719',
+        },
+      ],
+    ),
   ];
 
   // ── Core push logic ───────────────────────────────────────────────────────
@@ -407,29 +560,17 @@ class _WorkoutPushScreenState extends State<WorkoutPushScreen> {
     });
 
     try {
-      // Step 1 — find all workouts currently on Apple Watch
-      final scheduled = await _pushManager.getScheduledWorkouts();
-
-      // Step 2 — remove them from Apple Watch (+ local store entries)
-      if (scheduled.isNotEmpty) {
-        final planIds = scheduled
-            .map((w) => w.workoutPlanId)
-            .whereType<String>()
-            .where((id) => id.isNotEmpty)
-            .toList();
-        if (planIds.isNotEmpty) {
-          await _pushManager.removeScheduledWorkouts(planIds);
-        }
-      }
-
-      // Step 3 — clear any remaining local deduplication entries
-      final cleared = await _pushManager.clearDeduplicationCache();
+      final response = await _pushManager.removeAllScheduledWorkouts();
+      final removedFromWatch = response['removedFromWatch'] as int? ?? 0;
+      final localCleared = response['localRecordsCleared'] as int? ?? 0;
+      final error = response['error'] as String?;
 
       setState(() {
-        _errorMessage = cleared
-            ? 'Apple Watch workouts removed & local cache cleared.\n'
-                  'Push a fresh scenario to test with the latest native code.'
-            : 'Partial clear — some local cache entries may remain.';
+        _errorMessage = error != null
+            ? 'Clear failed: $error'
+            : 'Removed $removedFromWatch workout(s) from Apple Watch, '
+                  '$localCleared local record(s) cleared.\n'
+                  'Push a fresh scenario to test with the latest native code.';
         _activeScenarioLabel = null;
       });
     } catch (e) {

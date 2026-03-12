@@ -10,6 +10,8 @@ A comprehensive Flutter plugin for integrating iOS HealthKit and WorkoutKit func
 - [Permission Handling](#permission-handling)
 - [Workout Scheduling (Push)](#push-workouts-scheduling)
   - [Swimming Workouts & Pool Size](#swimming-workouts--pool-size)
+  - [Removing Scheduled Workouts](#removing-scheduled-workouts)
+  - [Remove All Scheduled Workouts](#remove-all-scheduled-workouts)
 - [Workout Reading & Monitoring](#workout-reading--monitoring)
 - [Background Delivery Manager (Workouts + Sleep)](#background-delivery-manager-api-configuration)
 - [Sleep Data Reading & Monitoring](#sleep-data-reading--monitoring)
@@ -77,78 +79,119 @@ Any application using this plugin must declare the following keys in their `ios/
 ## Permission Handling
 
 iOS HealthKit requires specific capability definitions and uses a nuanced permissions model.
-Permissions on iOS are split strictly between **Read** and **Write** (`Share`). 
 
 ### Apple's Strict Privacy Rules (Must Read)
 When building systems dependent on HealthKit, you must understand two core iOS behaviors:
 
-1. **The "One-Time Prompt" Rule**: iOS will only *ever* show the HealthKit permission popup **once** per device for a specific set of data types. If the user taps "Don't Allow," you **cannot** trigger the sheet again via code. Calling `request()` again simply returns success silently without showing the prompt.
-2. **The "Blind Read" Rule**: Apple protects user privacy by making it impossible to check if a user explicitly denied `Read` access. A denied read permission simply appears as `notDetermined` or behaves as if there is no data. You can only deterministically check the status of `Write` (share) access.
+1. **The "One-Time Prompt" Rule**: iOS will only *ever* show the HealthKit permission popup **once** per device. If the user taps "Don't Allow," you **cannot** trigger the sheet again via code. Calling `requestAuthorization()` again returns success silently without showing the prompt.
+2. **The "Blind Read" Rule**: Apple protects user privacy by making it impossible to check if a user explicitly denied `Read` access. A denied read permission simply behaves as if there is no data. You can only infer denial by checking whether data queries return empty results.
 
-**Handling Denials:** Because you cannot show the prompt twice, if you determine (via the write status) that a user is missing permissions, your app must show a custom Flutter UI explaining why access is needed, and provide a button to deep-link the user into the `iOS Settings -> Health -> Data Access & Devices` to toggle the switches manually.
+**Handling Denials:** Because you cannot show the prompt twice, if you determine that a user is missing permissions, your app must show a custom Flutter UI explaining why access is needed, and provide a button to deep-link the user into **iOS Settings → Health → Data Access & Devices** to toggle the switches manually.
 
-### Supported Data Types
-The `HealthDataType` enum maps Dart instances to correct `HKQuantityTypeIdentifier` strings natively.
-Supported values currently include:
-- `HealthDataType.workout`
-- `HealthDataType.heartRate`
-- `HealthDataType.hrv`
-- `HealthDataType.restingHeartRate`
-- `HealthDataType.steps`
-- `HealthDataType.activeCalories`
-- `HealthDataType.sleepAnalysis`
-... and more.
+### Tracked Health Types
 
-### 1. Verification
-You can manually check the current iOS authorization status.
+The plugin tracks a **fixed, hardcoded** set of HealthKit types — types are not user-configurable. The following `HealthDataType` values are reported in every `HealthKitAuthorizationResult`:
+
+| `HealthDataType` | HealthKit type |
+|-----------------|----------------|
+| `workout` | `HKWorkoutType` |
+| `heartRate` | `HKQuantityTypeIdentifierHeartRate` |
+| `hrv` | `HKQuantityTypeIdentifierHeartRateVariabilitySDNN` |
+| `restingHeartRate` | `HKQuantityTypeIdentifierRestingHeartRate` |
+| `steps` | `HKQuantityTypeIdentifierStepCount` |
+| `activeCalories` | `HKQuantityTypeIdentifierActiveEnergyBurned` |
+| `distance` | `HKQuantityTypeIdentifierDistanceWalkingRunning` |
+| `sleepAnalysis` | `HKCategoryTypeIdentifierSleepAnalysis` |
+| `bodyMass` | `HKQuantityTypeIdentifierBodyMass` |
+| `height` | `HKQuantityTypeIdentifierHeight` |
+| `bodyFatPercentage` | `HKQuantityTypeIdentifierBodyFatPercentage` |
+
+### Permission Status Values
+
+`PermissionStatus` values returned per data type:
+
+| Status | Meaning |
+|--------|---------|
+| `unknown` | Permission has never been requested — user hasn't seen the HealthKit prompt yet |
+| `authorized` | Permission granted and data confirmed present in HealthKit |
+| `noData` | Permission was granted, but no data of this type exists in HealthKit yet |
+| `denied` | Permission was denied or was previously granted then revoked in Settings |
+
+> `noData` is **not** the same as denied — the user likely granted access but simply has no recorded data of that type. Use `PermissionStatus.denied` as your gate, not `noData`.
+
+### 1. Requesting Authorization
+
+Call this once on first launch. It shows Apple's native HealthKit permission sheet (fire-and-forget — iOS displays the modal independently). Subsequent calls are silently ignored by iOS if the prompt has already been shown.
 
 ```dart
 import 'package:humango_health/humango_health.dart';
 
 final permissionManager = PermissionManager();
 
-void checkPermissions() async {
-  final response = await permissionManager.verify(
-    [HealthDataType.heartRate, HealthDataType.steps], // Read types 
-    [HealthDataType.workout] // Write types
-  );
-
-  final writeStatus = response.writeStatuses[HealthDataType.workout];
-  if (writeStatus == PermissionStatus.authorized) {
-    print("Allowed to write workouts!");
-  }
+void requestPermissions() async {
+  await permissionManager.requestAuthorization();
+  // iOS will surface the permissions dialog to the user here.
+  // Subscribe to permissionStream to react to the result.
 }
 ```
 
-### 2. Requesting
-Apple requires all permissions to be requested simultaneously on a unified permissions sheet. This is a fire-and-forget request returning `Future<void>`, as iOS displays the modal independently.
+### 2. Verification
+
+Manually check the current iOS authorization status at any point:
 
 ```dart
-void requestPermissions() async {
-  // Pass identical lists to verify()
-  await permissionManager.request(
-    [HealthDataType.heartRate, HealthDataType.steps],
-    [HealthDataType.workout]
-  );
-  
-  // Natively, iOS will surface the permissions dialog to the user here.
+final result = await permissionManager.verifyAuthorization();
+
+if (result.isLikelyFullyGranted) {
+  print('All permissions granted (or no data yet).');
+} else if (result.hasAnyDenied) {
+  print('One or more permissions denied — prompt user to go to Settings.');
+}
+
+// Inspect individual types
+final heartRateStatus = result.statuses[HealthDataType.heartRate];
+if (heartRateStatus == PermissionStatus.authorized) {
+  print('Heart rate: authorized with data present.');
+} else if (heartRateStatus == PermissionStatus.noData) {
+  print('Heart rate: authorized but no data recorded yet.');
 }
 ```
+
+`HealthKitAuthorizationResult` helper getters:
+
+| Getter | Returns `true` when… |
+|--------|----------------------|
+| `isAuthorized` | Overall authorization succeeded (sheet was accepted) |
+| `isLikelyFullyGranted` | All tracked types are `authorized` or `noData` |
+| `hasAnyDenied` | At least one type has `denied` status |
+| `hasAnyNoData` | At least one type has `noData` status |
+| `hasAnyUnknown` | At least one type has `unknown` status (prompt not yet shown) |
 
 ### 3. Listening (Continuous Monitoring)
-Because users can leave your App, toggle permissions natively in the iOS Settings, and return, you should rely on the `listen()` stream. This ties natively into `UIApplication.didBecomeActiveNotification` ensuring your Dart logic automatically reacts when users background/foreground the app.
+
+Because users can leave your app, toggle permissions in iOS Settings, and return, subscribe to `permissionStream`. It is backed by `UIApplication.didBecomeActiveNotification` so your Dart logic automatically reacts every time the app comes to the foreground.
 
 ```dart
+import 'dart:async';
+import 'package:humango_health/humango_health.dart';
+
 StreamSubscription? _sub;
 
 void startListening() {
-  _sub = permissionManager.listen(
-    [HealthDataType.heartRate, HealthDataType.steps],
-    [HealthDataType.workout]
-  ).listen((PermissionResponse response) {
-      // Rebuild UI, handle logic here according to returned status.
-      print(response.readStatuses);
-  });
+  _sub = permissionManager.permissionStream.listen(
+    (HealthKitAuthorizationResult result) {
+      if (result.hasAnyDenied) {
+        // Show UI guiding user to iOS Settings → Health
+      } else if (result.isLikelyFullyGranted) {
+        // All good — proceed with data access
+      }
+
+      // Inspect per-type status
+      result.statuses.forEach((type, status) {
+        print('$type → ${status.name}');
+      });
+    },
+  );
 }
 
 void dispose() {
@@ -156,7 +199,7 @@ void dispose() {
 }
 ```
 
-See the `example/` app directory for a complete working demonstration on requesting, verifying, and streaming Permission actions. 
+See the `example/` app directory for a complete working demonstration.
 
 ---
 
@@ -485,6 +528,43 @@ The `WorkoutRemovalResult` model provides:
 - `status`: `success` | `partial` | `fail`
 - `message`: Human-readable description of the outcome
 
+### Remove All Scheduled Workouts
+
+To do a **full reset** — remove every scheduled workout from Apple Watch **and** clear the entire local `ScheduledWorkoutStore` in a single native call — use `removeAllScheduledWorkouts()`.
+
+This is preferred over the manual get → remove → clear sequence when you want a clean slate:
+
+```dart
+final pushManager = WorkoutPushManager();
+
+void removeAll() async {
+  final response = await pushManager.removeAllScheduledWorkouts();
+
+  final removedFromWatch  = response['removedFromWatch']  as int;    // workouts removed from Apple Watch
+  final localCleared      = response['localRecordsCleared'] as int;  // local store records cleared
+  final storeCleared      = response['storeCleared']      as bool;   // always true on success
+
+  print('Removed $removedFromWatch workout(s) from Apple Watch');
+  print('Cleared $localCleared local record(s)');
+
+  // Optional: check for errors
+  if (response.containsKey('error')) {
+    print('Error: ${response["error"]}');
+  }
+}
+```
+
+**Response fields:**
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `removedFromWatch` | `int` | Number of workouts removed from Apple Watch via `WorkoutScheduler` |
+| `storeCleared` | `bool` | `true` if the local `ScheduledWorkoutStore` was cleared |
+| `localRecordsCleared` | `int` | Number of local deduplication records that were cleared |
+| `error` | `String?` | Only present if the call failed; describes the error |
+
+> **Note:** A workout on Apple Watch that has no matching local record (e.g. scheduled from another device or a previous app install) is still removed from Apple Watch and counted in `removedFromWatch`. Requires iOS 17.0+.
+
 ### Native Deduplication
 
 All deduplication is handled entirely at the **native iOS layer** via `ScheduledWorkoutStore`. There is **no Dart-side deduplication logic**. The single source of truth is a `UserDefaults`-backed store keyed by `schedule_id`.
@@ -699,12 +779,15 @@ if (hash != null) {
 
 ### Clearing the Deduplication Cache
 
-To force a full re-sync on the next push, clear the native deduplication cache:
+To force a full re-sync on the next push, clear the native deduplication cache without touching Apple Watch:
 
 ```dart
 final cleared = await pushManager.clearDeduplicationCache();
 // Returns true if native cache was successfully cleared
+// Note: does NOT remove workouts from Apple Watch — use removeAllScheduledWorkouts() for a full reset
 ```
+
+> **Tip:** If you also want to remove the workouts from Apple Watch at the same time, use [`removeAllScheduledWorkouts()`](#remove-all-scheduled-workouts) instead — it clears the local store **and** removes all workouts from Apple Watch in one call.
 
 ### Tracking with WorkoutPlan.id
 

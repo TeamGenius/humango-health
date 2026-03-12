@@ -13,7 +13,6 @@ import HealthKit
 
 // MARK: - WorkoutPlanBuilder
 
-@available(iOS 17.4, *)
 class WorkoutPlanBuilder {
 
     // MARK: - Public entry point

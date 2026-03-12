@@ -304,6 +304,39 @@ class WorkoutPushManager {
     );
   }
 
+  /// Removes ALL scheduled workouts from Apple Watch and clears the entire
+  /// local [ScheduledWorkoutStore] in a single native call.
+  ///
+  /// Returns a map with:
+  /// - `removedFromWatch`: number of workouts removed from Apple Watch
+  /// - `storeCleared`: true if the local store was cleared
+  /// - `localRecordsCleared`: number of local records that were cleared
+  ///
+  /// Prefer this over the manual get → remove → clear sequence when you want
+  /// a full reset. Requires iOS 17.0+.
+  Future<Map<String, dynamic>> removeAllScheduledWorkouts() async {
+    try {
+      final result = await _channel.invokeMethod<Map<dynamic, dynamic>>(
+        'removeAllScheduledWorkouts',
+      );
+      if (result != null) {
+        return Map<String, dynamic>.from(result);
+      }
+      return {
+        'removedFromWatch': 0,
+        'storeCleared': false,
+        'localRecordsCleared': 0,
+      };
+    } catch (e) {
+      debugPrint('❌ [Humango Health] removeAllScheduledWorkouts failed: $e');
+      return {
+        'removedFromWatch': 0,
+        'storeCleared': false,
+        'error': e.toString(),
+      };
+    }
+  }
+
   /// Clears the native-side deduplication cache (ScheduledWorkoutStore).
   /// Forces a full re-sync on the next push.
   Future<bool> clearDeduplicationCache() async {

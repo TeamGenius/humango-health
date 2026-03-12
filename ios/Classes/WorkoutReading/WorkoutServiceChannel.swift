@@ -5,7 +5,6 @@ import UIKit
 import CoreLocation
 import WorkoutKit
 
-@available(iOS 17.4, *)
 class WorkoutServiceChannel: NSObject, FlutterStreamHandler {
     private var workoutService: WorkoutService?
     private var eventSink: FlutterEventSink?
