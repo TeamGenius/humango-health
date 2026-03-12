@@ -84,7 +84,8 @@ struct WorkoutInstanceModelBlock: Codable {
 
 // MARK: - BlockBlock
 struct BlockBlock: Codable {
-    let distance, duration: Int?
+    let distance: Double?
+    let duration: Int?
     let equipmentType, measurementUnit: String?
     let sport: Sport?
     let targetRange: TargetRange?

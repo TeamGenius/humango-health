@@ -341,7 +341,7 @@ class WorkoutPlanBuilder {
 
         step.step.goal  = resolveGoal(
             measurementUnit: block.measurementUnit,
-            distance: block.distance.map { Double($0) },
+            distance: block.distance,
             duration: block.duration
         )
         step.step.alert = resolveAlert(
