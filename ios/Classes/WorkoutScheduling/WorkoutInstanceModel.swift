@@ -33,6 +33,11 @@ struct WorkoutInstanceModelElement: Codable {
     let workoutChart: [WorkoutChartUnion]?
     let workoutID: Int?
     let zoneTarget: String?
+    /// Preferred display/goal unit for this sport. All incoming distance values are always in
+    /// meters; this field tells WorkoutKit which unit to express goals in on Apple Watch.
+    /// e.g. "mile", "km", "meter", "yard". Nil → falls back to per-block measurement_unit.
+    /// For SWIMMING, pool_size takes precedence over this field.
+    let unit: String?
 
     enum CodingKeys: String, CodingKey {
         case averageIntensity = "average_intensity"
@@ -49,6 +54,7 @@ struct WorkoutInstanceModelElement: Codable {
         case workoutChart = "workout_chart"
         case workoutID = "workout_id"
         case zoneTarget = "zone_target"
+        case unit
     }
 }
 

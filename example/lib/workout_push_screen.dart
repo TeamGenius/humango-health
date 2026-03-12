@@ -324,6 +324,386 @@ class _WorkoutPushScreenState extends State<WorkoutPushScreen> {
         },
       ],
     ),
+    // ── Unit display scenarios ────────────────────────────────────────────
+    _Scenario(
+      label: 'Run — display in Miles',
+      icon: Icons.directions_run,
+      color: Colors.indigo,
+      workouts: [
+        {
+          'schedule_id': 'run-unit-mile-001',
+          'sport': 'RUNNING',
+          'unit': 'mile',
+          'summary': {
+            'name': 'Run: Goal in Miles',
+            'sport': 'RUNNING',
+            'measurement_unit': 'second',
+          },
+          'blocks': [
+            {
+              'type': 'WARMUP',
+              'duration': 600,
+              'distance': 805.0, // ~0.5 mi in meters
+              'measurement_unit': 'second',
+              'sport': 'RUNNING',
+              'zone_unit': 'PACE',
+              'target_range': {'low': 600, 'high': 480},
+            },
+            {
+              'type': 'REPEAT',
+              'repeat': 3,
+              'duration': 960,
+              'distance': 1609.0, // ~1 mi in meters
+              'blocks': [
+                {
+                  'type': 'INTERVAL',
+                  'duration': 480,
+                  'distance': 1609.0, // 1 mi in meters → displayed as 1 mi
+                  'measurement_unit': 'meter',
+                  'sport': 'RUNNING',
+                  'zone_unit': 'PACE',
+                  'target_range': {'low': 360, 'high': 330},
+                },
+                {
+                  'type': 'RECOVERY',
+                  'duration': 120,
+                  'distance': 402.0, // ~0.25 mi in meters
+                  'measurement_unit': 'second',
+                  'sport': 'RUNNING',
+                  'zone_unit': 'PACE',
+                  'target_range': {'low': 720, 'high': 540},
+                },
+              ],
+            },
+            {
+              'type': 'COOLDOWN',
+              'duration': 600,
+              'distance': 805.0, // ~0.5 mi in meters
+              'measurement_unit': 'second',
+              'sport': 'RUNNING',
+              'zone_unit': 'PACE',
+              'target_range': {'low': 900, 'high': 600},
+            },
+          ],
+        },
+      ],
+    ),
+    _Scenario(
+      label: 'Run — display in Kilometres',
+      icon: Icons.directions_run,
+      color: Colors.teal.shade700,
+      workouts: [
+        {
+          'schedule_id': 'run-unit-km-001',
+          'sport': 'RUNNING',
+          'unit': 'km',
+          'summary': {
+            'name': 'Run: Goal in Kilometres',
+            'sport': 'RUNNING',
+            'measurement_unit': 'second',
+          },
+          'blocks': [
+            {
+              'type': 'WARMUP',
+              'duration': 600,
+              'distance': 1000.0, // 1 km in meters
+              'measurement_unit': 'second',
+              'sport': 'RUNNING',
+              'zone_unit': 'PACE',
+              'target_range': {'low': 600, 'high': 480},
+            },
+            {
+              'type': 'REPEAT',
+              'repeat': 4,
+              'duration': 720,
+              'distance': 1000.0,
+              'blocks': [
+                {
+                  'type': 'INTERVAL',
+                  'duration': 300,
+                  'distance': 1000.0, // 1 km in meters → displayed as 1 km
+                  'measurement_unit': 'meter',
+                  'sport': 'RUNNING',
+                  'zone_unit': 'PACE',
+                  'target_range': {'low': 300, 'high': 270},
+                },
+                {
+                  'type': 'RECOVERY',
+                  'duration': 120,
+                  'distance': 400.0,
+                  'measurement_unit': 'second',
+                  'sport': 'RUNNING',
+                  'zone_unit': 'PACE',
+                  'target_range': {'low': 720, 'high': 540},
+                },
+              ],
+            },
+            {
+              'type': 'COOLDOWN',
+              'duration': 600,
+              'distance': 1000.0,
+              'measurement_unit': 'second',
+              'sport': 'RUNNING',
+              'zone_unit': 'PACE',
+              'target_range': {'low': 900, 'high': 600},
+            },
+          ],
+        },
+      ],
+    ),
+    _Scenario(
+      label: 'Run — display in Meters',
+      icon: Icons.directions_run,
+      color: Colors.brown,
+      workouts: [
+        {
+          'schedule_id': 'run-unit-meter-001',
+          'sport': 'RUNNING',
+          'unit': 'meter',
+          'summary': {
+            'name': 'Run: Goal in Meters',
+            'sport': 'RUNNING',
+            'measurement_unit': 'second',
+          },
+          'blocks': [
+            {
+              'type': 'WARMUP',
+              'duration': 600,
+              'distance': 800.0,
+              'measurement_unit': 'second',
+              'sport': 'RUNNING',
+              'zone_unit': 'PACE',
+              'target_range': {'low': 600, 'high': 480},
+            },
+            {
+              'type': 'REPEAT',
+              'repeat': 5,
+              'duration': 600,
+              'distance': 800.0,
+              'blocks': [
+                {
+                  'type': 'INTERVAL',
+                  'duration': 240,
+                  'distance': 800.0, // 800 m → displayed as 800 m
+                  'measurement_unit': 'meter',
+                  'sport': 'RUNNING',
+                  'zone_unit': 'PACE',
+                  'target_range': {'low': 270, 'high': 240},
+                },
+                {
+                  'type': 'RECOVERY',
+                  'duration': 120,
+                  'distance': 200.0,
+                  'measurement_unit': 'second',
+                  'sport': 'RUNNING',
+                  'zone_unit': 'PACE',
+                  'target_range': {'low': 720, 'high': 540},
+                },
+              ],
+            },
+            {
+              'type': 'COOLDOWN',
+              'duration': 600,
+              'distance': 800.0,
+              'measurement_unit': 'second',
+              'sport': 'RUNNING',
+              'zone_unit': 'PACE',
+              'target_range': {'low': 900, 'high': 600},
+            },
+          ],
+        },
+      ],
+    ),
+    _Scenario(
+      label: 'Run — display in Yards',
+      icon: Icons.directions_run,
+      color: Colors.amber.shade800,
+      workouts: [
+        {
+          'schedule_id': 'run-unit-yard-001',
+          'sport': 'RUNNING',
+          'unit': 'yard',
+          'summary': {
+            'name': 'Run: Goal in Yards',
+            'sport': 'RUNNING',
+            'measurement_unit': 'second',
+          },
+          'blocks': [
+            {
+              'type': 'WARMUP',
+              'duration': 600,
+              'distance': 457.2, // 500 yd in meters
+              'measurement_unit': 'second',
+              'sport': 'RUNNING',
+              'zone_unit': 'PACE',
+              'target_range': {'low': 600, 'high': 480},
+            },
+            {
+              'type': 'REPEAT',
+              'repeat': 6,
+              'duration': 540,
+              'distance': 411.5,
+              'blocks': [
+                {
+                  'type': 'INTERVAL',
+                  'duration': 240,
+                  'distance': 411.5, // ~440 yd (quarter mile) in meters → displayed as 440 yd
+                  'measurement_unit': 'meter',
+                  'sport': 'RUNNING',
+                  'zone_unit': 'PACE',
+                  'target_range': {'low': 270, 'high': 240},
+                },
+                {
+                  'type': 'RECOVERY',
+                  'duration': 120,
+                  'distance': 91.4, // 100 yd in meters
+                  'measurement_unit': 'second',
+                  'sport': 'RUNNING',
+                  'zone_unit': 'PACE',
+                  'target_range': {'low': 720, 'high': 540},
+                },
+              ],
+            },
+            {
+              'type': 'COOLDOWN',
+              'duration': 600,
+              'distance': 457.2, // 500 yd in meters
+              'measurement_unit': 'second',
+              'sport': 'RUNNING',
+              'zone_unit': 'PACE',
+              'target_range': {'low': 900, 'high': 600},
+            },
+          ],
+        },
+      ],
+    ),
+    _Scenario(
+      label: 'Cycling — display in Kilometres',
+      icon: Icons.directions_bike,
+      color: Colors.green.shade700,
+      workouts: [
+        {
+          'schedule_id': 'cycle-unit-km-001',
+          'sport': 'CYCLING',
+          'unit': 'km',
+          'summary': {
+            'name': 'Cycling: Goal in Kilometres',
+            'sport': 'CYCLING',
+            'measurement_unit': 'second',
+          },
+          'blocks': [
+            {
+              'type': 'WARMUP',
+              'duration': 600,
+              'distance': 5000.0, // 5 km in meters
+              'measurement_unit': 'second',
+              'sport': 'CYCLING',
+              'zone_unit': 'POWER',
+              'target_range': {'low': 100, 'high': 150},
+            },
+            {
+              'type': 'REPEAT',
+              'repeat': 4,
+              'duration': 900,
+              'distance': 10000.0,
+              'blocks': [
+                {
+                  'type': 'INTERVAL',
+                  'duration': 600,
+                  'distance': 10000.0, // 10 km in meters → displayed as 10 km
+                  'measurement_unit': 'meter',
+                  'sport': 'CYCLING',
+                  'zone_unit': 'POWER',
+                  'target_range': {'low': 220, 'high': 270},
+                },
+                {
+                  'type': 'RECOVERY',
+                  'duration': 180,
+                  'distance': 2500.0,
+                  'measurement_unit': 'second',
+                  'sport': 'CYCLING',
+                  'zone_unit': 'POWER',
+                  'target_range': {'low': 80, 'high': 120},
+                },
+              ],
+            },
+            {
+              'type': 'COOLDOWN',
+              'duration': 600,
+              'distance': 5000.0,
+              'measurement_unit': 'second',
+              'sport': 'CYCLING',
+              'zone_unit': 'POWER',
+              'target_range': {'low': 80, 'high': 120},
+            },
+          ],
+        },
+      ],
+    ),
+    _Scenario(
+      label: 'Cycling — display in Miles',
+      icon: Icons.directions_bike,
+      color: Colors.red.shade700,
+      workouts: [
+        {
+          'schedule_id': 'cycle-unit-mile-001',
+          'sport': 'CYCLING',
+          'unit': 'mile',
+          'summary': {
+            'name': 'Cycling: Goal in Miles',
+            'sport': 'CYCLING',
+            'measurement_unit': 'second',
+          },
+          'blocks': [
+            {
+              'type': 'WARMUP',
+              'duration': 600,
+              'distance': 4828.0, // ~3 mi in meters
+              'measurement_unit': 'second',
+              'sport': 'CYCLING',
+              'zone_unit': 'POWER',
+              'target_range': {'low': 100, 'high': 150},
+            },
+            {
+              'type': 'REPEAT',
+              'repeat': 3,
+              'duration': 1200,
+              'distance': 16093.0,
+              'blocks': [
+                {
+                  'type': 'INTERVAL',
+                  'duration': 900,
+                  'distance': 16093.0, // ~10 mi in meters → displayed as 10 mi
+                  'measurement_unit': 'meter',
+                  'sport': 'CYCLING',
+                  'zone_unit': 'POWER',
+                  'target_range': {'low': 220, 'high': 270},
+                },
+                {
+                  'type': 'RECOVERY',
+                  'duration': 300,
+                  'distance': 3218.0, // ~2 mi in meters
+                  'measurement_unit': 'second',
+                  'sport': 'CYCLING',
+                  'zone_unit': 'POWER',
+                  'target_range': {'low': 80, 'high': 120},
+                },
+              ],
+            },
+            {
+              'type': 'COOLDOWN',
+              'duration': 600,
+              'distance': 4828.0, // ~3 mi in meters
+              'measurement_unit': 'second',
+              'sport': 'CYCLING',
+              'zone_unit': 'POWER',
+              'target_range': {'low': 80, 'high': 120},
+            },
+          ],
+        },
+      ],
+    ),
+    // ── End unit display scenarios ─────────────────────────────────────────
     _Scenario(
       label: '1 Mile Tempo (Real Workout)',
       icon: Icons.route,

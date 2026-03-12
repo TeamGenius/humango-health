@@ -56,24 +56,44 @@ public class SleepDataManager: NSObject, FlutterStreamHandler, AppLifecycleObser
     private var monitorStartDate: Date?
     private var sessionConfig: SleepSessionConfig = .default
     
+    // Tracks whether the AppLifecycleManager observer has been registered.
+    // Registration is deferred until API background delivery is configured.
+    private var isLifecycleObserverRegistered = false
+    
     // MARK: - Initialization
     
     private override init() {
         self.sessionDetector = SleepSessionDetector(config: .default)
         super.init()
-        // Register with AppLifecycleManager for automatic foreground/background switching
-        AppLifecycleManager.shared.addObserver(self)
         // Restore persisted session state if any
         self.sessionState = sessionDetector.loadState()
-        print("🛏️ [Humango Health] SleepDataManager initialized with native lifecycle observer")
+        // Only register the lifecycle observer if API background delivery was previously
+        // configured. Without a backend API there is no need to observe app lifecycle.
+        if deliveryManager.isAPIConfigured {
+            registerLifecycleObserverIfNeeded()
+        } else {
+            print("🛏️ [Humango Health] SleepDataManager initialized (background observer deferred — configure API to enable)")
+        }
         if sessionState.segmentCount > 0 {
             print("🛏️ [Humango Health] Restored session state: \(sessionState.segmentCount) segments, \(String(format: "%.0f", sessionState.totalSleepMinutes))m sleep")
         }
     }
     
     deinit {
-        AppLifecycleManager.shared.removeObserver(self)
+        if isLifecycleObserverRegistered {
+            AppLifecycleManager.shared.removeObserver(self)
+        }
         freezeCheckTimer?.invalidate()
+    }
+    
+    /// Registers this manager as a lifecycle observer exactly once.
+    /// Must be called on the main thread or from init — Swift actor isolation is
+    /// not required here because AppLifecycleManager is also a singleton.
+    private func registerLifecycleObserverIfNeeded() {
+        guard !isLifecycleObserverRegistered else { return }
+        AppLifecycleManager.shared.addObserver(self)
+        isLifecycleObserverRegistered = true
+        print("🛏️ [Humango Health] SleepDataManager registered native lifecycle observer")
     }
     
     // MARK: - Auto-Start on App Launch
@@ -91,6 +111,10 @@ public class SleepDataManager: NSObject, FlutterStreamHandler, AppLifecycleObser
             print("🛏️ [Humango Health] Auto-start skipped — monitoring already active")
             return
         }
+        
+        // Ensure the lifecycle observer is registered before starting (covers the case
+        // where API was configured on a previous launch but observer was not yet registered).
+        registerLifecycleObserverIfNeeded()
         
         let startDate = Date().addingTimeInterval(-12 * 60 * 60) // 12h lookback
         monitorStartDate = startDate
@@ -380,6 +404,11 @@ public class SleepDataManager: NSObject, FlutterStreamHandler, AppLifecycleObser
         let headers = args["headers"] as? [String: String] ?? [:]
         
         deliveryManager.configure(mode: mode, apiURL: apiURL, headers: headers)
+        
+        // Register lifecycle observer now that API is configured (first-time configure).
+        if mode == .api {
+            registerLifecycleObserverIfNeeded()
+        }
         
         if mode == .api && monitorStartDate != nil {
             // Already monitoring: restart to pick up API delivery mode

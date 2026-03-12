@@ -143,6 +143,10 @@ class WorkoutPlanBuilder {
         let activity = workout.sport.hkWorkoutType
         let location = workout.summary?.indoorOutdoor?.hkLocationType ?? .unknown
         let allBlocks = workout.blocks ?? []
+        // Top-level unit preference: all incoming distances are meters; this drives the
+        // WorkoutKit goal/display unit (e.g. "mile", "km"). Per-block measurement_unit
+        // still decides whether a step goal is time-based or distance-based.
+        let workoutUnit = workout.unit
 
         // ── Split by type ────────────────────────────────────────────────
         let warmupBlocksList   = allBlocks.filter { $0.type?.uppercased() == "WARMUP"   }
@@ -171,16 +175,16 @@ class WorkoutPlanBuilder {
 
         if hasInterval {
             warmupStep      = hasWarmup
-                ? buildWorkoutStep(from: warmupBlocksList.first!, sport: sport, activity: activity, location: location)
+                ? buildWorkoutStep(from: warmupBlocksList.first!, sport: sport, activity: activity, location: location, workoutUnit: workoutUnit)
                 : nil
             cooldownStep    = hasCooldown
-                ? buildWorkoutStep(from: cooldownBlocksList.last!, sport: sport, activity: activity, location: location)
+                ? buildWorkoutStep(from: cooldownBlocksList.last!, sport: sport, activity: activity, location: location, workoutUnit: workoutUnit)
                 : nil
             mainForInterval = intervalBlocksList
         } else if hasWarmup && hasCooldown {
             // No interval blocks — warmup fills the interval section, cooldown stays in its slot
             warmupStep      = nil
-            cooldownStep    = buildWorkoutStep(from: cooldownBlocksList.last!, sport: sport, activity: activity, location: location)
+            cooldownStep    = buildWorkoutStep(from: cooldownBlocksList.last!, sport: sport, activity: activity, location: location, workoutUnit: workoutUnit)
             mainForInterval = warmupBlocksList
         } else if hasCooldown {
             // No interval, no warmup — cooldown fills the interval section
@@ -194,7 +198,7 @@ class WorkoutPlanBuilder {
             mainForInterval = warmupBlocksList
         }
 
-        let intervalBlocks = buildIntervalBlocks(from: mainForInterval, sport: sport, activity: activity, location: location)
+        let intervalBlocks = buildIntervalBlocks(from: mainForInterval, sport: sport, activity: activity, location: location, workoutUnit: workoutUnit)
 
         print("  warmup=\(warmupStep != nil) blocks=\(intervalBlocks.count) cooldown=\(cooldownStep != nil)")
 
@@ -270,7 +274,8 @@ class WorkoutPlanBuilder {
         from blocks: [WorkoutInstanceModelBlock],
         sport: String,
         activity: HKWorkoutActivityType,
-        location: HKWorkoutSessionLocationType
+        location: HKWorkoutSessionLocationType,
+        workoutUnit: String? = nil
     ) -> [IntervalBlock] {
 
         var result: [IntervalBlock] = []
@@ -284,7 +289,8 @@ class WorkoutPlanBuilder {
                 var step = IntervalStep(.work)
                 step.step.goal  = resolveGoal(measurementUnit: block.measurementUnit,
                                               distance: block.distance,
-                                              duration: block.duration)
+                                              duration: block.duration,
+                                              workoutUnit: workoutUnit)
                 step.step.alert = resolveAlert(zoneUnit: block.zoneUnit,
                                                targetRange: block.targetRange,
                                                sport: sport,
@@ -296,7 +302,8 @@ class WorkoutPlanBuilder {
                 var step = IntervalStep(.recovery)
                 step.step.goal  = resolveGoal(measurementUnit: block.measurementUnit,
                                               distance: block.distance,
-                                              duration: block.duration)
+                                              duration: block.duration,
+                                              workoutUnit: workoutUnit)
                 step.step.alert = resolveAlert(zoneUnit: block.zoneUnit,
                                                targetRange: block.targetRange,
                                                sport: sport,
@@ -314,7 +321,7 @@ class WorkoutPlanBuilder {
                 }
 
                 let steps: [IntervalStep] = children.map {
-                    buildIntervalStep(from: $0, sport: sport, activity: activity, location: location)
+                    buildIntervalStep(from: $0, sport: sport, activity: activity, location: location, workoutUnit: workoutUnit)
                 }
                 result.append(IntervalBlock(steps: steps, iterations: iterations))
 
@@ -332,7 +339,8 @@ class WorkoutPlanBuilder {
         from block: BlockBlock,
         sport: String,
         activity: HKWorkoutActivityType,
-        location: HKWorkoutSessionLocationType
+        location: HKWorkoutSessionLocationType,
+        workoutUnit: String? = nil
     ) -> IntervalStep {
 
         let purpose = intervalStepPurpose(for: block.type)
@@ -341,7 +349,8 @@ class WorkoutPlanBuilder {
         step.step.goal  = resolveGoal(
             measurementUnit: block.measurementUnit,
             distance: block.distance,
-            duration: block.duration
+            duration: block.duration,
+            workoutUnit: workoutUnit
         )
         step.step.alert = resolveAlert(
             zoneUnit: block.zoneUnit,
@@ -361,13 +370,15 @@ class WorkoutPlanBuilder {
         from block: WorkoutInstanceModelBlock,
         sport: String,
         activity: HKWorkoutActivityType,
-        location: HKWorkoutSessionLocationType
+        location: HKWorkoutSessionLocationType,
+        workoutUnit: String? = nil
     ) -> WorkoutStep {
 
         let goal  = resolveGoal(
             measurementUnit: block.measurementUnit,
             distance: block.distance,
-            duration: block.duration
+            duration: block.duration,
+            workoutUnit: workoutUnit
         )
         let alert = resolveAlert(
             zoneUnit: block.zoneUnit,
@@ -395,11 +406,14 @@ class WorkoutPlanBuilder {
     private func resolveGoal(
         measurementUnit: String?,
         distance: Double?,
-        duration: Int?
+        duration: Int?,
+        workoutUnit: String? = nil
     ) -> WorkoutGoal {
-
+        // All incoming distances are in meters. measurement_unit decides goal TYPE
+        // (distance vs time). workoutUnit (top-level) overrides the output UnitLength
+        // so Apple Watch displays the goal in the caller's preferred unit.
         if isDistanceUnit(measurementUnit), let dist = distance, dist > 0 {
-            let unitLength     = lengthUnit(for: measurementUnit)
+            let unitLength     = lengthUnit(for: workoutUnit ?? measurementUnit)
             let convertedValue = Measurement(value: dist, unit: UnitLength.meters)
                 .converted(to: unitLength).value
             return .distance(convertedValue, unitLength)
