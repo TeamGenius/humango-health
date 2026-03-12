@@ -9,6 +9,7 @@ A comprehensive Flutter plugin for integrating iOS HealthKit and WorkoutKit func
 - [Requirements](#requirements)
 - [Permission Handling](#permission-handling)
 - [Workout Scheduling (Push)](#push-workouts-scheduling)
+  - [Swimming Workouts & Pool Size](#swimming-workouts--pool-size)
 - [Workout Reading & Monitoring](#workout-reading--monitoring)
 - [Background Delivery Manager (Workouts + Sleep)](#background-delivery-manager-api-configuration)
 - [Sleep Data Reading & Monitoring](#sleep-data-reading--monitoring)
@@ -253,7 +254,7 @@ for (final result in response.results) {
 
 ### Pushing Workouts
 
-The native deduplication engine compares sorted-key JSON bytes, alongside extracting your custom `schedule_id` key, to ensure workouts aren't duplicated if users click sync multiple times.
+The native deduplication engine compares the SHA-256 hash of the sorted-key JSON alongside the scheduled date, keyed by `schedule_id`, to ensure workouts aren't duplicated if users click sync multiple times.
 
 ```dart
 import 'package:humango_health/humango_health.dart';
@@ -282,17 +283,129 @@ void scheduleWorkouts() async {
   for (final result in response.results) {
     if (result.status == WorkoutPushStatus.success) {
       print("✅ Successfully Pushed: ${result.workoutId}");
-      print("   WorkoutPlan ID: ${result.workoutPlanId}");
+      print("   WorkoutPlan ID : ${result.workoutPlanId}");
+      print("   Pushed JSON    : ${result.currentJson}");   // full workout JSON that was scheduled
     } else if (result.status == WorkoutPushStatus.skipped) {
       print("⏭️ Skipped (Already cached natively): ${result.workoutId}");
+      print("   Skip reason    : ${result.skipReason}");
+      print("   Incoming JSON  : ${result.currentJson}");   // always present
+      print("   Stored JSON    : ${result.existingJson}");  // only when reason == 'unchanged'
+      print("   Incoming hash  : ${result.currentJsonHash}");
+      print("   Stored hash    : ${result.existingJsonHash}");
     } else if (result.status == WorkoutPushStatus.validationError) {
       print("❌ Validation Error: ${result.errorMessage}");
+      print("   Failed JSON    : ${result.currentJson}");   // the workout that failed validation
     } else if (result.status == WorkoutPushStatus.failed) {
       print("❌ Failed: ${result.errorMessage}");
+      print("   Failed JSON    : ${result.currentJson}");   // the workout that could not be scheduled
     }
   }
 }
 ```
+
+### Swimming Workouts & Pool Size
+
+Swimming workouts are routed to `SingleGoalWorkout` (WorkoutKit's pool swim type). You must tell the plugin the pool lane length so it sets the correct unit on Apple Watch.
+
+Include `"pool_size"` as a **top-level key** alongside `schedule_id`, `date`, and `blocks`.
+
+#### Pool Size Rules
+
+| `pool_size` value | Unit sent to Apple Watch |
+|-------------------|--------------------------|
+| `null` / key absent | **Meters** (default) |
+| `"25m"`, `"50m"` (contains `"m"`) | **Meters** |
+| `"25y"`, `"50y"` (no `"m"`) | **Yards** |
+
+#### Sample JSON — 25 m Pool Swim
+
+```dart
+final List<Map<String, dynamic>> swimmingWorkout = [
+  {
+    "schedule_id": 98765,
+    "date": DateTime.now().add(const Duration(hours: 3)).toIso8601String(),
+    "sport": "SWIMMING",
+    "distance": 1500.0,   // total distance in metres
+    "duration": 3600,     // total duration in seconds
+    "pool_size": "25m",   // ← 25-metre pool (omit or set "50m" for a 50 m pool)
+    "summary": {
+      "name": "Morning Pool Swim",
+      "sport": "SWIMMING",
+      "indoor_outdoor": "INDOOR",
+      "measurement_unit": "meter"
+    },
+    "blocks": [
+      {
+        "type": "WARMUP",
+        "distance": 200.0,
+        "duration": 300,
+        "measurement_unit": "meter"
+      },
+      {
+        "type": "INTERVAL",
+        "distance": 1000.0,
+        "duration": 2400,
+        "measurement_unit": "meter",
+        "zone_unit": "HR",
+        "target_range": {"low": 130, "high": 160}
+      },
+      {
+        "type": "COOLDOWN",
+        "distance": 300.0,
+        "duration": 600,
+        "measurement_unit": "meter"
+      }
+    ]
+  }
+];
+
+final response = await pushManager.pushRawWorkouts(swimmingWorkout);
+```
+
+#### Sample JSON — 25 yd Pool Swim (yards)
+
+```dart
+{
+  "schedule_id": 98766,
+  "date": "2026-03-12T09:00:00.000Z",
+  "sport": "SWIMMING",
+  "distance": 1650.0,
+  "duration": 3600,
+  "pool_size": "25y",   // ← yards pool
+  "summary": {
+    "name": "Yards Pool Swim",
+    "sport": "SWIMMING",
+    "indoor_outdoor": "INDOOR",
+    "measurement_unit": "yard"
+  },
+  "blocks": [
+    {
+      "type": "WARMUP",
+      "distance": 200.0,
+      "duration": 360,
+      "measurement_unit": "yard"
+    },
+    {
+      "type": "INTERVAL",
+      "distance": 1200.0,
+      "duration": 2520,
+      "measurement_unit": "yard",
+      "zone_unit": "HR",
+      "target_range": {"low": 130, "high": 165}
+    },
+    {
+      "type": "COOLDOWN",
+      "distance": 250.0,
+      "duration": 420,
+      "measurement_unit": "yard"
+    }
+  ]
+}
+```
+
+> **Note:** If `pool_size` is absent or `null`, the plugin defaults to **meters**. The `pool_size` key takes precedence over `summary.measurement_unit` — so always set `pool_size` explicitly for swimming workouts.
+
+---
 
 ### Rescheduling Behavior
 
@@ -335,7 +448,7 @@ The `ScheduledWorkoutInfo` model provides:
 - `name`: The workout name
 - `activityType`: The activity type (Running, Cycling, etc.)
 - `workoutJson`: The full JSON payload that was scheduled (for comparison)
-- `jsonSizeBytes`: Size of the JSON payload in bytes
+- `jsonHash`: SHA-256 hex hash of the stored JSON payload
 
 **Note:** This retrieves workouts directly from `WorkoutScheduler.shared.scheduledWorkouts` on iOS 17.0+.
 
@@ -374,98 +487,215 @@ The `WorkoutRemovalResult` model provides:
 
 ### Native Deduplication
 
-All deduplication is handled at the **native iOS layer** via `ScheduledWorkoutStore`. There is no Dart-side storage — the single source of truth is the native `UserDefaults`-backed store.
+All deduplication is handled entirely at the **native iOS layer** via `ScheduledWorkoutStore`. There is **no Dart-side deduplication logic**. The single source of truth is a `UserDefaults`-backed store keyed by `schedule_id`.
 
-**How it works:**
+---
 
-1. iOS serializes the incoming JSON with `.sortedKeys` for consistent byte ordering
-2. Compares the exact bytes against stored records keyed by `schedule_id`
-3. If sizes differ → push (content changed)
-4. If sizes match → compare actual bytes. If identical → skip; if different → push
+#### Deduplication Flow (Step by Step)
 
-| Scenario | Action | Status |
-|----------|--------|--------|
-| New workout (no existing record) | **Schedule** | `scheduled` |
-| Same `schedule_id`, identical JSON bytes | **Skip** | `skipped` (reason: `unchanged`) |
-| Same `schedule_id`, different JSON bytes | **Reschedule** (remove old + schedule new) | `scheduled` |
-| Same `schedule_id`, different JSON size | **Reschedule** (remove old + schedule new) | `scheduled` |
+When `pushRawWorkouts()` is called, for each workout in the batch the native layer runs through the following pipeline:
 
-### Interpreting the Push Response
-
-The `WorkoutPushResponse` provides accurate counts for all outcomes:
-
-```dart
-final response = await pushManager.pushRawWorkouts(workouts);
-
-print('Total submitted: ${response.totalSubmitted}');
-print('Successful: ${response.successful}');   // newly scheduled
-print('Skipped: ${response.skipped}');         // deduplicated by native
-print('Failed: ${response.failed}');           // errors (validation + device not supported)
-
-// The sum always holds:
-// response.successful + response.skipped + response.failed == response.totalSubmitted
-
-// Determine overall outcome
-if (response.successful > 0) {
-  print('New workouts scheduled!');
-} else if (response.skipped == response.totalSubmitted) {
-  print('All workouts already scheduled — nothing changed');
-}
+```
+Incoming workout JSON
+        │
+        ▼
+┌─────────────────────────────────────┐
+│ 1. Dart-side field validation       │
+│    • schedule_id present?           │
+│    • date present + valid ISO8601?  │
+│    • blocks present + non-empty?    │
+└──────────────┬──────────────────────┘
+               │ FAIL → status: validationError
+               │         errorMessage: "Missing required field: ..."
+               │         currentJson: <the invalid workout>
+               │
+               │ PASS ↓
+               ▼
+┌─────────────────────────────────────┐
+│ 2. Device support check (native)    │
+│    WorkoutScheduler.isSupported     │
+└──────────────┬──────────────────────┘
+               │ NOT SUPPORTED → status: device_not_supported
+               │                 errorMessage: reason string
+               │
+               │ SUPPORTED ↓
+               ▼
+┌─────────────────────────────────────┐
+│ 3. Date window check (native)       │
+│    Must be: now < date ≤ now+7days  │
+└──────────────┬──────────────────────┘
+               │ OUTSIDE WINDOW → status: skipped
+               │                  skipReason: "date_outside_window"
+               │
+               │ INSIDE WINDOW ↓
+               ▼
+┌─────────────────────────────────────┐
+│ 4. Look up existing record          │
+│    ScheduledWorkoutStore[schedule_id]│
+└──────────────┬──────────────────────┘
+               │ NOT FOUND → schedule as NEW → status: success
+               │                               workoutPlanId: <Apple UUID>
+               │
+               │ FOUND ↓
+               ▼
+┌─────────────────────────────────────────────────────┐
+│ 5. Stage 1 — Scheduled date comparison              │
+│    existing.scheduledDate vs incoming date          │
+│    (compared at second precision)                   │
+└──────────────┬──────────────────────────────────────┘
+               │ DIFFERENT → reschedule (remove old + schedule new)
+               │             status: success
+               │             (internal reason: "date_changed")
+               │
+               │ SAME ↓
+               ▼
+┌─────────────────────────────────────────────────────┐
+│ 6. Stage 2 — SHA-256 hash comparison                │
+│    Serialize incoming JSON with .sortedKeys         │
+│    → SHA256(bytes) vs existing.jsonHash             │
+└──────────────┬──────────────────────────────────────┘
+               │ DIFFERENT → reschedule (remove old + schedule new)
+               │             status: success
+               │             (internal reason: "content_changed")
+               │
+               │ IDENTICAL ↓
+               ▼
+        status: skipped
+        skipReason: "unchanged"
+        currentJsonHash / existingJsonHash returned for inspection
 ```
 
-### JSON Response Details
+---
 
-Every push operation returns detailed information about each workout's fate:
+#### What is Returned for Each Outcome
+
+Every `pushRawWorkouts()` call returns a `WorkoutPushResponse` containing two things:
+- **Summary counts** (`successful`, `skipped`, `failed`, `totalSubmitted`)
+- **Per-workout `results`** — a `List<WorkoutPushResult>` with full detail for each workout
+
+##### `WorkoutPushResult` — field availability per status
+
+| Field | `success` | `skipped`<br>`(unchanged)` | `skipped`<br>`(date_outside_window)` | `validationError` | `failed` |
+|-------|:---------:|:--------------------------:|:------------------------------------:|:-----------------:|:--------:|
+| `scheduleId` | ✅ | ✅ | ✅ | ✅ | ✅ |
+| `workoutId` | ✅ | ✅ | ✅ | ✅ | ✅ |
+| `status` | ✅ | ✅ | ✅ | ✅ | ✅ |
+| `currentJson` | ✅ | ✅ | ✅ | ✅ | ✅ |
+| `workoutPlanId` | ✅ | ✅ | ❌ | ❌ | ❌ |
+| `skipReason` | ❌ | ✅ `"unchanged"` | ✅ `"date_outside_window"` | ❌ | ❌ |
+| `existingJson` | ❌ | ✅ | ❌ | ❌ | ❌ |
+| `currentJsonHash` | ❌ | ✅ | ❌ | ❌ | ❌ |
+| `existingJsonHash` | ❌ | ✅ | ❌ | ❌ | ❌ |
+| `errorMessage` | ❌ | ❌ | ❌ | ✅ | ✅ |
+
+---
+
+#### Status Reference
+
+| Status | Source | Counter | What happened |
+|--------|--------|---------|---------------|
+| `success` | Native | `successful++` | Workout successfully scheduled on Apple Watch. `workoutPlanId` is populated. |
+| `skipped` | Native | `skipped++` | Deduplication determined nothing changed. `skipReason` and hash fields are populated. |
+| `validationError` | Dart (pre-send) | `failed++` | Required field missing or invalid. `errorMessage` and `currentJson` are populated. Remaining valid workouts still proceed. |
+| `failed` | Native | `failed++` | WorkoutKit scheduling error. `errorMessage` describes the cause. |
+| `device_not_supported` | Native | `failed++` | Device does not support WorkoutKit (`WorkoutScheduler.isSupported == false`). |
+
+> **Guaranteed invariant:**
+> `response.successful + response.skipped + response.failed == response.totalSubmitted`
+
+---
+
+#### Skip Reason Reference
+
+`skipReason` is only populated when `status == WorkoutPushStatus.skipped`.
+
+| `skipReason` | Meaning |
+|--------------|---------|
+| `unchanged` | Both the scheduled date and the SHA-256 hash are identical to what is stored — nothing to do |
+| `date_outside_window` | The workout's scheduled date is in the past or more than 7 days from now |
+
+> **Note:** `date_changed` and `content_changed` are internal native reasons that trigger a **reschedule** (not a skip) — you will receive `status: success` for those workouts.
+
+---
+
+#### Handling All Outcomes in Code
 
 ```dart
-final response = await pushManager.pushRawWorkouts(rawBackendJson);
+final response = await WorkoutPushManager().pushRawWorkouts(workouts);
+
+// Summary
+print('Submitted : ${response.totalSubmitted}');
+print('Scheduled : ${response.successful}');
+print('Skipped   : ${response.skipped}');
+print('Failed    : ${response.failed}');
 
 for (final result in response.results) {
-  print("Workout: ${result.workoutId}");
-  print("Status: ${result.status}"); // success, skipped, failed, validationError
-  
-  if (result.status == WorkoutPushStatus.success) {
-    // Successfully scheduled to Apple Watch
-    print("✅ Scheduled!");
-    print("   WorkoutPlan ID: ${result.workoutPlanId}");
-    print("   JSON: ${result.currentJson}");
-    
-  } else if (result.status == WorkoutPushStatus.skipped) {
-    // Deduplication prevented scheduling
-    print("⏭️ Skipped: ${result.skipReason}");
-    
-    // Compare JSONs to see exact differences
-    print("   Current JSON (attempted): ${result.currentJson}");
-    print("   Existing JSON (stored): ${result.existingJson}");
-    print("   Current size: ${result.currentJsonSizeBytes} bytes");
-    print("   Existing size: ${result.existingJsonSizeBytes} bytes");
-    
-  } else if (result.status == WorkoutPushStatus.failed) {
-    print("❌ Failed: ${result.errorMessage}");
+  switch (result.status) {
+
+    case WorkoutPushStatus.success:
+      // ✅ Workout is now on Apple Watch
+      print('✅ Scheduled  schedule_id=${result.scheduleId}');
+      print('   Apple plan ID : ${result.workoutPlanId}');
+      break;
+
+    case WorkoutPushStatus.skipped:
+      // ⏭️ Already up-to-date — native dedup decided nothing changed
+      print('⏭️ Skipped  schedule_id=${result.scheduleId}');
+      print('   Reason         : ${result.skipReason}');
+      // Optional: inspect hashes to confirm
+      print('   Stored hash    : ${result.existingJsonHash}');
+      print('   Incoming hash  : ${result.currentJsonHash}');
+      break;
+
+    case WorkoutPushStatus.validationError:
+      // ❌ Missing or invalid field — caught before reaching iOS
+      print('❌ Validation error  schedule_id=${result.scheduleId}');
+      print('   Error   : ${result.errorMessage}');
+      print('   Bad JSON: ${result.currentJson}');
+      break;
+
+    case WorkoutPushStatus.failed:
+      // ❌ WorkoutKit / native scheduling error
+      print('❌ Failed  schedule_id=${result.scheduleId}');
+      print('   Error: ${result.errorMessage}');
+      break;
+
+    case WorkoutPushStatus.device_not_supported:
+      // ⚠️ Device has no Apple Watch or does not support WorkoutKit
+      print('⚠️ Not supported  schedule_id=${result.scheduleId}');
+      print('   Reason: ${result.errorMessage}');
+      break;
   }
 }
 ```
 
-### Skip Reasons
+### Computing a Workout JSON Hash
 
-The `skipReason` field indicates why the native deduplication layer skipped the workout:
+You can ask the native iOS layer to compute the same SHA-256 hash it uses internally for deduplication. This is useful for pre-flight comparisons, diagnostics, or building your own sync logic without duplicating the hashing algorithm in Dart.
 
-| Reason | Description |
-|--------|-------------|
-| `unchanged` | JSON byte content is identical — nothing to update |
-| `size_changed` | (Would NOT skip — triggers reschedule) |
-| `content_changed` | (Would NOT skip — triggers reschedule) |
-| `date_outside_window` | Scheduled date is in the past or beyond 7 days |
+```dart
+final pushManager = WorkoutPushManager();
 
-### Possible Statuses
+final workoutJson = {
+  'schedule_id': '8de52c5d-0d04-4db7-8045-208c01cac282',
+  'workout_id': 232550,
+  'date': '2026-03-15T08:00:00Z',
+  'blocks': [ /* ... */ ],
+};
 
-| Status | Source | Description |
-|--------|--------|-------------|
-| `success` / `scheduled` | Native | Successfully scheduled on Apple Watch |
-| `skipped` | Native | Identical workout already scheduled (dedup) |
-| `validationError` | Dart or Native | Missing/invalid required fields |
-| `failed` | Dart or Native | General failure (network, builder, etc.) |
-| `device_not_supported` | Native | `WorkoutScheduler.isSupported` returned `false` |
+final hash = await pushManager.computeWorkoutJsonHash(workoutJson);
+// Returns a 64-character lowercase SHA-256 hex string, e.g.:
+// "a3f1c2d4e5b6..." — identical to WorkoutPushRecord.jsonHash for the same payload
+
+if (hash != null) {
+  print('Hash: $hash');
+}
+```
+
+**Notes:**
+- The hash is computed by native iOS using `CryptoKit.SHA256` on the UTF-8 JSON bytes serialized with sorted keys (`.sortedKeys` option), matching exactly what is stored in `WorkoutPushRecord.jsonHash` after scheduling.
+- Returns `null` if JSON serialization fails (e.g. non-serializable values).
+- Requires iOS (the method channel is iOS-only).
 
 ### Clearing the Deduplication Cache
 
