@@ -186,10 +186,8 @@ class WorkoutPushManager {
               if (status == 'skipped') {
                 final reason =
                     recordMap['reason'] as String? ?? 'ios_unchanged';
-                final currentJson =
-                    recordMap['currentJson'] as Map<String, dynamic>?;
-                final existingJson =
-                    recordMap['existingJson'] as Map<String, dynamic>?;
+                final currentJson = _toStringMap(recordMap['currentJson']);
+                final existingJson = _toStringMap(recordMap['existingJson']);
                 final currentJsonHash = recordMap['currentJsonHash'] as String?;
                 final existingJsonHash =
                     recordMap['existingJsonHash'] as String?;
@@ -217,8 +215,7 @@ class WorkoutPushManager {
                     workoutId: workoutId,
                     status: WorkoutPushStatus.validationError,
                     errorMessage: reason,
-                    currentJson:
-                        recordMap['currentJson'] as Map<String, dynamic>?,
+                    currentJson: _toStringMap(recordMap['currentJson']),
                   ),
                 );
                 failed++;
@@ -231,8 +228,7 @@ class WorkoutPushManager {
                     errorMessage:
                         recordMap['reason'] as String? ??
                         'Device does not support scheduled workouts',
-                    currentJson:
-                        recordMap['currentJson'] as Map<String, dynamic>?,
+                    currentJson: _toStringMap(recordMap['currentJson']),
                   ),
                 );
                 failed++;
@@ -244,8 +240,7 @@ class WorkoutPushManager {
                     workoutId: workoutId,
                     status: WorkoutPushStatus.success,
                     workoutPlanId: recordMap['workoutPlanId'] as String?,
-                    currentJson:
-                        recordMap['workoutJson'] as Map<String, dynamic>?,
+                    currentJson: _toStringMap(recordMap['workoutJson']),
                   ),
                 );
                 successful++;
@@ -393,5 +388,16 @@ class WorkoutPushManager {
       debugPrint('\u274c [Humango Health] Failed to compute JSON hash: $e');
       return null;
     }
+  }
+
+  /// Safely converts a method-channel map value to [Map<String, dynamic>].
+  ///
+  /// Flutter method channels return [Map<Object?, Object?>], which cannot be
+  /// directly cast to [Map<String, dynamic>]. This helper does a safe conversion
+  /// and returns null if the value is not a map.
+  static Map<String, dynamic>? _toStringMap(Object? value) {
+    if (value == null) return null;
+    if (value is Map) return Map<String, dynamic>.from(value);
+    return null;
   }
 }

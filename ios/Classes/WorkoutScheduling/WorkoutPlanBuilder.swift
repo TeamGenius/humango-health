@@ -58,7 +58,16 @@ class WorkoutPlanBuilder {
     ) -> ScheduledWorkoutItem? {
 
         let activity = workout.sport.hkWorkoutType   // .swimming
-        let location = workout.summary?.indoorOutdoor?.hkLocationType ?? .unknown
+
+        // Location resolution:
+        // • pool_size present  → WorkoutLocation.indoor — skips the "Pool or Open Water?" Watch prompt
+        // • pool_size absent   → derive from summary.indoor_outdoor, fall back to .unknown
+        let location: HKWorkoutSessionLocationType
+        if workout.poolSize != nil {
+            location = WorkoutLocation.indoor.hkLocationType
+        } else {
+            location = workout.summary?.indoorOutdoor?.hkLocationType ?? .unknown
+        }
 
         // Mirror Flutter poolSize logic:
         // nil or contains "m" (e.g. "25m", "50m") → meters; otherwise (e.g. "25y") → yards.
@@ -150,10 +159,13 @@ class WorkoutPlanBuilder {
 
         // ── Assign sections based on what is present ─────────────────────
         //
-        // has interval blocks → assign warmup/cooldown to their proper slots
-        // no interval + warmup + cooldown  → fold both into intervals
-        // no interval + no warmup          → fold cooldown into intervals
-        // no interval + no cooldown        → fold warmup into intervals
+        // warmup + interval + cooldown → warmupStep, intervals, cooldownStep
+        // warmup + interval            → warmupStep, intervals, no cooldown
+        // interval + cooldown          → no warmup,  intervals, cooldownStep
+        // interval only                → no warmup,  intervals, no cooldown
+        // warmup + cooldown (no interval) → intervals=warmup, no warmupStep, cooldownStep
+        // warmup only                  → intervals=warmup,    no warmupStep, no cooldownStep
+        // cooldown only                → intervals=cooldown,  no warmupStep, no cooldownStep
         let warmupStep:   WorkoutStep?
         let cooldownStep: WorkoutStep?
         let mainForInterval: [WorkoutInstanceModelBlock]
@@ -167,9 +179,9 @@ class WorkoutPlanBuilder {
                 : nil
             mainForInterval = intervalBlocksList
         } else if hasWarmup && hasCooldown {
-            // No interval blocks — fold warmup into the interval section, drop cooldown
+            // No interval blocks — warmup fills the interval section, cooldown stays in its slot
             warmupStep      = nil
-            cooldownStep    = nil
+            cooldownStep    = buildWorkoutStep(from: cooldownBlocksList.last!, sport: sport, activity: activity, location: location)
             mainForInterval = warmupBlocksList
         } else if hasCooldown {
             // No interval, no warmup — cooldown fills the interval section
