@@ -78,5 +78,9 @@
 	</array>
 	<key>ns</key>
 	<string></string>
+	<key>UIFileSharingEnabled</key>
+	<true/>
+	<key>LSSupportsOpeningDocumentsInPlace</key>
+	<true/>
 </dict>
 </plist>
