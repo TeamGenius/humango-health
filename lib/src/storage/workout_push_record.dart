@@ -9,7 +9,7 @@ class WorkoutPushRecord {
   final String workoutId; // workout_id from JSON (e.g., "232550")
   final String workoutPlanId; // Apple's WorkoutPlan UUID
   final String scheduledDateTime; // ISO 8601
-  final int jsonSizeBytes;
+  final String jsonHash; // SHA-256 hex of sorted-key JSON bytes
   final String pushedAt; // ISO 8601
   final Map<String, dynamic>? workoutJson; // The full workout JSON
 
@@ -18,7 +18,7 @@ class WorkoutPushRecord {
     required this.workoutId,
     required this.workoutPlanId,
     required this.scheduledDateTime,
-    required this.jsonSizeBytes,
+    required this.jsonHash,
     required this.pushedAt,
     this.workoutJson,
   });
@@ -29,7 +29,7 @@ class WorkoutPushRecord {
       'workoutId': workoutId,
       'workoutPlanId': workoutPlanId,
       'scheduledDateTime': scheduledDateTime,
-      'jsonSizeBytes': jsonSizeBytes,
+      'jsonHash': jsonHash,
       'pushedAt': pushedAt,
       if (workoutJson != null) 'workoutJson': workoutJson,
     };
@@ -48,7 +48,7 @@ class WorkoutPushRecord {
       workoutId: json['workoutId'] as String? ?? '',
       workoutPlanId: json['workoutPlanId'] as String? ?? '',
       scheduledDateTime: json['scheduledDateTime'] as String,
-      jsonSizeBytes: json['jsonSizeBytes'] as int,
+      jsonHash: json['jsonHash'] as String? ?? '',
       pushedAt: json['pushedAt'] as String,
       workoutJson: workoutJson,
     );

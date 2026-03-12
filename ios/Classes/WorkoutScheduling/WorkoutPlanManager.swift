@@ -22,6 +22,17 @@ public class WorkoutPlanManager: NSObject {
 
     public func handle(_ call: FlutterMethodCall, result: @escaping FlutterResult) {
         switch call.method {
+        case "computeWorkoutJsonHash":
+            guard let jsonDict = call.arguments as? [String: Any] else {
+                result(FlutterError(code: "INVALID_ARGS", message: "Expected a JSON dictionary", details: nil))
+                return
+            }
+            if let hash = ScheduledWorkoutStore.shared.computeJsonHash(for: jsonDict) {
+                result(hash)
+            } else {
+                result(FlutterError(code: "HASH_ERROR", message: "Failed to serialize JSON for hashing", details: nil))
+            }
+
         case "scheduleWorkoutsFromFlutter":
             guard let args = call.arguments as? [[String: Any]] else {
                 result(FlutterError(code: "INVALID_ARGS", message: "Expected array of workout dictionaries", details: nil))
@@ -163,7 +174,7 @@ public class WorkoutPlanManager: NSObject {
                     // Include the full stored JSON
                     let jsonDict = storedRecord.workoutJson.mapValues { $0.value }
                     workoutInfo["workoutJson"] = jsonDict
-                    workoutInfo["jsonSizeBytes"] = storedRecord.jsonBytes.count
+                    workoutInfo["jsonHash"] = storedRecord.jsonHash
                 }
             }
             
@@ -367,7 +378,11 @@ public class WorkoutPlanManager: NSObject {
             // Deduplication check
             if let scheduleId = store.extractScheduleId(from: dict) {
                 let workoutId = store.extractWorkoutId(from: dict) ?? "N/A"
-                let (needsPush, reason) = store.checkDeduplication(scheduleId: scheduleId, jsonDict: dict)
+                let (needsPush, reason) = store.checkDeduplication(
+                    scheduleId: scheduleId,
+                    jsonDict: dict,
+                    scheduledDate: date
+                )
                 if needsPush {
                     validJsonArray.append(dict)
                     print("📤 [Humango Health] Schedule \(scheduleId) will be scheduled (reason: \(reason))")
@@ -382,12 +397,10 @@ public class WorkoutPlanManager: NSObject {
                     if let existingRecord = store.getRecord(forScheduleId: scheduleId) {
                         let existingJsonDict = existingRecord.workoutJson.mapValues { $0.value }
                         skippedRecord["existingJson"] = existingJsonDict
-                        skippedRecord["existingJsonSizeBytes"] = existingRecord.jsonBytes.count
+                        skippedRecord["existingJsonHash"] = existingRecord.jsonHash
                         skippedRecord["workoutPlanId"] = existingRecord.workoutPlanId
                     }
-                    if let currentJsonBytes = try? JSONSerialization.data(withJSONObject: dict, options: .sortedKeys) {
-                        skippedRecord["currentJsonSizeBytes"] = currentJsonBytes.count
-                    }
+                    skippedRecord["currentJsonHash"] = store.computeJsonHash(for: dict) ?? ""
                     skippedRecords.append(skippedRecord)
                     print("⏭️ [Humango Health] Skipping schedule \(scheduleId) — \(reason)")
                 }
@@ -498,14 +511,14 @@ public class WorkoutPlanManager: NSObject {
                 scheduledDate: item.scheduledDate
             )
             
-            let jsonBytes = (try? JSONSerialization.data(withJSONObject: fullJsonDict, options: []).count) ?? 0
+            let jsonHash = store.computeJsonHash(for: fullJsonDict) ?? ""
             
             returnRecords.append([
                 "scheduleId": scheduleId,
                 "workoutId": workoutId,
                 "workoutPlanId": workoutPlanId,
                 "scheduledDateTime": fullJsonDict["date"] as? String ?? "",
-                "jsonSizeBytes": jsonBytes,
+                "jsonHash": jsonHash,
                 "status": "scheduled",
                 "pushedAt": isoFormatter.string(from: Date()),
                 "workoutJson": fullJsonDict

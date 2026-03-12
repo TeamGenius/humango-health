@@ -5,6 +5,7 @@
 
 import Foundation
 import HealthKit
+import CryptoKit
 
 // MARK: - Record Model
 
@@ -13,7 +14,7 @@ struct ScheduledWorkoutRecord: Codable {
     let workoutId: String         // workout_id from JSON (e.g. "232550")
     let workoutPlanId: String     // Apple WorkoutKit plan UUID
     let workoutJson: [String: AnyCodable]
-    let jsonBytes: Data
+    let jsonHash: String          // SHA-256 hex of sorted-key JSON bytes
     let scheduledDate: Date
 }
 
@@ -88,21 +89,21 @@ class ScheduledWorkoutStore {
         scheduledDate: Date
     ) {
         let codableDict = jsonDict.mapValues { AnyCodable($0) }
-        // Use sortedKeys for consistent byte comparison in deduplication
         let jsonBytes = (try? JSONSerialization.data(withJSONObject: jsonDict, options: .sortedKeys)) ?? Data()
+        let jsonHash = sha256Hash(of: jsonBytes)
 
         let record = ScheduledWorkoutRecord(
             scheduleId: scheduleId,
             workoutId: workoutId,
             workoutPlanId: workoutPlanId,
             workoutJson: codableDict,
-            jsonBytes: jsonBytes,
+            jsonHash: jsonHash,
             scheduledDate: scheduledDate
         )
 
         records[scheduleId] = record
         saveToDisk()
-        print("💾 [Humango Health] Saved record for scheduleId: \(scheduleId), workoutId: \(workoutId), planId: \(workoutPlanId), bytes: \(jsonBytes.count)")
+        print("💾 [Humango Health] Saved record — scheduleId: \(scheduleId), workoutId: \(workoutId), planId: \(workoutPlanId), hash: \(jsonHash)")
     }
 
     func getRecord(forScheduleId scheduleId: String) -> ScheduledWorkoutRecord? {
@@ -183,49 +184,74 @@ class ScheduledWorkoutStore {
     }
     
     // MARK: - Deduplication
-    
-    /// Check if a workout needs to be pushed based on JSON byte comparison.
-    /// Returns a tuple: (needsPush: Bool, reason: String)
-    /// - If workout doesn't exist: needsPush = true, reason = "new"
-    /// - If JSON bytes changed: needsPush = true, reason = "modified"
-    /// - If JSON bytes are identical: needsPush = false, reason = "unchanged"
-    func checkDeduplication(scheduleId: String, jsonDict: [String: Any]) -> (needsPush: Bool, reason: String) {
+
+    // MARK: - SHA-256 Helpers
+
+    /// Computes SHA-256 hex string of raw data.
+    private func sha256Hash(of data: Data) -> String {
+        let digest = SHA256.hash(data: data)
+        return digest.map { String(format: "%02x", $0) }.joined()
+    }
+
+    /// Serialises a JSON dictionary (sorted keys) and returns its SHA-256 hex.
+    /// Returns nil if serialisation fails.
+    func computeJsonHash(for jsonDict: [String: Any]) -> String? {
+        guard let data = try? JSONSerialization.data(withJSONObject: jsonDict, options: .sortedKeys) else {
+            return nil
+        }
+        return sha256Hash(of: data)
+    }
+
+    // MARK: - Deduplication Check
+
+    /// Determines whether a workout needs to be re-pushed.
+    ///
+    /// The check is performed in two stages:
+    ///   1. **Date comparison** – if the incoming `scheduledDate` differs from the stored one
+    ///      (compared at second precision), the workout is considered modified.
+    ///   2. **SHA-256 hash comparison** – the SHA-256 of the sorted-key JSON serialisation is
+    ///      compared with the stored hash.  A mismatch means the content changed.
+    ///
+    /// Returns `(needsPush: Bool, reason: String)` where `reason` is one of:
+    ///   `"new"`, `"date_changed"`, `"content_changed"`, `"unchanged"`, `"serialization_error"`
+    func checkDeduplication(
+        scheduleId: String,
+        jsonDict: [String: Any],
+        scheduledDate: Date
+    ) -> (needsPush: Bool, reason: String) {
         guard let existingRecord = records[scheduleId] else {
             return (true, "new")
         }
-        
-        // Calculate JSON bytes for the incoming workout
+
+        // 1. Compare scheduled date (second precision — ISO8601 dates have no sub-second resolution)
+        let existingSeconds = Int(existingRecord.scheduledDate.timeIntervalSince1970)
+        let incomingSeconds = Int(scheduledDate.timeIntervalSince1970)
+        if existingSeconds != incomingSeconds {
+            let existingStr = ISO8601DateFormatter().string(from: existingRecord.scheduledDate)
+            let incomingStr = ISO8601DateFormatter().string(from: scheduledDate)
+            print("📅 [Humango Health] Dedup: Schedule \(scheduleId) date changed (\(existingStr) → \(incomingStr))")
+            return (true, "date_changed")
+        }
+
+        // 2. Compute SHA-256 of the incoming JSON
         guard let incomingJsonBytes = try? JSONSerialization.data(withJSONObject: jsonDict, options: .sortedKeys) else {
-            // If we can't serialize, assume it needs push
             return (true, "serialization_error")
         }
-        
-        // Re-serialize the existing JSON for fair comparison (with sorted keys)
-        let existingDict = existingRecord.workoutJson.mapValues { $0.value }
-        guard let existingJsonBytes = try? JSONSerialization.data(withJSONObject: existingDict, options: .sortedKeys) else {
-            // If existing can't be serialized, push the new one
-            return (true, "existing_serialization_error")
-        }
-        
-        // Compare byte sizes first (fast check)
-        if incomingJsonBytes.count != existingJsonBytes.count {
-            print("📊 [Humango Health] Dedup: Schedule \(scheduleId) size changed (\(existingJsonBytes.count) → \(incomingJsonBytes.count) bytes)")
-            return (true, "size_changed")
-        }
-        
-        // Compare actual bytes (content check)
-        if incomingJsonBytes != existingJsonBytes {
-            print("📊 [Humango Health] Dedup: Schedule \(scheduleId) content changed (same size: \(incomingJsonBytes.count) bytes)")
+        let incomingHash = sha256Hash(of: incomingJsonBytes)
+
+        // 3. Compare hashes
+        if incomingHash != existingRecord.jsonHash {
+            print("📊 [Humango Health] Dedup: Schedule \(scheduleId) content changed (hash mismatch: \(existingRecord.jsonHash) → \(incomingHash))")
             return (true, "content_changed")
         }
-        
-        print("⏭️ [Humango Health] Dedup: Schedule \(scheduleId) unchanged (\(incomingJsonBytes.count) bytes)")
+
+        print("⏭️ [Humango Health] Dedup: Schedule \(scheduleId) unchanged (hash: \(incomingHash))")
         return (false, "unchanged")
     }
-    
-    /// Get the stored JSON byte size for a scheduled workout
-    func getJsonBytesSize(forScheduleId scheduleId: String) -> Int? {
-        return records[scheduleId]?.jsonBytes.count
+
+    /// Returns the stored SHA-256 hash for a schedule ID.
+    func getJsonHash(forScheduleId scheduleId: String) -> String? {
+        return records[scheduleId]?.jsonHash
     }
     
     /// Find the scheduled workout that matches a completed workout

@@ -190,10 +190,9 @@ class WorkoutPushManager {
                     recordMap['currentJson'] as Map<String, dynamic>?;
                 final existingJson =
                     recordMap['existingJson'] as Map<String, dynamic>?;
-                final currentJsonSizeBytes =
-                    recordMap['currentJsonSizeBytes'] as int?;
-                final existingJsonSizeBytes =
-                    recordMap['existingJsonSizeBytes'] as int?;
+                final currentJsonHash = recordMap['currentJsonHash'] as String?;
+                final existingJsonHash =
+                    recordMap['existingJsonHash'] as String?;
                 final workoutPlanId = recordMap['workoutPlanId'] as String?;
 
                 finalResults.add(
@@ -203,8 +202,8 @@ class WorkoutPushManager {
                     reason: reason,
                     currentJson: currentJson,
                     existingJson: existingJson,
-                    currentJsonSizeBytes: currentJsonSizeBytes,
-                    existingJsonSizeBytes: existingJsonSizeBytes,
+                    currentJsonHash: currentJsonHash,
+                    existingJsonHash: existingJsonHash,
                     workoutPlanId: workoutPlanId,
                   ),
                 );
@@ -374,6 +373,25 @@ class WorkoutPushManager {
             ),
           )
           .toList();
+    }
+  }
+
+  /// Computes a SHA-256 hash of the given workout JSON map.
+  ///
+  /// The hash is generated natively on iOS using CryptoKit with sorted JSON keys,
+  /// matching the exact hash stored in [WorkoutPushRecord.jsonHash] during scheduling.
+  ///
+  /// Returns the 64-character lowercase hex SHA-256 string, or `null` on failure.
+  Future<String?> computeWorkoutJsonHash(Map<String, dynamic> jsonMap) async {
+    try {
+      final hash = await _channel.invokeMethod<String>(
+        'computeWorkoutJsonHash',
+        jsonMap,
+      );
+      return hash;
+    } catch (e) {
+      debugPrint('\u274c [Humango Health] Failed to compute JSON hash: $e');
+      return null;
     }
   }
 }

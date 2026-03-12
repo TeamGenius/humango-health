@@ -28,8 +28,8 @@ class ScheduledWorkoutInfo {
   /// Available if the workout was matched with local records.
   final Map<String, dynamic>? workoutJson;
 
-  /// Size of the stored JSON in bytes.
-  final int? jsonSizeBytes;
+  /// SHA-256 hash of the stored JSON.
+  final String? jsonHash;
 
   ScheduledWorkoutInfo({
     required this.id,
@@ -40,7 +40,7 @@ class ScheduledWorkoutInfo {
     this.name,
     this.activityType,
     this.workoutJson,
-    this.jsonSizeBytes,
+    this.jsonHash,
   });
 
   /// Creates a [ScheduledWorkoutInfo] from a native platform map.
@@ -64,12 +64,12 @@ class ScheduledWorkoutInfo {
       name: map['name'] as String?,
       activityType: map['activityType'] as String?,
       workoutJson: workoutJson,
-      jsonSizeBytes: map['jsonSizeBytes'] as int?,
+      jsonHash: map['jsonHash'] as String?,
     );
   }
 
   @override
   String toString() {
-    return 'ScheduledWorkoutInfo(id: $id, workoutPlanId: $workoutPlanId, scheduleId: $scheduleId, workoutId: $workoutId, scheduledDate: $scheduledDate, name: $name, activityType: $activityType, jsonSizeBytes: $jsonSizeBytes)';
+    return 'ScheduledWorkoutInfo(id: $id, workoutPlanId: $workoutPlanId, scheduleId: $scheduleId, workoutId: $workoutId, scheduledDate: $scheduledDate, name: $name, activityType: $activityType, jsonHash: $jsonHash)';
   }
 }

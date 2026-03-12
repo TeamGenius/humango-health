@@ -34,11 +34,11 @@ class WorkoutPushResult {
   /// The existing JSON already stored (for skipped cases - allows comparison)
   final Map<String, dynamic>? existingJson;
 
-  /// Size of current JSON in bytes
-  final int? currentJsonSizeBytes;
+  /// SHA-256 hash of the current (incoming) JSON
+  final String? currentJsonHash;
 
-  /// Size of existing JSON in bytes
-  final int? existingJsonSizeBytes;
+  /// SHA-256 hash of the existing stored JSON
+  final String? existingJsonHash;
 
   /// WorkoutPlan ID if available
   final String? workoutPlanId;
@@ -51,8 +51,8 @@ class WorkoutPushResult {
     this.skipReason,
     this.currentJson,
     this.existingJson,
-    this.currentJsonSizeBytes,
-    this.existingJsonSizeBytes,
+    this.currentJsonHash,
+    this.existingJsonHash,
     this.workoutPlanId,
   });
 
@@ -62,8 +62,8 @@ class WorkoutPushResult {
     String? reason,
     Map<String, dynamic>? currentJson,
     Map<String, dynamic>? existingJson,
-    int? currentJsonSizeBytes,
-    int? existingJsonSizeBytes,
+    String? currentJsonHash,
+    String? existingJsonHash,
     String? workoutPlanId,
   }) {
     return WorkoutPushResult(
@@ -73,8 +73,8 @@ class WorkoutPushResult {
       skipReason: reason ?? 'unchanged',
       currentJson: currentJson,
       existingJson: existingJson,
-      currentJsonSizeBytes: currentJsonSizeBytes,
-      existingJsonSizeBytes: existingJsonSizeBytes,
+      currentJsonHash: currentJsonHash,
+      existingJsonHash: existingJsonHash,
       workoutPlanId: workoutPlanId,
     );
   }
