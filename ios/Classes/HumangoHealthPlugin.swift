@@ -17,10 +17,12 @@ public class HumangoHealthPlugin: NSObject, FlutterPlugin {
     
     // Phase 5: Sleep Data Reading
     let sleepDataMethodChannel = FlutterMethodChannel(name: "com.humango.health/sleep", binaryMessenger: registrar.messenger())
-    let sleepDataEventChannel = FlutterEventChannel(name: "com.humango.health/sleep/stream", binaryMessenger: registrar.messenger())
-    
+
     // Phase 6: Health Metrics (HRV, Resting HR, Body Fat, Weight, Height)
     let healthMetricsMethodChannel = FlutterMethodChannel(name: "com.humango.health/metrics", binaryMessenger: registrar.messenger())
+
+    // User Session: login/logout state gate for background observer auto-start
+    let sessionMethodChannel = FlutterMethodChannel(name: "com.humango.health/session", binaryMessenger: registrar.messenger())
 
     let instance = HumangoHealthPlugin()
     
@@ -29,19 +31,16 @@ public class HumangoHealthPlugin: NSObject, FlutterPlugin {
     registrar.addMethodCallDelegate(instance, channel: workoutReadMethodChannel)
     registrar.addMethodCallDelegate(instance, channel: sleepDataMethodChannel)
     registrar.addMethodCallDelegate(instance, channel: healthMetricsMethodChannel)
+    registrar.addMethodCallDelegate(instance, channel: sessionMethodChannel)
     
     permissionEventChannel.setStreamHandler(PermissionStreamHandler())
     workoutReadEventChannel.setStreamHandler(instance.workoutReadChannel)
-    
-    // Set up sleep data event channel stream handler
-    if #available(iOS 14.0, *) {
-        sleepDataEventChannel.setStreamHandler(SleepDataManager.shared)
-    }
     
     // MARK: - Auto-Start Monitoring (if API delivery was previously configured)
     // On first launch: no config in UserDefaults → these are no-ops.
     // On subsequent launches: if API was configured via configureBackgroundDelivery(),
     // monitoring starts immediately without needing Flutter to call startMonitoring().
+    // Gated: only runs when the user is logged in (UserAuthStateManager.isLoggedIn == true).
     instance.workoutReadChannel.autoStartIfConfigured()
     if #available(iOS 14.0, *) {
         SleepDataManager.shared.autoStartIfConfigured()
@@ -75,9 +74,52 @@ public class HumangoHealthPlugin: NSObject, FlutterPlugin {
       } else if ["getHealthMetric", "getLatestHealthMetric", "getAllHealthMetrics"].contains(call.method) {
           // Health metrics channel (HRV, resting HR, body fat, weight, height)
           HealthMetricsManager.shared.handle(call, result: result)
+      } else if call.method == "setUserLoginState" {
+          handleSetUserLoginState(call, result: result)
       } else {
           result(FlutterMethodNotImplemented)
       }
+  }
+
+  // MARK: - User Session
+
+  private func handleSetUserLoginState(_ call: FlutterMethodCall, result: @escaping FlutterResult) {
+      guard let args = call.arguments as? [String: Any],
+            let loggedIn = args["loggedIn"] as? Bool else {
+          result(FlutterError(code: "INVALID_ARGS", message: "Missing or invalid 'loggedIn' boolean", details: nil))
+          return
+      }
+
+      UserAuthStateManager.shared.isLoggedIn = loggedIn
+      print("🔐 [HumangoHealth] User login state set to: \(loggedIn)")
+
+      if !loggedIn {
+          clearAllDataOnLogout()
+      }
+
+      result(nil)
+  }
+
+  private func clearAllDataOnLogout() {
+      print("🔐 [HumangoHealth] User logged out — stopping all monitors and clearing data")
+
+      // Stop workout monitoring and clear background delivery config
+      workoutReadChannel.stopAndClearAll()
+
+      // Stop sleep monitoring, clear stored sleep data and config
+      if #available(iOS 14.0, *) {
+          SleepDataManager.shared.stopAndClearAll()
+      }
+
+      // Clear scheduled workouts stored in Apple Watch
+      ScheduledWorkoutStore.shared.clearAll()
+
+      // Clear workout record store (push-dedup tracking)
+      Task {
+          await WorkoutRecordStore.shared.clearAll()
+      }
+
+      print("🔐 [HumangoHealth] ✅ All data cleared on logout")
   }
 }
 

@@ -53,6 +53,19 @@ class BackgroundDeliveryManager {
         UserDefaults.standard.set(headers, forKey: "HumangoDeliveryHeaders")
         UserDefaults.standard.synchronize()
     }
+
+    /// Clears all persisted background delivery configuration.
+    /// Called on user logout so monitoring does not auto-restart on the next app launch.
+    func clearConfiguration() {
+        mode = .localStorage
+        apiURL = nil
+        headers = [:]
+        UserDefaults.standard.removeObject(forKey: "HumangoDeliveryMode")
+        UserDefaults.standard.removeObject(forKey: "HumangoDeliveryURL")
+        UserDefaults.standard.removeObject(forKey: "HumangoDeliveryHeaders")
+        UserDefaults.standard.synchronize()
+        debugPrint("🔐 [WorkoutDelivery] Cleared background delivery configuration on logout")
+    }
     
     func deliverWorkout(_ workoutJSONString: String, deviceId: String) async {
         debugPrint("📤 [WorkoutDelivery] ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━")

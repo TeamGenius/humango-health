@@ -11,7 +11,6 @@
 //
 
 import Foundation
-import Flutter
 
 // MARK: - Sleep Background Delivery Mode
 
@@ -45,9 +44,6 @@ class SleepBackgroundDeliveryManager {
     private var apiURL: URL?
     private var headers: [String: String] = [:]
     
-    /// Event sink for pushing events to Flutter (only used in .localStorage mode)
-    private var eventSink: FlutterEventSink?
-    
     private init() {
         // Restore persisted configuration
         if let savedModeStr = UserDefaults.standard.string(forKey: SleepDeliveryKeys.mode),
@@ -59,28 +55,10 @@ class SleepBackgroundDeliveryManager {
         }
     }
     
-    // MARK: - Event Sink Management
-    
-    func attachEventSink(_ sink: FlutterEventSink?) {
-        self.eventSink = sink
-        if sink != nil {
-            print("🛏️ [SleepDelivery] EventSink attached (Flutter is listening)")
-        } else {
-            print("🛏️ [SleepDelivery] EventSink detached")
-        }
-    }
-    
     /// Whether API delivery is fully configured (mode=.api AND apiURL is set).
     /// Used by auto-start logic to determine if monitoring should begin on app launch.
     var isAPIConfigured: Bool {
         return mode == .api && apiURL != nil
-    }
-    
-    /// Whether live streaming should push individual samples to Flutter EventChannel.
-    /// Returns true in localStorage mode (push to EventChannel).
-    /// Returns false in API mode (accumulate into session state, deliver via API).
-    var shouldStreamToEventChannel: Bool {
-        return mode == .localStorage
     }
     
     // MARK: - Configuration
@@ -103,6 +81,20 @@ class SleepBackgroundDeliveryManager {
         UserDefaults.standard.synchronize()
         
         print("🛏️ [SleepDelivery] Configured: mode=\(mode.rawValue), url=\(apiURL?.absoluteString ?? "nil"), headers=\(headers.count) keys")
+    }
+
+    /// Clears all persisted background delivery configuration.
+    /// Called on user logout so sleep monitoring does not auto-restart on the next app launch.
+    func clearConfiguration() {
+        mode = .localStorage
+        apiURL = nil
+        headers = [:]
+        UserDefaults.standard.removeObject(forKey: SleepDeliveryKeys.mode)
+        UserDefaults.standard.removeObject(forKey: SleepDeliveryKeys.apiURL)
+        UserDefaults.standard.removeObject(forKey: SleepDeliveryKeys.headers)
+        UserDefaults.standard.removeObject(forKey: SleepDeliveryKeys.pendingLocalSleep)
+        UserDefaults.standard.synchronize()
+        print("🔐 [SleepDelivery] Cleared background delivery configuration on logout")
     }
     
     // MARK: - Deliver Sleep Session
@@ -127,20 +119,9 @@ class SleepBackgroundDeliveryManager {
             await pushToAPI(sleepDataJSON, sessionId: sessionId)
             
         case .localStorage:
-            // Default mode: use Flutter stream if available (foreground), otherwise store locally
-            if let sink = self.eventSink {
-                print("🛏️ [SleepDelivery] Pushing session \(sessionId) to Flutter eventSink")
-                DispatchQueue.main.async {
-                    sink([
-                        "type": "sleepSessionDelivered",
-                        "sessionId": sessionId,
-                        "data": sleepDataJSON
-                    ])
-                }
-            } else {
-                print("🛏️ [SleepDelivery] No eventSink (background) — storing session \(sessionId) locally")
-                storeLocally(sleepDataJSON)
-            }
+            // localStorage mode: store locally for retrieval via getLocalSleepSessions()
+            print("🛏️ [SleepDelivery] localStorage mode — storing session \(sessionId) locally")
+            storeLocally(sleepDataJSON)
         }
     }
     

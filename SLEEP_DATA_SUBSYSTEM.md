@@ -90,16 +90,15 @@ enum SleepBackgroundDeliveryMode {
 
 **API Mode (`SleepBackgroundDeliveryMode.api`):**
 - User provides: `apiURL`, `headers` (including auth tokens)
-- **Foreground**: `HKAnchoredObjectQueryDescriptor` runs (live streaming), samples accumulate into session state (not pushed to EventChannel)
+- **Foreground**: `HKAnchoredObjectQueryDescriptor` runs, samples accumulate into session state
 - **Background**: `HKObserverQuery` runs, samples accumulate into session state
 - In **both** foreground and background, when a session ends, native iOS makes direct HTTP POST to the API
 - Falls back to local storage on API failure (non-2xx or network error)
 - Configuration persists across app restarts via UserDefaults
-- The `sleepDataStream` still emits `sleepSessionEnded` events for awareness
 
 **Local Storage Mode (`SleepBackgroundDeliveryMode.localStorage`):**
-- Default behavior: foreground uses EventChannel live streaming, background stores to UserDefaults
-- Retrieve stored sessions via `getLocalSleepSessions()` on app open
+- Both foreground and background accumulate samples into session state
+- Finalized sessions stored in UserDefaults; retrieve via `getLocalSleepSessions()` on app open
 - Sessions cleared from storage after retrieval
 
 **Key difference from workouts:**  
@@ -141,7 +140,6 @@ Return computed totals:
 │           Sleep Data Manager (Dart)                      │
 │  ├─ getSleepData({startDate?, endDate?}) → Response      │
 │  ├─ startMonitoring() / stopMonitoring()                 │
-│  ├─ sleepDataStream → Stream<SleepDataEvent>             │
 │  ├─ fetchStoredSleepData() → Response                    │
 │  ├─ configureSleepSession() → configure freeze window    │
 │  ├─ getSleepSessionStatus() / resetSleepSession()        │
@@ -154,10 +152,9 @@ Return computed totals:
 │           Sleep Data Manager (iOS/Swift)                 │
 │  ├─ fetchSleepData() → one-shot query                    │
 │  ├─ startLiveUpdates() → HKAnchoredObjectQueryDescriptor │
-│  │   └─ API mode: accumulate → session state             │
-│  │   └─ localStorage: push → EventChannel                │
+│  │   └─ accumulate samples → session state               │
 │  ├─ startBackgroundMonitoring() → HKObserverQuery        │
-│  │   └─ Both modes: accumulate → session state            │
+│  │   └─ accumulate → session state                       │
 │  ├─ SleepSessionDetector → freeze window + multi-factor  │
 │  ├─ SleepBackgroundDeliveryManager → API POST / local    │
 │  └─ UserDefaults storage for background data             │
@@ -174,7 +171,6 @@ Return computed totals:
 | Channel | Type | Name |
 |---------|------|------|
 | Method Channel | Request/Response | `com.humango.health/sleep` |
-| Event Channel | Streaming | `com.humango.health/sleep/stream` |
 
 ### Method Channel API
 
@@ -195,12 +191,9 @@ Return computed totals:
 
 ### Event Channel Events
 
-| Event Type | Payload | Mode |
-|------------|---------|------|
-| `sleepSample` | `{type, sample: SleepSample}` | localStorage mode only |
-| `sleepSampleDeleted` | `{type, uuid: String}` | localStorage mode only |
-| `sleepSessionEnded` | `{type, reason, segmentCount, totalSleepMinutes, totalAwakeMinutes, sessionStartDate, latestSegmentEndDate, isFinalized, finalizedAt}` | Both modes |
-| `sleepSessionDelivered` | `{type, sessionId, data: JSON String}` | localStorage only |
+> **Note:** The sleep EventChannel has been removed. Sleep data is no longer streamed to Flutter in real-time. Finalized sessions are delivered via API POST or stored locally.
+
+---
 
 class SleepStageTotals {
   final double inBedSeconds;
@@ -308,32 +301,22 @@ void fetchSleepData() async {
 
 ### Live Streaming (Foreground)
 
+In foreground, the iOS side uses `HKAnchoredObjectQueryDescriptor` to accumulate samples into session state. No individual samples are streamed to Flutter.
+
 ```dart
-import 'dart:async';
 import 'package:humango_health/humango_health.dart';
 
 final sleepManager = SleepDataManager();
-StreamSubscription<SleepDataEvent>? subscription;
 
-void startLiveMonitoring() async {
-  // Subscribe to live sleep data stream
-  subscription = sleepManager.sleepDataStream.listen((event) {
-    if (event is SleepSampleEvent) {
-      print('🛏️ New sleep sample: ${event.sample.sleepStage}');
-      print('   Duration: ${event.sample.durationMinutes} min');
-    } else if (event is SleepSampleDeletedEvent) {
-      print('❌ Sleep sample deleted: ${event.uuid}');
-    }
-  });
-
-  // Start monitoring from a specific date
+void startForegroundMonitoring() async {
   await sleepManager.startMonitoring(
     startDate: DateTime.now().subtract(const Duration(hours: 24)),
   );
+  // Samples accumulate on-device; finalized session is delivered
+  // via API or stored locally when the session ends.
 }
 
-void stopLiveMonitoring() async {
-  await subscription?.cancel();
+void stopForegroundMonitoring() async {
   await sleepManager.stopMonitoring();
 }
 ```
@@ -385,18 +368,6 @@ void configureSleepDetection() async {
   );
 }
 
-// Listen for session-ended notifications
-void listenForSessionEnd() {
-  sleepManager.sleepDataStream.listen((event) {
-    if (event is SleepSessionEndedEvent) {
-      print('🛏️ Sleep session ended: ${event.reason}');
-      print('   ${event.segmentCount} segments, ${event.totalSleepMinutes.toStringAsFixed(0)}m sleep');
-      
-      // After processing, reset for next night
-      sleepManager.resetSleepSession();
-    }
-  });
-}
 
 // Check session status on demand
 void checkSessionStatus() async {
@@ -461,16 +432,6 @@ void retrieveBackgroundSessions() async {
     print('Retrieved stored session: ${sessionJson.substring(0, 100)}...');
     // Parse and process the session data as needed
   }
-}
-
-// Listen for delivered sessions via stream (when app is in foreground)
-void listenForDeliveredSessions() {
-  sleepManager.sleepDataStream.listen((event) {
-    if (event is SleepSessionDeliveredEvent) {
-      print('Session delivered: ${event.sessionId}');
-      // event.data contains the full JSON string
-    }
-  });
 }
 ```
 

@@ -450,6 +450,10 @@ class WorkoutServiceChannel: NSObject, FlutterStreamHandler {
     /// First launch: no config in UserDefaults → no-op.
     /// Subsequent launches: config persisted from previous configureBackgroundDelivery() call → auto-start.
     func autoStartIfConfigured() {
+        guard UserAuthStateManager.shared.isLoggedIn else {
+            debugPrint("Read Workouts: Auto-start skipped — user not logged in")
+            return
+        }
         guard BackgroundDeliveryManager.shared.isAPIConfigured else {
             debugPrint("Read Workouts: Auto-start skipped — no API config in UserDefaults")
             return
@@ -467,6 +471,17 @@ class WorkoutServiceChannel: NSObject, FlutterStreamHandler {
             await workoutService?.start()
             debugPrint("Read Workouts: ✅ Auto-started workout monitoring (API mode) from \(startDate)")
         }
+    }
+
+    /// Stops all active monitoring and clears background delivery configuration.
+    /// Called on user logout to ensure no background activity continues.
+    func stopAndClearAll() {
+        workoutService?.stopLiveUpdates()
+        workoutService?.stopBackgroundMonitoring()
+        workoutService = nil
+        BackgroundDeliveryManager.shared.clearConfiguration()
+        BackgroundDeliveryManager.shared.attachEventSink(nil)
+        debugPrint("Read Workouts: ✅ Stopped monitoring and cleared all background config on logout")
     }
     
     // MARK: - FlutterStreamHandler

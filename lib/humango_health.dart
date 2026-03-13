@@ -37,3 +37,6 @@ export 'src/models/sleep_background_delivery_config.dart';
 // Health Metrics Manager & Models (HRV, Resting HR, Body Fat, Weight, Height)
 export 'src/managers/health_metrics_manager.dart';
 export 'src/models/health_metric_sample.dart';
+
+// User Session Manager (login/logout state gate for background observers)
+export 'src/managers/user_session_manager.dart';

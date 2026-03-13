@@ -3,7 +3,7 @@
 //  humango_health
 //
 //  Fetches and monitors sleep data from Apple HealthKit
-//  Supports: one-shot fetch, live streaming (foreground), background observation
+//  Supports: one-shot fetch, background monitoring (foreground Descriptor + background Observer)
 //  Uses native iOS lifecycle detection via AppLifecycleManager for automatic mode switching
 //
 
@@ -22,7 +22,7 @@ private struct SleepDataKeys {
 // MARK: - SleepDataManager
 
 @available(iOS 14.0, *)
-public class SleepDataManager: NSObject, FlutterStreamHandler, AppLifecycleObserver {
+public class SleepDataManager: NSObject, AppLifecycleObserver {
     static let shared = SleepDataManager()
     
     private let healthStore = HKHealthStore()
@@ -31,9 +31,6 @@ public class SleepDataManager: NSObject, FlutterStreamHandler, AppLifecycleObser
         formatter.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
         return formatter
     }()
-    
-    // Event channel sink for streaming sleep updates to Flutter
-    private var eventSink: FlutterEventSink?
     
     // Live streaming (foreground)
     private var anchor: HKQueryAnchor?
@@ -56,44 +53,24 @@ public class SleepDataManager: NSObject, FlutterStreamHandler, AppLifecycleObser
     private var monitorStartDate: Date?
     private var sessionConfig: SleepSessionConfig = .default
     
-    // Tracks whether the AppLifecycleManager observer has been registered.
-    // Registration is deferred until API background delivery is configured.
-    private var isLifecycleObserverRegistered = false
-    
     // MARK: - Initialization
     
     private override init() {
         self.sessionDetector = SleepSessionDetector(config: .default)
         super.init()
+        // Register with AppLifecycleManager for automatic foreground/background switching
+        AppLifecycleManager.shared.addObserver(self)
         // Restore persisted session state if any
         self.sessionState = sessionDetector.loadState()
-        // Only register the lifecycle observer if API background delivery was previously
-        // configured. Without a backend API there is no need to observe app lifecycle.
-        if deliveryManager.isAPIConfigured {
-            registerLifecycleObserverIfNeeded()
-        } else {
-            print("🛏️ [Humango Health] SleepDataManager initialized (background observer deferred — configure API to enable)")
-        }
+        print("🛏️ [Humango Health] SleepDataManager initialized with native lifecycle observer")
         if sessionState.segmentCount > 0 {
             print("🛏️ [Humango Health] Restored session state: \(sessionState.segmentCount) segments, \(String(format: "%.0f", sessionState.totalSleepMinutes))m sleep")
         }
     }
     
     deinit {
-        if isLifecycleObserverRegistered {
-            AppLifecycleManager.shared.removeObserver(self)
-        }
+        AppLifecycleManager.shared.removeObserver(self)
         freezeCheckTimer?.invalidate()
-    }
-    
-    /// Registers this manager as a lifecycle observer exactly once.
-    /// Must be called on the main thread or from init — Swift actor isolation is
-    /// not required here because AppLifecycleManager is also a singleton.
-    private func registerLifecycleObserverIfNeeded() {
-        guard !isLifecycleObserverRegistered else { return }
-        AppLifecycleManager.shared.addObserver(self)
-        isLifecycleObserverRegistered = true
-        print("🛏️ [Humango Health] SleepDataManager registered native lifecycle observer")
     }
     
     // MARK: - Auto-Start on App Launch
@@ -103,6 +80,10 @@ public class SleepDataManager: NSObject, FlutterStreamHandler, AppLifecycleObser
     /// First launch: no config in UserDefaults → no-op.
     /// Subsequent launches: config persisted from previous configureSleepBackgroundDelivery() call → auto-start.
     func autoStartIfConfigured() {
+        guard UserAuthStateManager.shared.isLoggedIn else {
+            print("🛏️ [Humango Health] Auto-start skipped — user not logged in")
+            return
+        }
         guard deliveryManager.isAPIConfigured else {
             print("🛏️ [Humango Health] Auto-start skipped — no API config in UserDefaults")
             return
@@ -111,10 +92,6 @@ public class SleepDataManager: NSObject, FlutterStreamHandler, AppLifecycleObser
             print("🛏️ [Humango Health] Auto-start skipped — monitoring already active")
             return
         }
-        
-        // Ensure the lifecycle observer is registered before starting (covers the case
-        // where API was configured on a previous launch but observer was not yet registered).
-        registerLifecycleObserverIfNeeded()
         
         let startDate = Date().addingTimeInterval(-12 * 60 * 60) // 12h lookback
         monitorStartDate = startDate
@@ -126,6 +103,19 @@ public class SleepDataManager: NSObject, FlutterStreamHandler, AppLifecycleObser
         }
         
         print("🛏️ [Humango Health] ✅ Auto-started sleep monitoring (API mode) from \(isoFormatter.string(from: startDate))")
+    }
+
+    /// Stops all active monitoring and clears all persisted sleep data and configuration.
+    /// Called on user logout to ensure no background activity continues and data is wiped.
+    func stopAndClearAll() {
+        stopLiveUpdates()
+        stopBackgroundMonitoring()
+        monitorStartDate = nil
+        sessionState = .empty
+        sessionDetector.clearState()
+        clearStoredSleepData()
+        deliveryManager.clearConfiguration()
+        print("🛏️ [Humango Health] ✅ Stopped all sleep monitoring and cleared data on logout")
     }
     
     // MARK: - AppLifecycleObserver (Native iOS lifecycle)
@@ -149,35 +139,17 @@ public class SleepDataManager: NSObject, FlutterStreamHandler, AppLifecycleObser
         
         stopBackgroundMonitoring()
         startLiveUpdates()
-        print("🛏️ [Humango Health] Switched to foreground mode (live streaming, delivery=\(deliveryManager.mode.rawValue)) via native lifecycle")
+        print("🛏️ [Humango Health] Switched to foreground mode (Descriptor, delivery=\(deliveryManager.mode.rawValue)) via native lifecycle")
     }
     
     /// Switches to background mode.
     /// Both API and localStorage modes use HKObserverQuery in background.
-    /// - localStorage mode: stores data in UserDefaults
-    /// - API mode: accumulates + evaluates, triggers API on session end
     private func switchToBackgroundMode() {
         guard monitorStartDate != nil else { return }
         
         stopLiveUpdates()
         startBackgroundMonitoring()
-        print("🛏️ [Humango Health] Switched to background mode (observer query, delivery=\(deliveryManager.mode.rawValue)) via native lifecycle")
-    }
-    
-    // MARK: - FlutterStreamHandler
-    
-    public func onListen(withArguments arguments: Any?, eventSink events: @escaping FlutterEventSink) -> FlutterError? {
-        self.eventSink = events
-        deliveryManager.attachEventSink(events)
-        print("🛏️ [Humango Health] Sleep EventChannel: onListen")
-        return nil
-    }
-    
-    public func onCancel(withArguments arguments: Any?) -> FlutterError? {
-        self.eventSink = nil
-        deliveryManager.attachEventSink(nil)
-        print("🛏️ [Humango Health] Sleep EventChannel: onCancel")
-        return nil
+        print("🛏️ [Humango Health] Switched to background mode (Observer, delivery=\(deliveryManager.mode.rawValue)) via native lifecycle")
     }
     
     // MARK: - Method Channel Handler
@@ -405,11 +377,6 @@ public class SleepDataManager: NSObject, FlutterStreamHandler, AppLifecycleObser
         
         deliveryManager.configure(mode: mode, apiURL: apiURL, headers: headers)
         
-        // Register lifecycle observer now that API is configured (first-time configure).
-        if mode == .api {
-            registerLifecycleObserverIfNeeded()
-        }
-        
         if mode == .api && monitorStartDate != nil {
             // Already monitoring: restart to pick up API delivery mode
             if isLiveStreaming {
@@ -544,15 +511,12 @@ public class SleepDataManager: NSObject, FlutterStreamHandler, AppLifecycleObser
         ]
     }
     
-    // MARK: - Live Streaming (Foreground)
+    // MARK: - Foreground Monitoring (HKAnchoredObjectQueryDescriptor)
     
-    /// Starts live streaming of sleep data changes using HKAnchoredObjectQueryDescriptor.
-    ///
-    /// Behavior depends on delivery mode:
-    /// - **localStorage mode**: Each sample is pushed to Flutter via EventChannel
-    /// - **API mode**: Samples are accumulated into session state and evaluated.
-    ///   When the session ends, the finalized data is POSTed to the configured API.
-    ///   No individual samples are pushed to Flutter EventChannel.
+    /// Starts foreground monitoring using HKAnchoredObjectQueryDescriptor.
+    /// Samples are accumulated into session state and evaluated.
+    /// When the session ends (multi-factor scoring), the finalized data is delivered
+    /// via the configured delivery mode (API POST or local storage).
     private func startLiveUpdates() {
         guard !isLiveStreaming else { return }
         guard let startDate = monitorStartDate else { return }
@@ -563,8 +527,6 @@ public class SleepDataManager: NSObject, FlutterStreamHandler, AppLifecycleObser
         }
         
         isLiveStreaming = true
-        let isAPIMode = !deliveryManager.shouldStreamToEventChannel
-        
         // Open-ended predicate: start at monitorStartDate, no endDate so future samples match
         let livePredicate = HKQuery.predicateForSamples(
             withStart: startDate,
@@ -587,73 +549,42 @@ public class SleepDataManager: NSObject, FlutterStreamHandler, AppLifecycleObser
                     for try await update in stream {
                         self.anchor = update.newAnchor
                         
-                        if isAPIMode {
-                            // API mode: accumulate samples into session state, evaluate, and trigger API if session ended
-                            let sampleDicts = update.addedSamples.map { self.convertSampleToDict($0) }
-                            if !sampleDicts.isEmpty {
-                                print("🛏️ [Humango Health] Live update (API mode): \(sampleDicts.count) new samples — accumulating into session")
-                                self.sessionDetector.updateState(&self.sessionState, withSamples: sampleDicts)
-                                self.sessionDetector.saveState(self.sessionState)
-                                
-                                // Also store full snapshot for fetchStoredSleepData compatibility
-                                Task {
-                                    if let fullData = try? await self.fetchSleepData(startDate: startDate, endDate: Date()) {
-                                        self.storeSleepDataToUserDefaults(fullData)
-                                    }
-                                }
-                                
-                                print("🛏️ [Humango Health] Session state: \(self.sessionState.segmentCount) segments, "
-                                      + "\(String(format: "%.0f", self.sessionState.totalSleepMinutes))m sleep, "
-                                      + "deepRecent=\(self.sessionState.hasRecentDeepSleep), "
-                                      + "freeze=\(self.sessionDetector.isInFreezeWindow())")
-                                
-                                self.evaluateAndNotifySessionStatus()
-                            }
+                        // Accumulate all new samples into session state and evaluate.
+                        // Delivery (API POST or local storage) is handled by deliveryManager
+                        // when the session is finalized.
+                        let sampleDicts = update.addedSamples.map { self.convertSampleToDict($0) }
+                        if !sampleDicts.isEmpty {
+                            print("🛏️ [Humango Health] Foreground update: \(sampleDicts.count) new samples — accumulating into session")
+                            self.sessionDetector.updateState(&self.sessionState, withSamples: sampleDicts)
+                            self.sessionDetector.saveState(self.sessionState)
                             
-                            // Deleted samples — log only in API mode
-                            for deletedObject in update.deletedObjects {
-                                print("🛏️ [Humango Health] Live update (API mode): sample deleted \(deletedObject.uuid.uuidString)")
-                            }
-                        } else {
-                            // localStorage mode: push individual samples to Flutter EventChannel
-                            for sample in update.addedSamples {
-                                let sampleDict = self.convertSampleToDict(sample)
-                                print("🛏️ [Humango Health] Live sleep update: \(sample.uuid.uuidString)")
-                                
-                                DispatchQueue.main.async {
-                                    self.eventSink?([
-                                        "type": "sleepSample",
-                                        "sample": sampleDict
-                                    ])
+                            // Store full snapshot for fetchStoredSleepData / getLocalSleepSessions
+                            Task {
+                                if let fullData = try? await self.fetchSleepData(startDate: startDate, endDate: Date()) {
+                                    self.storeSleepDataToUserDefaults(fullData)
                                 }
                             }
                             
-                            // Handle deleted samples
-                            for deletedObject in update.deletedObjects {
-                                DispatchQueue.main.async {
-                                    self.eventSink?([
-                                        "type": "sleepSampleDeleted",
-                                        "uuid": deletedObject.uuid.uuidString
-                                    ])
-                                }
-                            }
+                            print("🛏️ [Humango Health] Session state: \(self.sessionState.segmentCount) segments, "
+                                  + "\(String(format: "%.0f", self.sessionState.totalSleepMinutes))m sleep, "
+                                  + "deepRecent=\(self.sessionState.hasRecentDeepSleep), "
+                                  + "freeze=\(self.sessionDetector.isInFreezeWindow())")
+                            
+                            self.evaluateAndNotifySessionStatus()
+                        }
+                        
+                        for deletedObject in update.deletedObjects {
+                            print("🛏️ [Humango Health] Foreground update: sample deleted \(deletedObject.uuid.uuidString)")
                         }
                     }
                 } catch {
-                    print("🛏️ [Humango Health] Live updates error: \(error)")
-                    DispatchQueue.main.async {
-                        self.eventSink?(FlutterError(
-                            code: "LIVE_UPDATE_ERROR",
-                            message: error.localizedDescription,
-                            details: nil
-                        ))
-                    }
+                    print("🛏️ [Humango Health] Foreground monitoring error: \(error)")
                 }
             }
             
-            print("🛏️ [Humango Health] Started live sleep streaming (mode=\(isAPIMode ? "api" : "localStorage"))")
+            print("🛏️ [Humango Health] Started foreground sleep monitoring (Descriptor, delivery=\(deliveryManager.mode.rawValue))")
         } else {
-            print("🛏️ [Humango Health] Live streaming requires iOS 15.0+")
+            print("🛏️ [Humango Health] Foreground monitoring requires iOS 15.0+")
         }
     }
     
@@ -661,7 +592,7 @@ public class SleepDataManager: NSObject, FlutterStreamHandler, AppLifecycleObser
         liveUpdateTask?.cancel()
         liveUpdateTask = nil
         isLiveStreaming = false
-        print("🛏️ [Humango Health] Stopped live sleep streaming")
+        print("🛏️ [Humango Health] Stopped foreground sleep monitoring")
     }
     
     // MARK: - Background Monitoring
@@ -825,23 +756,9 @@ public class SleepDataManager: NSObject, FlutterStreamHandler, AppLifecycleObser
         }
     }
     
-    /// Sends a session-ended event to Flutter via EventChannel,
-    /// and delivers the finalized sleep data via the configured delivery mode.
+    /// Finalizes the sleep session and delivers it via the configured delivery mode (API or local storage).
     private func notifyFlutterSessionEnded(reason: String) {
-        print("🛏️ [Humango Health] Notifying Flutter: sleep session ended (\(reason))")
-        
-        // Build the session data payload
-        let sessionPayload: [String: Any] = [
-            "type": "sleepSessionEnded",
-            "reason": reason,
-            "segmentCount": self.sessionState.segmentCount,
-            "totalSleepMinutes": self.sessionState.totalSleepMinutes,
-            "totalAwakeMinutes": self.sessionState.totalAwakeMinutes,
-            "sessionStartDate": self.sessionState.sessionStartDate as Any,
-            "latestSegmentEndDate": self.sessionState.latestSegmentEndDate as Any,
-            "isFinalized": self.sessionState.isFinalized,
-            "finalizedAt": self.sessionState.finalizedAt as Any
-        ]
+        print("🛏️ [Humango Health] Sleep session ended (\(reason)) — delivering via \(deliveryManager.mode.rawValue)")
         
         // Deliver via configured mode (API or localStorage)
         Task { [weak self] in
@@ -888,11 +805,6 @@ public class SleepDataManager: NSObject, FlutterStreamHandler, AppLifecycleObser
             }
         }
         
-        // Also notify via EventChannel (for localStorage mode / backward compat)
-        DispatchQueue.main.async { [weak self] in
-            guard let self = self else { return }
-            self.eventSink?(sessionPayload)
-        }
     }
     
     // MARK: - UserDefaults Storage

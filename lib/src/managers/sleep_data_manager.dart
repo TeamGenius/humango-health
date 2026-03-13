@@ -3,10 +3,9 @@
 //  humango_health
 //
 //  Dart manager for fetching and monitoring sleep data from Apple HealthKit
-//  Supports: one-shot fetch, live streaming (foreground), background observation
+//  Supports: one-shot fetch, background monitoring (foreground Descriptor + background Observer)
 //
 
-import 'dart:async';
 import 'package:flutter/services.dart';
 import '../models/sleep_sample.dart';
 import '../models/sleep_background_delivery_config.dart';
@@ -16,8 +15,9 @@ import '../models/sleep_background_delivery_config.dart';
 /// Provides access to sleep analysis data including sleep stages
 /// (inBed, awake, asleepCore, asleepDeep, asleepREM) with support for:
 /// - One-shot data fetch for a configurable time range
-/// - Live streaming in foreground (EventChannel)
-/// - Background monitoring with UserDefaults storage
+/// - Background monitoring: foreground uses [HKAnchoredObjectQueryDescriptor],
+///   background uses [HKObserverQuery]. Data is accumulated into session state
+///   and delivered via API (POST) or local storage on session end.
 ///
 /// Example usage:
 /// ```dart
@@ -26,39 +26,19 @@ import '../models/sleep_background_delivery_config.dart';
 /// // One-shot fetch
 /// final response = await sleepManager.getSleepData();
 ///
-/// // Live streaming subscription
-/// final subscription = sleepManager.sleepDataStream.listen((event) {
-///   if (event is SleepSampleEvent) {
-///     print('New sleep sample: ${event.sample.sleepStage}');
-///   }
-/// });
-///
-/// // Start monitoring
+/// // Start monitoring (auto-starts on next launch if API is configured)
 /// await sleepManager.startMonitoring();
+///
+/// // Retrieve locally stored sessions (localStorage mode)
+/// final sessions = await sleepManager.getLocalSleepSessions();
 ///
 /// // Later, stop monitoring
 /// await sleepManager.stopMonitoring();
-/// subscription.cancel();
 /// ```
 class SleepDataManager {
   static const MethodChannel _channel = MethodChannel(
     'com.humango.health/sleep',
   );
-
-  static const EventChannel _eventChannel = EventChannel(
-    'com.humango.health/sleep/stream',
-  );
-
-  /// Stream of sleep data events from iOS.
-  /// Events include:
-  /// - [SleepSampleEvent]: New sleep sample received
-  /// - [SleepSampleDeletedEvent]: Sleep sample was deleted
-  Stream<SleepDataEvent> get sleepDataStream {
-    return _eventChannel.receiveBroadcastStream().map((event) {
-      final map = Map<String, dynamic>.from(event as Map);
-      return SleepDataEvent.fromMap(map);
-    });
-  }
 
   /// Fetches sleep data from HealthKit for the specified time range.
   ///
@@ -99,13 +79,16 @@ class SleepDataManager {
 
   /// Starts monitoring sleep data changes.
   ///
-  /// In **foreground**: Uses HKAnchoredObjectQueryDescriptor for live streaming.
-  /// Each new sleep sample is pushed to [sleepDataStream].
+  /// In **foreground**: Uses HKAnchoredObjectQueryDescriptor to accumulate
+  /// samples into session state.
   ///
-  /// In **background**: Uses HKObserverQuery to detect changes and stores
-  /// data in UserDefaults. Retrieve with [fetchStoredSleepData].
+  /// In **background**: Uses HKObserverQuery to detect changes and accumulates
+  /// samples into session state.
   ///
-  /// Call [enterForeground] / [enterBackground] to switch modes.
+  /// When the session ends (multi-factor scoring or freeze window expiry),
+  /// the finalized session is delivered via API POST ([BackgroundDeliveryMode.api])
+  /// or stored locally ([BackgroundDeliveryMode.localStorage]).
+  /// Retrieve local sessions with [getLocalSleepSessions].
   Future<Map<String, dynamic>> startMonitoring({DateTime? startDate}) async {
     final effectiveStartDate =
         startDate ?? DateTime.now().subtract(const Duration(hours: 24));
@@ -308,13 +291,12 @@ class SleepDataManager {
   /// **API mode** (`SleepBackgroundDeliveryMode.api`):
   /// - Finalized sleep sessions are POSTed directly to the configured API endpoint.
   /// - Both foreground (`HKAnchoredObjectQueryDescriptor`) and background (`HKObserverQuery`)
-  ///   run normally — samples accumulate into session state instead of being pushed to EventChannel.
+  ///   accumulate samples into session state.
   /// - When the session ends (multi-factor scoring), the complete session is POSTed to your API.
-  /// - The [sleepDataStream] will still emit `sleepSessionEnded` events for awareness.
   ///
   /// **Local storage mode** (`SleepBackgroundDeliveryMode.localStorage`):
-  /// - Default behavior: foreground uses EventChannel streaming,
-  ///   background stores data in UserDefaults.
+  /// - Finalized sleep sessions are stored locally in UserDefaults.
+  /// - Retrieve them with [getLocalSleepSessions] when the app becomes active.
   ///
   /// Call this before [startMonitoring] for best results. If called while
   /// monitoring is active, the mode switch takes effect immediately.
@@ -391,138 +373,6 @@ class SleepDataManager {
       rawJson: {},
     );
   }
-}
-
-/// Base class for sleep data streaming events
-abstract class SleepDataEvent {
-  factory SleepDataEvent.fromMap(Map<String, dynamic> map) {
-    final type = map['type'] as String?;
-    switch (type) {
-      case 'sleepSample':
-        return SleepSampleEvent(
-          sample: SleepSample.fromMap(
-            Map<String, dynamic>.from(map['sample'] as Map),
-          ),
-        );
-      case 'sleepSampleDeleted':
-        return SleepSampleDeletedEvent(uuid: map['uuid'] as String);
-      case 'sleepSessionEnded':
-        return SleepSessionEndedEvent(
-          reason: map['reason'] as String? ?? 'unknown',
-          segmentCount: map['segmentCount'] as int? ?? 0,
-          totalSleepMinutes:
-              (map['totalSleepMinutes'] as num?)?.toDouble() ?? 0,
-          totalAwakeMinutes:
-              (map['totalAwakeMinutes'] as num?)?.toDouble() ?? 0,
-          sessionStartDate: map['sessionStartDate'] as String?,
-          latestSegmentEndDate: map['latestSegmentEndDate'] as String?,
-          finalizedAt: map['finalizedAt'] as String?,
-        );
-      case 'sleepSessionDelivered':
-        return SleepSessionDeliveredEvent(
-          sessionId: map['sessionId'] as String? ?? '',
-          data: map['data'] as String? ?? '',
-        );
-      default:
-        return SleepDataUnknownEvent(rawData: map);
-    }
-  }
-}
-
-/// Event emitted when a new sleep sample is received
-class SleepSampleEvent implements SleepDataEvent {
-  final SleepSample sample;
-
-  SleepSampleEvent({required this.sample});
-
-  @override
-  String toString() =>
-      'SleepSampleEvent(${sample.sleepStage}, ${sample.durationMinutes.toStringAsFixed(1)} min)';
-}
-
-/// Event emitted when a sleep sample is deleted
-class SleepSampleDeletedEvent implements SleepDataEvent {
-  final String uuid;
-
-  SleepSampleDeletedEvent({required this.uuid});
-
-  @override
-  String toString() => 'SleepSampleDeletedEvent($uuid)';
-}
-
-/// Event emitted when a sleep session has ended.
-///
-/// This is triggered by the freeze-window-aware session detector when:
-/// - Multi-factor scoring detects sleep has ended (during freeze window), OR
-/// - The freeze window expires (12:00 PM) with accumulated data
-///
-/// After receiving this event, call [SleepDataManager.fetchStoredSleepData]
-/// to get the full session data, then [SleepDataManager.resetSleepSession]
-/// to prepare for the next night.
-class SleepSessionEndedEvent implements SleepDataEvent {
-  /// Why the session was declared ended
-  final String reason;
-
-  /// Number of sleep segments in the session
-  final int segmentCount;
-
-  /// Total actual sleep time (excluding awake/inBed) in minutes
-  final double totalSleepMinutes;
-
-  /// Total awake time within the sleep session in minutes
-  final double totalAwakeMinutes;
-
-  /// ISO8601 start of the first segment
-  final String? sessionStartDate;
-
-  /// ISO8601 end of the last segment
-  final String? latestSegmentEndDate;
-
-  /// ISO8601 timestamp when the session was finalized
-  final String? finalizedAt;
-
-  SleepSessionEndedEvent({
-    required this.reason,
-    required this.segmentCount,
-    required this.totalSleepMinutes,
-    required this.totalAwakeMinutes,
-    this.sessionStartDate,
-    this.latestSegmentEndDate,
-    this.finalizedAt,
-  });
-
-  @override
-  String toString() =>
-      'SleepSessionEndedEvent(reason=$reason, segments=$segmentCount, '
-      'sleep=${totalSleepMinutes.toStringAsFixed(0)}m, '
-      'awake=${totalAwakeMinutes.toStringAsFixed(0)}m)';
-}
-
-/// Event emitted when a sleep session has been delivered via localStorage mode.
-///
-/// This contains the full session JSON data as a string, which can be parsed
-/// on the Dart side. Only emitted in `localStorage` delivery mode.
-class SleepSessionDeliveredEvent implements SleepDataEvent {
-  /// Unique session identifier (typically the session start date)
-  final String sessionId;
-
-  /// Full sleep session data as a JSON string
-  final String data;
-
-  SleepSessionDeliveredEvent({required this.sessionId, required this.data});
-
-  @override
-  String toString() => 'SleepSessionDeliveredEvent(sessionId=$sessionId)';
-}
-
-/// Event for unknown event types
-class SleepDataUnknownEvent implements SleepDataEvent {
-  final Map<String, dynamic> rawData;
-
-  SleepDataUnknownEvent({required this.rawData});
-
-  @override
-  String toString() => 'SleepDataUnknownEvent($rawData)';
 }
 
 /// Exception thrown when sleep data operations fail
