@@ -1,3 +1,33 @@
+## 0.0.3 — 2026-03-13
+
+### Breaking Changes
+
+#### Workout Reading — `getLocalWorkouts()` removed
+`getLocalWorkouts()` has been removed from both the Dart API and native iOS layer. Background workout delivery via `localStorage` mode was redundant — when background monitoring is enabled, all workouts are POSTed directly to the configured API endpoint. There is no offline/local retrieval path needed.
+
+**Removed from Dart (`WorkoutReadManager`):**
+- `getLocalWorkouts()` method
+
+**Removed from iOS (`WorkoutServiceChannel.swift`):**
+- `case "getLocalWorkouts"` from the method channel switch
+- `handleGetLocalWorkouts(_ result:)` private method
+
+**Removed from iOS (`HumangoHealthPlugin.swift`):**
+- `"getLocalWorkouts"` from the workout read channel routing list
+
+**Migration:** If you were calling `getLocalWorkouts()` on app startup, switch to `BackgroundDeliveryMode.api`. Workouts will be pushed directly to your API endpoint by the native iOS layer — both in foreground and background — with no additional Flutter call required.
+
+---
+
+### Improvements
+
+#### Workout Route Debounce Reduced (3 min → 1 min)
+The `RouteService` debounce window — the time iOS waits after the last GPS route update before finalising and pushing the workout — has been reduced from **3 minutes** to **1 minute**. This means completed workouts are delivered to the API approximately 2 minutes faster after the final route point arrives.
+
+**Changed in:** `ios/Classes/WorkoutReading/RouteService.swift` — `routeUpdateWaitSeconds`
+
+---
+
 ## 0.0.2 — 2026-03-13
 
 ### Breaking Changes

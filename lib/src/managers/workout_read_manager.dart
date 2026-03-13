@@ -72,16 +72,6 @@ class WorkoutReadManager {
     await _methodChannel.invokeMethod('setImportPreferences', args);
   }
 
-  /// Fetch workouts stored locally by the background observer.
-  /// This automatically clears them from local storage after retrieval.
-  Future<List<String>> getLocalWorkouts() async {
-    final result = await _methodChannel.invokeMethod('getLocalWorkouts');
-    if (result is List) {
-      return result.cast<String>();
-    }
-    return [];
-  }
-
   /// Manually trigger foreground mode (usually handled by app lifecycle observer)
   Future<void> enterForegroundMode() async {
     await _methodChannel.invokeMethod('enterForeground');

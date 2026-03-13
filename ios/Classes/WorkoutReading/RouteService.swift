@@ -25,7 +25,7 @@ class RouteService {
     /// If new route data arrives within the window, this task is cancelled and restarted.
     private var routeDebounceTask: Task<Void, Never>?
     /// Duration (in seconds) to wait for additional route updates before finalizing the workout push.
-    private static let routeUpdateWaitSeconds: UInt64 = 3 * 60  // 3 minutes
+    private static let routeUpdateWaitSeconds: UInt64 = 1 * 60  // 1 minute
 
     private var apiURL: URL? {
         guard

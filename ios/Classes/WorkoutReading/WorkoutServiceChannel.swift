@@ -33,8 +33,6 @@ class WorkoutServiceChannel: NSObject, FlutterStreamHandler {
             handleStartMonitoring(call, result)
         case "stopWorkoutMonitoring":
             handleStopMonitoring(result)
-        case "getLocalWorkouts":
-            handleGetLocalWorkouts(result)
         case "configureBackgroundDelivery":
             handleConfigureBackground(call, result)
         case "setImportPreferences":
@@ -382,15 +380,6 @@ class WorkoutServiceChannel: NSObject, FlutterStreamHandler {
         workoutService?.stopBackgroundMonitoring()
         workoutService = nil
         result(nil)
-    }
-    
-    private func handleGetLocalWorkouts(_ result: @escaping FlutterResult) {
-        Task {
-            let localWorkouts = await BackgroundDeliveryManager.shared.retrieveLocalWorkouts()
-            DispatchQueue.main.async {
-                result(localWorkouts)
-            }
-        }
     }
     
     private func handleConfigureBackground(_ call: FlutterMethodCall, _ result: @escaping FlutterResult) {

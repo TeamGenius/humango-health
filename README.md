@@ -1044,7 +1044,7 @@ await UserSessionManager.setUserLoggedIn(false);
 | Mode | Description |
 |------|-------------|
 | `BackgroundDeliveryMode.api` | Native iOS directly POSTs workout JSON to your configured API endpoint. |
-| `BackgroundDeliveryMode.localStorage` | Stores workout JSON in `UserDefaults`. Retrieve on next app open via `getLocalWorkouts()`. |
+| `BackgroundDeliveryMode.localStorage` | Workouts are pushed to Flutter's `workoutStream` via EventChannel in real-time (foreground). In background, native iOS POSTs to API — `localStorage` mode is no longer supported for background delivery. |
 
 #### How It Works
 
@@ -1053,7 +1053,7 @@ await UserSessionManager.setUserLoggedIn(false);
 
 **localStorage mode (default):**
 - **Foreground:** Workouts are pushed to Flutter's `workoutStream` via EventChannel in real-time.
-- **Background:** HealthKit wakes the app via `HKObserverQuery`. Workouts are stored in `UserDefaults`. Call `getLocalWorkouts()` to retrieve them.
+- **Background:** Not applicable for background delivery. When background monitoring is required, use `BackgroundDeliveryMode.api` — the native iOS layer will POST workouts directly to your API endpoint.
 
 #### Configuring Workout API Mode
 
@@ -1093,18 +1093,7 @@ void configureWorkoutLocalDelivery() async {
 }
 ```
 
-Then retrieve pending workouts on app startup:
-
-```dart
-void fetchPendingWorkouts() async {
-  final List<String> pending = await workoutManager.getLocalWorkouts();
-  
-  for (final workoutJson in pending) {
-    print('Retrieved pending workout: $workoutJson');
-  }
-  // Local storage is automatically cleared after retrieval
-}
-```
+> **Note:** `localStorage` mode delivers workouts via the Flutter `workoutStream` EventChannel while the app is in the foreground. For background delivery (when the app is suspended), configure `BackgroundDeliveryMode.api` instead — the native iOS layer will POST directly to your API without requiring the app to be active.
 
 #### Recommended Workout Setup
 
@@ -1587,7 +1576,6 @@ The plugin provides comprehensive workout reading with real-time monitoring and 
 |--------|-------------|----------|
 | `readWorkouts(startDate, endDate)` | One-shot fetch | Initial sync, manual refresh |
 | `startMonitoring(startDate, endDate)` | Live monitoring | Real-time tracking |
-| `getLocalWorkouts()` | Retrieve stored workouts | App startup, background data |
 
 ### Fetching Completed Workouts (One-Shot)
 
