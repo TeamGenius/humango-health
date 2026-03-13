@@ -422,49 +422,11 @@ public class WorkoutPlanManager: NSObject {
 
         // 2. Decode into Models
         let decoder = JSONDecoder()
-        // Use the same multi-format parser as the validation step so that dates like
-        // "2026-03-13T00:30:00Z" (no fractional seconds) are handled correctly.
-        // Swift's built-in .iso8601 strategy can throw keyNotFound / dataCorrupted on
-        // ISO8601 strings that lack fractional seconds on certain iOS versions.
-        decoder.dateDecodingStrategy = .custom { decoder in
-            let container = try decoder.singleValueContainer()
-            let dateStr = try container.decode(String.self)
-            guard let date = DateUtils.parseDate(from: dateStr) else {
-                throw DecodingError.dataCorrupted(
-                    DecodingError.Context(
-                        codingPath: decoder.codingPath,
-                        debugDescription: "Cannot parse date string '\(dateStr)'. Expected ISO8601 (e.g. 2026-03-13T00:30:00Z)."
-                    )
-                )
-            }
-            return date
-        }
-
+        decoder.dateDecodingStrategy = .iso8601
+        
         let jsonData = try JSONSerialization.data(withJSONObject: validJsonArray, options: [])
         print("jsonData \(jsonData)")
-
-        let instanceModels: [WorkoutInstanceModelElement]
-        do {
-            instanceModels = try decoder.decode([WorkoutInstanceModelElement].self, from: jsonData)
-        } catch let decodingError as DecodingError {
-            // Surface the full coding path so the caller knows exactly which field is missing/wrong
-            let details: String
-            switch decodingError {
-            case .keyNotFound(let key, let context):
-                details = "Missing key '\(key.stringValue)' at path: \(context.codingPath.map { $0.stringValue }.joined(separator: " → ")). " +
-                          "Required fields: 'date' (ISO8601 string), 'sport' (RUNNING|CYCLING|SWIMMING|STRENGTH)."
-            case .dataCorrupted(let context):
-                details = "Data corrupted at path: \(context.codingPath.map { $0.stringValue }.joined(separator: " → ")). \(context.debugDescription)"
-            case .typeMismatch(let type, let context):
-                details = "Type mismatch — expected \(type) at path: \(context.codingPath.map { $0.stringValue }.joined(separator: " → ")). \(context.debugDescription)"
-            case .valueNotFound(let type, let context):
-                details = "Null value for non-optional \(type) at path: \(context.codingPath.map { $0.stringValue }.joined(separator: " → ")). \(context.debugDescription)"
-            @unknown default:
-                details = "\(decodingError)"
-            }
-            print("❌ [Humango Health] JSON decode error: \(details)")
-            throw NSError(domain: "PlanManager", code: 3, userInfo: [NSLocalizedDescriptionKey: details])
-        }
+        let instanceModels = try decoder.decode([WorkoutInstanceModelElement].self, from: jsonData)
 
         // 3. Build native WorkoutKit items
         let items: [ScheduledWorkoutItem]
