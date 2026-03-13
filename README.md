@@ -2,7 +2,7 @@
 
 A comprehensive Flutter plugin for integrating iOS HealthKit and WorkoutKit functionalities natively into the Humango platform.
 
-> **Version 0.0.2** — See [CHANGELOG](CHANGELOG.md) for what's new.
+> **Version 0.0.3** — See [CHANGELOG](CHANGELOG.md) for what's new.
 
 ## Table of Contents
 
@@ -12,6 +12,7 @@ A comprehensive Flutter plugin for integrating iOS HealthKit and WorkoutKit func
 - [User Session Management](#user-session-management)
 - [Permission Handling](#permission-handling)
 - [Workout Scheduling (Push)](#push-workouts-scheduling)
+  - [Supported Date Formats](#supported-date-formats)
   - [Swimming Workouts & Pool Size](#swimming-workouts--pool-size)
   - [Removing Scheduled Workouts](#removing-scheduled-workouts)
   - [Remove All Scheduled Workouts](#remove-all-scheduled-workouts)
@@ -404,8 +405,21 @@ Every workout JSON object **must** contain the following fields. Validation is a
 | Field | Type | Description |
 |-------|------|-------------|
 | `schedule_id` | `String` or `int` | **Required.** Unique identifier for the workout. Used for deduplication and tracking. |
-| `date` | `String` (ISO8601) | **Required.** Scheduled date/time in ISO8601 format. Must be in the future and within 7 days. |
+| `date` | `String` (ISO8601) | **Required.** Scheduled date/time. All ISO8601 variants are accepted — see [Supported Date Formats](#supported-date-formats) below. Must be in the future and within 7 days. |
 | `blocks` | `Array` (non-empty) | **Required.** Array of interval blocks defining the workout structure. Cannot be empty. |
+
+### Supported Date Formats
+
+The native iOS parser accepts all of the following date formats. Fractional seconds are **not required**.
+
+| Format | Example | Notes |
+|--------|---------|-------|
+| ISO8601 with Z, no millis | `2026-03-13T00:30:00Z` | ✅ Standard backend format |
+| ISO8601 with Z + millis | `2026-03-13T00:30:00.000Z` | ✅ Dart `toIso8601String()` default |
+| ISO8601 with Z + microseconds | `2026-03-13T00:30:00.000000Z` | ✅ High-precision timestamps |
+| ISO8601 no timezone | `2026-03-13T00:30:00` | ✅ Treated as UTC |
+
+> **Why this matters:** Swift's built-in `.iso8601` decoder requires fractional seconds on some iOS versions and throws an opaque "The data couldn't be read because it is missing." error for dates like `2026-03-13T00:30:00Z`. The plugin uses a custom multi-format date decoder that handles all variants above. If a date still fails, the `PlatformException` details will include the exact JSON field path (e.g. `Index 0 → date`) to make debugging straightforward.
 
 **Validation Behavior:**
 - Validation happens at **both** Dart and iOS layers, **per-workout**
@@ -1144,7 +1158,7 @@ Sleep delivery differs from workouts because sleep data is **accumulated over th
 
 #### Sleep Session Detection
 
-Before configuring delivery, you can optionally configure the **session detection algorithm** (freeze-window approach). The detector uses multi-factor scoring to determine when a sleep session has ended:
+Before configuring delivery, you can optionally configure the **session detection algorithm** (freeze-window approach). The detector uses multiple triggers to determine when a sleep session has ended:
 
 | Parameter | Default | Description |
 |-----------|---------|-------------|
@@ -1154,13 +1168,30 @@ Before configuring delivery, you can optionally configure the **session detectio
 | `stalenessThresholdMinutes` | 60 | Minutes of no new data → stale |
 | `deepSleepAbsenceWindowMinutes` | 90 | No deep sleep in this window = late sleep |
 
-**Session ends when ALL conditions are met (during freeze window):**
+**Session finalization triggers (checked after every sample batch):**
+
+| Trigger | When | Priority |
+|---------|------|----------|
+| **Out-of-bed detection** | Latest `inBed` sample ended > 5 min ago | **Primary** — checked first on every update |
+| **Multi-factor scoring** | Min sleep + no recent deep sleep + staleness all met | Secondary — freeze-window aware |
+| **Freeze window expiry** | Current time ≥ noon (12 PM) with accumulated sleep | Fallback — timer-based (every 15 min) |
+
+**Out-of-bed trigger (primary):**
+
+Every time new samples arrive (foreground or background), the native layer checks whether the user is still in bed by inspecting the `endDate` of the most recent `inBed` sample:
+- `inBed` ended **< 5 minutes ago** → user still in bed or just got up → keep accumulating
+- `inBed` ended **≥ 5 minutes ago** → user is out of bed → finalize immediately with `reason: "user_out_of_bed"` and deliver
+- No `inBed` sample received yet → cannot confirm, keep accumulating and rely on multi-factor scoring
+
+> The out-of-bed check fires on every sample update — sessions are typically finalized within minutes of the user getting out of bed, without needing to wait for the freeze window or staleness threshold.
+
+**Multi-factor scoring (secondary) — session ends when ALL are true (during freeze window):**
 1. Minimum 4 hours of accumulated sleep
 2. No deep sleep in the last 90 minutes
 3. No new segments for ≥ 60 minutes (staleness)
 4. Current time is within the freeze window (12 AM – 12 PM)
 
-**After freeze window ends (12 PM):** session is auto-finalized.
+**After freeze window ends (12 PM):** session is auto-finalized regardless of other conditions.
 
 ```dart
 void configureSleepDetection() async {
@@ -1223,8 +1254,8 @@ When a sleep session is finalized, the following JSON is POSTed:
     "asleepUnspecified": { "seconds": 0.0, "minutes": 0.0 }
   },
   "fetchedFrom": "2026-03-04T22:00:00.000Z",
-  "fetchedTo": "2026-03-05T06:00:00.000Z",
-  "reason": "sleep>=471m, no_deep_sleep_recently, stale_65m",
+  "fetchedTo": "2026-03-05T06:05:00.000Z",
+  "reason": "user_out_of_bed",
   "segmentCount": 19,
   "isFinalized": true,
   "finalizedAt": "2026-03-05T06:05:00.000Z",
@@ -1232,6 +1263,14 @@ When a sleep session is finalized, the following JSON is POSTed:
   "latestSegmentEndDate": "2026-03-05T05:00:00.000Z"
 }
 ```
+
+**`reason` field values:**
+
+| Value | Finalization trigger |
+|-------|---------------------|
+| `user_out_of_bed` | Latest `inBed` sample ended > 5 min ago (primary trigger) |
+| `sleep>=Xm, no_deep_sleep_recently, stale_Ym` | Multi-factor scoring during freeze window |
+| `freeze_window_expired` | Freeze window ended (noon) with accumulated sleep |
 
 #### Configuring Sleep Local Storage Mode
 
@@ -1395,7 +1434,7 @@ The plugin provides comprehensive access to Apple HealthKit's sleep analysis dat
 
 | Value | Stage | Description |
 |-------|-------|-------------|
-| 0 | `inBed` | User is in bed but not necessarily asleep |
+| 0 | `inBed` | User is in bed but not necessarily asleep. The `endDate` of the latest `inBed` sample is used as the **primary out-of-bed trigger** for session finalization. |
 | 1 | `asleepUnspecified` | User is asleep (stage unknown) |
 | 2 | `awake` | User woke up during sleep |
 | 3 | `asleepCore` | Core/light sleep |
@@ -1552,7 +1591,12 @@ void fetchPendingSleepSessions() async {
 | **Foreground** | App active | `HKAnchoredObjectQueryDescriptor` | Accumulates samples into on-device session state |
 | **Background** | App suspended | `HKObserverQuery` + `enableBackgroundDelivery()` | Accumulates samples into the same session state |
 
-In **both** modes, once the session detector determines sleep has ended, the finalized session is delivered:
+In **both** modes, once a finalization trigger fires, the session is delivered:
+- **Out-of-bed** (primary): latest `inBed` sample ended > 5 min ago → finalize immediately
+- **Multi-factor scoring** (secondary): min sleep + no recent deep sleep + staleness all met
+- **Freeze window expiry** (fallback): noon timer fires with accumulated sleep
+
+The finalized session is then delivered:
 - **API mode** → HTTP POST to your endpoint
 - **localStorage mode** → stored in `UserDefaults`; retrieve with `getLocalSleepSessions()`
 

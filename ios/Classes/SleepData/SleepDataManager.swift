@@ -52,25 +52,43 @@ public class SleepDataManager: NSObject, AppLifecycleObserver {
     // Configuration
     private var monitorStartDate: Date?
     private var sessionConfig: SleepSessionConfig = .default
+    private var isLifecycleRegistered = false
     
     // MARK: - Initialization
     
     private override init() {
         self.sessionDetector = SleepSessionDetector(config: .default)
         super.init()
-        // Register with AppLifecycleManager for automatic foreground/background switching
-        AppLifecycleManager.shared.addObserver(self)
         // Restore persisted session state if any
         self.sessionState = sessionDetector.loadState()
-        print("🛏️ [Humango Health] SleepDataManager initialized with native lifecycle observer")
+        print("🛏️ [Humango Health] SleepDataManager initialized")
         if sessionState.segmentCount > 0 {
-            print("🛏️ [Humango Health] Restored session state: \(sessionState.segmentCount) segments, \(String(format: "%.0f", sessionState.totalSleepMinutes))m sleep")
+            let sleepMins = String(format: "%.0f", sessionState.totalSleepMinutes)
+            print("🛏️ [Humango Health] Restored session state: \(sessionState.segmentCount) segments, \(sleepMins)m sleep")
         }
     }
     
     deinit {
-        AppLifecycleManager.shared.removeObserver(self)
+        unregisterLifecycle()
         freezeCheckTimer?.invalidate()
+    }
+    
+    // MARK: - Lifecycle Registration
+    
+    /// Registers with AppLifecycleManager only when monitoring is active.
+    /// Mirrors WorkoutService behaviour — no observer registration until monitoring starts.
+    private func registerLifecycleIfNeeded() {
+        guard !isLifecycleRegistered else { return }
+        AppLifecycleManager.shared.addObserver(self)
+        isLifecycleRegistered = true
+        print("🛏️ [Humango Health] Registered lifecycle observer (monitoring active)")
+    }
+    
+    private func unregisterLifecycle() {
+        guard isLifecycleRegistered else { return }
+        AppLifecycleManager.shared.removeObserver(self)
+        isLifecycleRegistered = false
+        print("🛏️ [Humango Health] Unregistered lifecycle observer (monitoring stopped)")
     }
     
     // MARK: - Auto-Start on App Launch
@@ -95,6 +113,7 @@ public class SleepDataManager: NSObject, AppLifecycleObserver {
         
         let startDate = Date().addingTimeInterval(-12 * 60 * 60) // 12h lookback
         monitorStartDate = startDate
+        registerLifecycleIfNeeded()
         
         if AppLifecycleManager.shared.isInForeground {
             startLiveUpdates()
@@ -111,6 +130,7 @@ public class SleepDataManager: NSObject, AppLifecycleObserver {
         stopLiveUpdates()
         stopBackgroundMonitoring()
         monitorStartDate = nil
+        unregisterLifecycle()
         sessionState = .empty
         sessionDetector.clearState()
         clearStoredSleepData()
@@ -246,6 +266,7 @@ public class SleepDataManager: NSObject, AppLifecycleObserver {
         }
         
         monitorStartDate = startDate
+        registerLifecycleIfNeeded()
         
         // Both API and localStorage modes use the same foreground/background strategy:
         // Foreground → HKAnchoredObjectQueryDescriptor (live streaming)
@@ -266,6 +287,7 @@ public class SleepDataManager: NSObject, AppLifecycleObserver {
         stopLiveUpdates()
         stopBackgroundMonitoring()
         monitorStartDate = nil
+        unregisterLifecycle()
         
         print("🛏️ [Humango Health] Stopped sleep monitoring")
         result(["status": "stopped"])
