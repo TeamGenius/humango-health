@@ -56,6 +56,7 @@ struct WorkoutInstanceModelElement: Codable {
         case zoneTarget = "zone_target"
         case unit
     }
+
 }
 
 // MARK: - WorkoutInstanceModelBlock

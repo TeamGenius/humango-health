@@ -336,6 +336,16 @@ public class WorkoutPlanManager: NSObject {
                 errors.append("Invalid date format: '\(dateStr!)'. Expected ISO8601 format.")
             }
             
+            // Validate sport
+            let validSports = ["RUNNING", "CYCLING", "SWIMMING", "STRENGTH"]
+            if let sport = dict["sport"] as? String {
+                if !validSports.contains(sport.uppercased()) {
+                    errors.append("Invalid value for 'sport': '\(sport)'. Must be one of: \(validSports.joined(separator: ", "))")
+                }
+            } else {
+                errors.append("Missing required field: 'sport'. Must be one of: \(validSports.joined(separator: ", "))")
+            }
+
             // Validate blocks
             if let blocks = dict["blocks"] as? [[String: Any]] {
                 if blocks.isEmpty {
