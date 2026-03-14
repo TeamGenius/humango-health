@@ -11,11 +11,16 @@ class _Scenario {
   final Color color;
   final List<Map<String, dynamic>> workouts;
 
+  /// When true, the existing 'date' field in each workout is kept as-is
+  /// instead of being overwritten with a +2 h forward date.
+  final bool preserveDates;
+
   const _Scenario({
     required this.label,
     required this.icon,
     required this.color,
     required this.workouts,
+    this.preserveDates = false,
   });
 }
 
@@ -547,7 +552,8 @@ class _WorkoutPushScreenState extends State<WorkoutPushScreen> {
                 {
                   'type': 'INTERVAL',
                   'duration': 240,
-                  'distance': 411.5, // ~440 yd (quarter mile) in meters → displayed as 440 yd
+                  'distance':
+                      411.5, // ~440 yd (quarter mile) in meters → displayed as 440 yd
                   'measurement_unit': 'meter',
                   'sport': 'RUNNING',
                   'zone_unit': 'PACE',
@@ -859,13 +865,76 @@ class _WorkoutPushScreenState extends State<WorkoutPushScreen> {
     ),
   ];
 
+  // ── Date-format test scenario ──────────────────────────────────────────────
+
+  /// Builds a scenario that schedules four identical workouts differing only
+  /// in the format of the 'date' string — verifying that the Swift layer
+  /// accepts all supported ISO-8601 variants.
+  _Scenario get _dateFormatScenario {
+    final tomorrow = DateTime.now().toUtc().add(const Duration(days: 1));
+    final y = tomorrow.year.toString().padLeft(4, '0');
+    final m = tomorrow.month.toString().padLeft(2, '0');
+    final d = tomorrow.day.toString().padLeft(2, '0');
+    final base = '$y-$m-${d}T';
+
+    Map<String, dynamic> _workout(String id, String date, String label) => {
+      'schedule_id': id,
+      'sport': 'RUNNING',
+      'date': date,
+      'summary': {
+        'name': label,
+        'sport': 'RUNNING',
+        'measurement_unit': 'second',
+      },
+      'blocks': [
+        {
+          'type': 'INTERVAL',
+          'duration': 1800,
+          'distance': 5000.0,
+          'measurement_unit': 'second',
+          'sport': 'RUNNING',
+          'zone_unit': 'PACE',
+          'target_range': {'low': 360, 'high': 300},
+        },
+      ],
+    };
+
+    return _Scenario(
+      label: 'Date Format Test (4 variants)',
+      icon: Icons.date_range,
+      color: Colors.deepPurple,
+      preserveDates: true,
+      workouts: [
+        // Format 1: ISO-8601 with Z, no fractional seconds
+        _workout('date-fmt-z-001', '${base}08:00:00Z', 'Fmt1: ...T08:00:00Z'),
+        // Format 2: no timezone suffix (treated as UTC by DateUtils)
+        _workout('date-fmt-no-tz-001', '${base}09:00:00', 'Fmt2: ...T09:00:00'),
+        // Format 3: milliseconds + Z
+        _workout(
+          'date-fmt-ms-z-001',
+          '${base}10:00:00.000Z',
+          'Fmt3: ...T10:00:00.000Z',
+        ),
+        // Format 4: microseconds, no timezone
+        _workout(
+          'date-fmt-micro-no-tz-001',
+          '${base}11:00:00.000000',
+          'Fmt4: ...T11:00:00.000000',
+        ),
+      ],
+    );
+  }
+
   // ── Core push logic ───────────────────────────────────────────────────────
 
   /// Injects a valid forward-looking date into every workout map and pushes.
+  /// When [preserveDates] is true the 'date' field already present in each
+  /// workout map is kept unchanged (used by the date-format test scenario).
   Future<void> _pushWorkouts(
     List<Map<String, dynamic>> workouts,
-    String scenarioLabel,
-  ) async {
+    String scenarioLabel, {
+    bool preserveDates = false,
+  }) async {
     setState(() {
       _isPushing = true;
       _lastResponse = null;
@@ -880,10 +949,13 @@ class _WorkoutPushScreenState extends State<WorkoutPushScreen> {
           .toList();
 
       // Apple WorkoutKit requires dates strictly between now and +7 days.
-      // Strip sub-second precision — Swift's .iso8601 decoder rejects fractional seconds.
-      for (final map in mutable) {
-        final forward = DateTime.now().add(const Duration(hours: 2)).toUtc();
-        map['date'] = '${forward.toIso8601String().substring(0, 19)}Z';
+      // When preserveDates is true the caller has already embedded valid dates
+      // in each workout (e.g. the date-format test scenario).
+      if (!preserveDates) {
+        for (final map in mutable) {
+          final forward = DateTime.now().add(const Duration(hours: 2)).toUtc();
+          map['date'] = '${forward.toIso8601String().substring(0, 19)}Z';
+        }
       }
 
       final response = await _pushManager.pushRawWorkouts(mutable);
@@ -970,7 +1042,13 @@ class _WorkoutPushScreenState extends State<WorkoutPushScreen> {
     return Padding(
       padding: const EdgeInsets.only(bottom: 8),
       child: ElevatedButton.icon(
-        onPressed: _isPushing ? null : () => _pushWorkouts(s.workouts, s.label),
+        onPressed: _isPushing
+            ? null
+            : () => _pushWorkouts(
+                s.workouts,
+                s.label,
+                preserveDates: s.preserveDates,
+              ),
         icon: isActive
             ? const SizedBox(
                 width: 18,
@@ -1190,6 +1268,26 @@ class _WorkoutPushScreenState extends State<WorkoutPushScreen> {
             ),
             const SizedBox(height: 12),
             ..._scenarios.map(_buildScenarioButton),
+
+            const SizedBox(height: 24),
+            const Divider(),
+
+            // ── Section: Date Format Tests ───────────────────────────────
+            const SizedBox(height: 8),
+            const Text(
+              'Date Format Tests',
+              style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold),
+            ),
+            const SizedBox(height: 4),
+            const Text(
+              'Schedules 4 identical workouts for tomorrow, each using a different '
+              'ISO-8601 date string format (with/without Z, with/without '
+              'fractional seconds). All 4 should succeed to confirm the Swift '
+              'DateUtils parser accepts every variant.',
+              style: TextStyle(fontSize: 12, color: Colors.grey),
+            ),
+            const SizedBox(height: 12),
+            _buildScenarioButton(_dateFormatScenario),
 
             const SizedBox(height: 24),
             const Divider(),

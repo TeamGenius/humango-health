@@ -136,3 +136,145 @@ class WorkoutPlanBuilderConvertedDistanceTests: XCTestCase {
   }
 }
 
+// MARK: - DateUtils.parseDate Tests
+
+class DateUtilsParseDateTests: XCTestCase {
+
+  // Helper: build a UTC Date for a given year/month/day/hour/minute/second
+  private func utcDate(year: Int, month: Int, day: Int,
+                       hour: Int, minute: Int, second: Int = 0) -> Date {
+    var comps = DateComponents()
+    comps.timeZone = TimeZone(secondsFromGMT: 0)
+    comps.year = year; comps.month = month; comps.day = day
+    comps.hour = hour; comps.minute = minute; comps.second = second
+    return Calendar(identifier: .gregorian).date(from: comps)!
+  }
+
+  // MARK: - Happy-path formats
+
+  func testParseDate_iso8601WithFractionalSecondsAndZ_parsesCorrectly() {
+    // Format: yyyy-MM-dd'T'HH:mm:ss.SSSZ  (isoFormatter)
+    let result = DateUtils.parseDate(from: "2026-03-13T00:30:00.000Z")
+    XCTAssertNotNil(result)
+    XCTAssertEqual(result, utcDate(year: 2026, month: 3, day: 13, hour: 0, minute: 30))
+  }
+
+  func testParseDate_iso8601WithZ_parsesCorrectly() {
+    // Format: yyyy-MM-dd'T'HH:mm:ssZ  (isoFormatterNoFrac)
+    let result = DateUtils.parseDate(from: "2026-03-13T00:30:00Z")
+    XCTAssertNotNil(result)
+    XCTAssertEqual(result, utcDate(year: 2026, month: 3, day: 13, hour: 0, minute: 30))
+  }
+
+  func testParseDate_iso8601WithoutTimezone_parsesAsUTC() {
+    // Format: yyyy-MM-dd'T'HH:mm:ss  (customFormatterSec, interpreted as UTC)
+    let result = DateUtils.parseDate(from: "2026-03-13T00:30:00")
+    XCTAssertNotNil(result)
+    XCTAssertEqual(result, utcDate(year: 2026, month: 3, day: 13, hour: 0, minute: 30))
+  }
+
+  func testParseDate_iso8601WithMilliseconds_parsesCorrectly() {
+    // Format: yyyy-MM-dd'T'HH:mm:ss.SSS  (customFormatterMs, no timezone)
+    let result = DateUtils.parseDate(from: "2026-03-13T00:30:00.123")
+    XCTAssertNotNil(result)
+    // Should be the same second (milliseconds discarded at second-level comparison is fine;
+    // verify the date/time component is correct)
+    let expected = utcDate(year: 2026, month: 3, day: 13, hour: 0, minute: 30, second: 0)
+    XCTAssertEqual(result!.timeIntervalSince(expected), 0.123, accuracy: 0.001)
+  }
+
+  func testParseDate_iso8601WithMicroseconds_parsesCorrectly() {
+    // Format: yyyy-MM-dd'T'HH:mm:ss.SSSSSS  (customFormatterMicro, no timezone)
+    let result = DateUtils.parseDate(from: "2026-03-13T00:30:00.123456")
+    XCTAssertNotNil(result)
+    let expected = utcDate(year: 2026, month: 3, day: 13, hour: 0, minute: 30, second: 0)
+    XCTAssertEqual(result!.timeIntervalSince(expected), 0.123456, accuracy: 0.0001)
+  }
+
+  func testParseDate_iso8601WithMillisecondsAndZ_parsesCorrectly() {
+    // Z suffix stripped before customFormatterMs is tried
+    let result = DateUtils.parseDate(from: "2026-03-13T00:30:00.500Z")
+    XCTAssertNotNil(result)
+    let expected = utcDate(year: 2026, month: 3, day: 13, hour: 0, minute: 30, second: 0)
+    XCTAssertEqual(result!.timeIntervalSince(expected), 0.5, accuracy: 0.001)
+  }
+
+  func testParseDate_iso8601WithPositiveOffset_parsesCorrectly() {
+    // e.g. UTC+5:30 → 2026-03-13T06:00:00+05:30 == 2026-03-13T00:30:00Z
+    let result = DateUtils.parseDate(from: "2026-03-13T06:00:00+05:30")
+    XCTAssertNotNil(result)
+    XCTAssertEqual(result, utcDate(year: 2026, month: 3, day: 13, hour: 0, minute: 30))
+  }
+
+  func testParseDate_iso8601WithNegativeOffset_parsesCorrectly() {
+    // UTC-5 → 2026-03-13T05:30:00-05:00 doesn't equal 00:30 UTC,
+    // but 2026-03-12T19:30:00-05:00 == 2026-03-13T00:30:00Z
+    let result = DateUtils.parseDate(from: "2026-03-12T19:30:00-05:00")
+    XCTAssertNotNil(result)
+    XCTAssertEqual(result, utcDate(year: 2026, month: 3, day: 13, hour: 0, minute: 30))
+  }
+
+  func testParseDate_midnight_parsesCorrectly() {
+    let result = DateUtils.parseDate(from: "2026-01-01T00:00:00Z")
+    XCTAssertNotNil(result)
+    XCTAssertEqual(result, utcDate(year: 2026, month: 1, day: 1, hour: 0, minute: 0))
+  }
+
+  func testParseDate_endOfDay_parsesCorrectly() {
+    let result = DateUtils.parseDate(from: "2026-12-31T23:59:59Z")
+    XCTAssertNotNil(result)
+    XCTAssertEqual(result, utcDate(year: 2026, month: 12, day: 31, hour: 23, minute: 59, second: 59))
+  }
+
+  func testParseDate_leapDay_parsesCorrectly() {
+    let result = DateUtils.parseDate(from: "2028-02-29T12:00:00Z")
+    XCTAssertNotNil(result)
+    XCTAssertEqual(result, utcDate(year: 2028, month: 2, day: 29, hour: 12, minute: 0))
+  }
+
+  // MARK: - Invalid / failure cases
+
+  func testParseDate_emptyString_returnsNil() {
+    XCTAssertNil(DateUtils.parseDate(from: ""))
+  }
+
+  func testParseDate_randomText_returnsNil() {
+    XCTAssertNil(DateUtils.parseDate(from: "not-a-date"))
+  }
+
+  func testParseDate_dateOnlyNoTime_returnsNil() {
+    // "2026-03-13" has no time component — none of the formatters match
+    XCTAssertNil(DateUtils.parseDate(from: "2026-03-13"))
+  }
+
+  func testParseDate_invalidMonth_returnsNil() {
+    XCTAssertNil(DateUtils.parseDate(from: "2026-13-01T00:00:00Z"))
+  }
+
+  func testParseDate_invalidDay_returnsNil() {
+    XCTAssertNil(DateUtils.parseDate(from: "2026-03-32T00:00:00Z"))
+  }
+
+  func testParseDate_invalidNonLeapDay_returnsNil() {
+    XCTAssertNil(DateUtils.parseDate(from: "2026-02-29T00:00:00Z"))
+  }
+
+  // MARK: - Consistency between equivalent representations
+
+  func testParseDate_withZAndWithoutTimezone_produceSameUTCInstant() {
+    let withZ    = DateUtils.parseDate(from: "2026-03-13T00:30:00Z")
+    let withoutZ = DateUtils.parseDate(from: "2026-03-13T00:30:00")
+    XCTAssertNotNil(withZ)
+    XCTAssertNotNil(withoutZ)
+    XCTAssertEqual(withZ, withoutZ)
+  }
+
+  func testParseDate_fractionalSecondsZAndPlainZ_produceSameSecond() {
+    let withFrac    = DateUtils.parseDate(from: "2026-03-13T00:30:00.000Z")
+    let withoutFrac = DateUtils.parseDate(from: "2026-03-13T00:30:00Z")
+    XCTAssertNotNil(withFrac)
+    XCTAssertNotNil(withoutFrac)
+    XCTAssertEqual(withFrac, withoutFrac)
+  }
+}
+

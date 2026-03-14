@@ -422,7 +422,14 @@ public class WorkoutPlanManager: NSObject {
 
         // 2. Decode into Models
         let decoder = JSONDecoder()
-        decoder.dateDecodingStrategy = .iso8601
+        decoder.dateDecodingStrategy = .custom { decoder in
+            let container = try decoder.singleValueContainer()
+            let string = try container.decode(String.self)
+            if let date = DateUtils.parseDate(from: string) {
+                return date
+            }
+            throw DecodingError.dataCorruptedError(in: container, debugDescription: "Cannot decode date: \(string)")
+        }
         
         let jsonData = try JSONSerialization.data(withJSONObject: validJsonArray, options: [])
         print("jsonData \(jsonData)")
