@@ -298,7 +298,7 @@ class WorkoutPlanBuilder {
                                                location: location)
                 result.append(IntervalBlock(steps: [step], iterations: 1))
 
-            case "REST":
+            case "REST", "RECOVERY", "WARMUP", "COOLDOWN":
                 var step = IntervalStep(.recovery)
                 step.step.goal  = resolveGoal(measurementUnit: block.measurementUnit,
                                               distance: block.distance,
@@ -396,7 +396,7 @@ class WorkoutPlanBuilder {
         switch type?.uppercased() {
         case "RECOVERY", "REST", "WARMUP", "COOLDOWN":
             return .recovery
-        default:
+        case "INTERVAL", _:
             return .work
         }
     }
