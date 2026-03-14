@@ -1,3 +1,41 @@
+## 0.0.4 — 2026-03-14
+
+### Improvements
+
+#### Workout Scheduling — Broadened Date String Support
+The Swift `JSONDecoder` used inside `WorkoutPlanManager.scheduleWorkouts` previously relied on the `.iso8601` date decoding strategy, which requires a timezone designator (`Z` or `±HH:MM`). Dates passed without a timezone suffix (e.g. `2026-03-13T00:30:00`) caused a decoding failure.
+
+The decoder now uses a custom strategy that delegates to `DateUtils.parseDate`, supporting all previously accepted formats plus bare local-time strings:
+
+| Format | Example |
+|---|---|
+| ISO-8601 with `Z` | `2026-03-13T00:30:00Z` |
+| ISO-8601 with offset | `2026-03-13T06:00:00+05:30` |
+| ISO-8601 with fractional seconds + `Z` | `2026-03-13T00:30:00.000Z` |
+| Milliseconds, no timezone | `2026-03-13T00:30:00.123` |
+| Microseconds, no timezone | `2026-03-13T00:30:00.123456` |
+| Plain seconds, no timezone *(new)* | `2026-03-13T00:30:00` |
+
+Bare timestamps (no timezone) are interpreted as UTC by `DateUtils`.
+
+**Changed in:** `ios/Classes/WorkoutScheduling/WorkoutPlanManager.swift`
+
+---
+
+#### Tests — `DateUtils.parseDate` Unit Tests Added
+18 XCTest cases added to `RunnerTests.swift` covering all supported date string formats, invalid / edge-case inputs, and round-trip consistency checks.
+
+**Changed in:** `example/ios/RunnerTests/RunnerTests.swift`
+
+---
+
+#### Example App — Date Format Test Scenario
+A new **"Date Format Tests"** section has been added to the Push Workouts screen. Tapping the button schedules 4 identical workouts for tomorrow, each with a different `date` string format, allowing end-to-end verification that every accepted format flows through the full Dart → Swift → WorkoutKit pipeline without error.
+
+**Changed in:** `example/lib/workout_push_screen.dart`
+
+---
+
 ## 0.0.3 — 2026-03-13
 
 ### Breaking Changes
