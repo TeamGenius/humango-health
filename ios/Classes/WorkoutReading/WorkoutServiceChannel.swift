@@ -534,7 +534,7 @@ class WorkoutServiceChannel: NSObject, FlutterStreamHandler {
                 await WorkoutRecordStore.shared.markPushed(deviceActivityId: id)
             }
             debugPrint("Read Workouts: ✅ Marked \(ids.count) workout(s) as pushed: \(ids)")
-            WorkoutRecordStore.shared.printAllRecords(context: "after markWorkoutsAsPushed")
+            await WorkoutRecordStore.shared.printAllRecords(context: "after markWorkoutsAsPushed")
             DispatchQueue.main.async {
                 result(["markedCount": ids.count, "deviceActivityIds": ids])
             }
