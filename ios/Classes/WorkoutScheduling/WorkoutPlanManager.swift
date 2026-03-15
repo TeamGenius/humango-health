@@ -310,6 +310,7 @@ public class WorkoutPlanManager: NSObject {
         isoFormatter.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
 
         let now = Date()
+        let startOfToday = Calendar.current.startOfDay(for: now)
         let sevenDaysFromNow = Calendar.current.date(byAdding: .day, value: 7, to: now)!
         
         var validJsonArray: [[String: Any]] = []
@@ -371,7 +372,7 @@ public class WorkoutPlanManager: NSObject {
             }
             
             // Date range check
-            guard let date = workoutDate, date > now, date <= sevenDaysFromNow else {
+            guard let date = workoutDate, date >= startOfToday, date <= sevenDaysFromNow else {
                 let scheduleId = dict["schedule_id"] ?? "N/A"
                 let workoutId = dict["workout_id"] ?? "N/A"
                 print("⏭️ [Humango Health] Schedule \(scheduleId) date outside 7-day window: \(dateStr ?? "nil")")
