@@ -10,7 +10,6 @@ class PermissionManager {
   /// Listen for permission updates explicitly mapped to our Result object
   Stream<HealthKitAuthorizationResult> get permissionStream {
     _permissionStream ??= _eventChannel.receiveBroadcastStream().map((event) {
-      print("Event listen : $event");
       return HealthKitAuthorizationResult.fromMap(
         Map<dynamic, dynamic>.from(event),
       );

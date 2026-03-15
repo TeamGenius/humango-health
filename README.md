@@ -2,7 +2,7 @@
 
 A comprehensive Flutter plugin for integrating iOS HealthKit and WorkoutKit functionalities natively into the Humango platform.
 
-> **Version 0.0.2** — See [CHANGELOG](CHANGELOG.md) for what's new.
+> **Version 0.0.5** — See [CHANGELOG](CHANGELOG.md) for what's new.
 
 ## Table of Contents
 
@@ -1574,8 +1574,11 @@ The plugin provides comprehensive workout reading with real-time monitoring and 
 
 | Method | Description | Use Case |
 |--------|-------------|----------|
-| `readWorkouts(startDate, endDate)` | One-shot fetch | Initial sync, manual refresh |
+| `readWorkouts(startDate, endDate)` | One-shot fetch with dedup filtering | Initial sync, manual refresh |
+| `fetchAllWorkouts(startDate, endDate)` | Unfiltered fetch — bypasses `WorkoutRecordStore` | Audit, re-sync, full snapshot |
 | `startMonitoring(startDate, endDate)` | Live monitoring | Real-time tracking |
+| `markWorkoutsAsPushed(ids)` | Acknowledge successful backend upload | After uploading workouts to your API |
+| `getWorkoutStoreRecords()` | Inspect the native dedup store | Debugging, testing |
 
 ### Fetching Completed Workouts (One-Shot)
 
@@ -1744,6 +1747,58 @@ The workout reading subsystem implements native deduplication:
 | iOS (`WorkoutRecordStore`) | SHA256 hash + byte-level comparison |
 
 Workout scheduling deduplication is handled entirely at the native iOS layer via `ScheduledWorkoutStore` (sorted-key JSON byte comparison). There is no Dart-side storage for scheduling.
+
+### Acknowledging Pushed Workouts
+
+After `readWorkouts()` returns workouts to Flutter and your app successfully uploads them to your backend, call `markWorkoutsAsPushed` to mark them as pushed in the native `WorkoutRecordStore`. Without this, they remain in `pending` state and will be returned again on the next `readWorkouts` call.
+
+```dart
+// After successfully uploading to your backend:
+final ids = rawJsons
+    .map((j) => jsonDecode(j)['deviceActivityId'] as String)
+    .toList();
+
+final count = await workoutManager.markWorkoutsAsPushed(ids);
+print('Marked $count workout(s) as pushed');
+```
+
+### Fetching All Workouts (No Dedup Filter)
+
+Use `fetchAllWorkouts` when you need a complete unfiltered snapshot — every workout in the date range is returned regardless of push history:
+
+```dart
+final all = await workoutManager.fetchAllWorkouts(
+  DateTime.now().subtract(const Duration(days: 30)),
+  endDate: DateTime.now(),
+);
+print('Total workouts in range: ${all.length}');
+```
+
+### Inspecting the Dedup Store
+
+Use `getWorkoutStoreRecords` to inspect every record the native layer has tracked — useful for debugging and verifying push state:
+
+```dart
+final records = await workoutManager.getWorkoutStoreRecords();
+for (final r in records) {
+  print('${r.deviceActivityId}');
+  print('  pushed      : ${r.pushed}');
+  print('  size        : ${r.dataSize} bytes');
+  print('  lastUpdated : ${r.lastUpdated}');
+  print('  firstSeen   : ${r.firstSeen}');
+}
+```
+
+`WorkoutStoreRecord` fields:
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `deviceActivityId` | `String` | HealthKit UUID (`HKWorkout.uuid`) |
+| `dataHash` | `String` | SHA-256 hex of the last serialized payload |
+| `dataSize` | `int` | Byte size of the last serialized payload |
+| `pushed` | `bool` | `true` after `markWorkoutsAsPushed`; `false` while pending |
+| `firstSeen` | `DateTime?` | When this workout ID was first recorded |
+| `lastUpdated` | `DateTime` | Timestamp of the most recent record update |
 
 ---
 

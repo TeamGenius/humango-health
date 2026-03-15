@@ -482,6 +482,7 @@ class RouteService {
             // Delegate background delivery to Manager (API vs Local vs Foreground Stream)
             await BackgroundDeliveryManager.shared.deliverWorkout(jsonString, deviceId: deviceId)
             debugPrint("✅ RouteService: deliverWorkout completed for \(deviceId)")
+            WorkoutRecordStore.shared.printAllRecords(context: "after RouteService push")
             
         } catch {
             debugPrint("❌ RouteService: pushWorkout JSON error: \(error)")

@@ -37,6 +37,12 @@ class WorkoutServiceChannel: NSObject, FlutterStreamHandler {
             handleConfigureBackground(call, result)
         case "setImportPreferences":
             handleSetImportPreferences(call, result)
+        case "markWorkoutsAsPushed":
+            handleMarkWorkoutsAsPushed(call, result)
+        case "fetchAllWorkouts":
+            handleFetchAllWorkouts(call, result)
+        case "getWorkoutStoreRecords":
+            handleGetWorkoutStoreRecords(result)
         case "enterForeground":
             workoutService?.enterForegroundMode()
             result(nil)
@@ -430,6 +436,109 @@ class WorkoutServiceChannel: NSObject, FlutterStreamHandler {
         
         debugPrint("Read Workouts: Import preferences updated - Running: \(running), Cycling: \(cycling), Swimming: \(swimming)")
         result(nil)
+    }
+
+    // MARK: - Fetch All Workouts (no dedup filter)
+
+    /// Returns every workout in the given date range as JSON strings.
+    /// Unlike readWorkouts, this does NOT check WorkoutRecordStore —
+    /// all matching workouts are returned regardless of pushed state.
+    private func handleFetchAllWorkouts(_ call: FlutterMethodCall, _ result: @escaping FlutterResult) {
+        guard let args = call.arguments as? [String: Any],
+              let startISO = args["startDate"] as? String,
+              let startDate = DateUtils.parseDate(from: startISO) else {
+            result(FlutterError(code: "INVALID_ARGS", message: "Missing or invalid startDate", details: nil))
+            return
+        }
+
+        let endDate: Date
+        if let endISO = args["endDate"] as? String,
+           let parsedEndDate = DateUtils.parseDate(from: endISO) {
+            endDate = parsedEndDate
+        } else {
+            endDate = Date()
+        }
+
+        debugPrint("Read Workouts: fetchAllWorkouts - Start: \(startDate), End: \(endDate)")
+
+        Task {
+            do {
+                let workoutsJson = try await fetchAllWorkoutsRaw(startDate: startDate, endDate: endDate)
+                DispatchQueue.main.async {
+                    result(workoutsJson)
+                }
+            } catch {
+                debugPrint("Read Workouts: fetchAllWorkouts error: \(error)")
+                DispatchQueue.main.async {
+                    result(FlutterError(code: "FETCH_ERROR", message: error.localizedDescription, details: nil))
+                }
+            }
+        }
+    }
+
+    private func fetchAllWorkoutsRaw(startDate: Date, endDate: Date) async throws -> [String] {
+        let predicate = HKQuery.predicateForSamples(withStart: startDate, end: endDate, options: [])
+        var workoutsJson: [String] = []
+        var anchor: HKQueryAnchor? = nil
+        var results: HKAnchoredObjectQueryDescriptor<HKWorkout>.Result
+
+        repeat {
+            let anchorDescriptor = HKAnchoredObjectQueryDescriptor(
+                predicates: [.workout(predicate)],
+                anchor: anchor,
+                limit: 100
+            )
+            results = try await anchorDescriptor.result(for: store)
+            anchor = results.newAnchor
+
+            for workout in results.addedSamples {
+                guard workout.endDate > workout.startDate else { continue }
+                if let huWorkout = try? await processWorkout(workout),
+                   let jsonData = huWorkout.toJson(),
+                   let jsonString = String(data: jsonData, encoding: .utf8) {
+                    workoutsJson.append(jsonString)
+                }
+            }
+        } while !results.addedSamples.isEmpty && !results.deletedObjects.isEmpty
+
+        debugPrint("Read Workouts: fetchAllWorkoutsRaw returning \(workoutsJson.count) workout(s)")
+        return workoutsJson
+    }
+
+    // MARK: - Get WorkoutRecordStore Records
+
+    /// Returns all records currently stored in WorkoutRecordStore as a list of maps.
+    private func handleGetWorkoutStoreRecords(_ result: @escaping FlutterResult) {
+        Task {
+            let records = await WorkoutRecordStore.shared.fetchAllRecords()
+            debugPrint("Read Workouts: getWorkoutStoreRecords returning \(records.count) record(s)")
+            DispatchQueue.main.async {
+                result(records)
+            }
+        }
+    }
+
+    // MARK: - Mark Workouts As Pushed
+
+    /// Called by Flutter after successfully sending workouts to the backend.
+    /// Marks each supplied deviceActivityId as pushed=true in WorkoutRecordStore
+    /// so they are excluded from future readWorkouts calls.
+    private func handleMarkWorkoutsAsPushed(_ call: FlutterMethodCall, _ result: @escaping FlutterResult) {
+        guard let ids = call.arguments as? [String], !ids.isEmpty else {
+            result(FlutterError(code: "INVALID_ARGS", message: "Expected a non-empty array of deviceActivityId strings", details: nil))
+            return
+        }
+
+        Task {
+            for id in ids {
+                await WorkoutRecordStore.shared.markPushed(deviceActivityId: id)
+            }
+            debugPrint("Read Workouts: ✅ Marked \(ids.count) workout(s) as pushed: \(ids)")
+            WorkoutRecordStore.shared.printAllRecords(context: "after markWorkoutsAsPushed")
+            DispatchQueue.main.async {
+                result(["markedCount": ids.count, "deviceActivityIds": ids])
+            }
+        }
     }
     
     // MARK: - Auto-Start on App Launch

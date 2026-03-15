@@ -1,3 +1,97 @@
+## 0.0.5 — 2026-03-15
+
+### New Features
+
+#### Workout Reading — `markWorkoutsAsPushed`
+Flutter apps can now explicitly acknowledge that a batch of workouts has been successfully uploaded to the backend. Calling this method marks each `deviceActivityId` as `pushed = true` in the native `WorkoutRecordStore`, so they are excluded from future `readWorkouts` calls. Without this call, workouts remain in `pending` state and would be returned again on the next fetch.
+
+```dart
+final count = await workoutManager.markWorkoutsAsPushed(deviceActivityIds);
+```
+
+**Changed in:** `ios/Classes/WorkoutReading/WorkoutServiceChannel.swift`, `lib/src/managers/workout_read_manager.dart`
+
+---
+
+#### Workout Reading — `fetchAllWorkouts`
+A new unfiltered fetch method that returns every workout in the given date range directly from HealthKit, **bypassing `WorkoutRecordStore` deduplication entirely**. Use this for audit, re-sync, or any scenario where you need a complete snapshot regardless of push history.
+
+```dart
+final all = await workoutManager.fetchAllWorkouts(startDate, endDate: endDate);
+```
+
+**Changed in:** `ios/Classes/WorkoutReading/WorkoutServiceChannel.swift`, `lib/src/managers/workout_read_manager.dart`
+
+---
+
+#### Workout Reading — `getWorkoutStoreRecords`
+Exposes the full contents of the native `WorkoutRecordStore` to Flutter as a typed `List<WorkoutStoreRecord>`. Useful for debugging and testing — shows the pushed/pending state of every workout ID the library has ever seen.
+
+```dart
+final records = await workoutManager.getWorkoutStoreRecords();
+for (final r in records) {
+  print('${r.deviceActivityId} — pushed: ${r.pushed}, size: ${r.dataSize}B');
+}
+```
+
+**New model:** `lib/src/models/workout_store_record.dart` (`WorkoutStoreRecord`)
+
+**Changed in:** `ios/Classes/WorkoutReading/WorkoutServiceChannel.swift`, `lib/src/managers/workout_read_manager.dart`, `lib/humango_health.dart`
+
+---
+
+#### Workout Scheduling — `sport` field validation
+The native JSON decoder previously crashed with an opaque `"The data couldn't be read because it is missing."` platform exception when the top-level `sport` field was absent from the workout JSON. The per-workout validation step now catches this before decoding and returns a clear, actionable error:
+
+```
+status: "validation_error"
+reason: "Missing required field: 'sport'. Must be one of: RUNNING, CYCLING, SWIMMING, STRENGTH"
+```
+
+The rest of the batch continues to be processed normally.
+
+**Changed in:** `ios/Classes/WorkoutScheduling/WorkoutPlanManager.swift`
+
+---
+
+#### Workout Builder — `RECOVERY` block type support
+Top-level blocks of type `"RECOVERY"` are now correctly handled as `.recovery` interval steps, matching the existing Flutter mapping. Previously they fell into the `default` case and were silently skipped with a warning log.
+
+Both `buildIntervalBlocks` and `intervalStepPurpose` now mirror the full Flutter mapping:
+
+| Block type | Purpose |
+|---|---|
+| `REST`, `RECOVERY`, `WARMUP`, `COOLDOWN` | `.recovery` |
+| `INTERVAL` (or any other) | `.work` |
+
+**Changed in:** `ios/Classes/WorkoutScheduling/WorkoutPlanBuilder.swift`
+
+---
+
+#### Debug Logging — `WorkoutRecordStore` snapshot
+A `printAllRecords(context:)` method has been added to `WorkoutRecordStore`. It is called automatically after every `markWorkoutsAsPushed` call and after every `RouteService` background push, printing a full summary table to the console for easy testing:
+
+```
+📋 WorkoutRecordStore [after markWorkoutsAsPushed]: ── ALL RECORDS (3 total) ──
+   ✅ pushed  | id: A1B2C3D4-... | size: 48302B | updated: 2026-03-15T10:22:01Z
+   ⏳ pending | id: X9Y0Z1W2-... | size: 52100B | updated: 2026-03-15T10:21:58Z
+```
+
+**Changed in:** `ios/Classes/WorkoutReading/WorkoutRecordStore.swift`, `ios/Classes/WorkoutReading/WorkoutServiceChannel.swift`, `ios/Classes/WorkoutReading/RouteService.swift`
+
+---
+
+### Bug Fixes
+
+#### Permission Manager — removed noisy debug prints
+Removed two debug `print` statements that were polluting the console during normal operation:
+- `[PermissionManager] 🗑️ Clearing stale permission snapshot (fresh authorization)` from `PermissionManager.swift`
+- `Event listen : { ... }` from `permission_manager.dart`
+
+**Changed in:** `ios/Classes/PermissionManager.swift`, `lib/src/managers/permission_manager.dart`
+
+---
+
 ## 0.0.4 — 2026-03-14
 
 ### Improvements

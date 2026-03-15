@@ -470,7 +470,6 @@ public class PermissionManager {
     }
     
     private func clearAuthSnapshot() {
-        print("[PermissionManager] 🗑️ Clearing stale permission snapshot (fresh authorization)")
         UserDefaults.standard.removeObject(forKey: cacheKey)
     }
 }

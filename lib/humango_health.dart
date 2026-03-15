@@ -28,6 +28,7 @@ export 'src/models/background_delivery_config.dart';
 export 'src/models/workout_read_options.dart';
 export 'src/models/workout_data.dart';
 export 'src/models/quantity_series.dart';
+export 'src/models/workout_store_record.dart';
 
 // Sleep Data Manager & Models
 export 'src/managers/sleep_data_manager.dart';

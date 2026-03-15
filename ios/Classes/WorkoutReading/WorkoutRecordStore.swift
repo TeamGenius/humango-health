@@ -231,6 +231,21 @@ actor WorkoutRecordStore {
         recordsById.removeAll()
         saveToDefaults()
     }
+
+    // MARK: - Debug
+
+    /// Prints a summary table of every record in the store.
+    /// Intended for testing — call after pushing to compare pushed vs pending state.
+    func printAllRecords(context: String = "") {
+        let tag = context.isEmpty ? "WorkoutRecordStore" : "WorkoutRecordStore [\(context)]"
+        let records = recordsById.values.sorted { $0.lastUpdatedISO > $1.lastUpdatedISO }
+        debugPrint("📋 \(tag): ── ALL RECORDS (\(records.count) total) ──────────────────")
+        for rec in records {
+            let status = rec.pushed ? "✅ pushed" : "⏳ pending"
+            debugPrint("   \(status) | id: \(rec.deviceActivityId) | size: \(rec.dataSize)B | updated: \(rec.lastUpdatedISO)")
+        }
+        debugPrint("📋 \(tag): ────────────────────────────────────────────────────")
+    }
 }
 
 

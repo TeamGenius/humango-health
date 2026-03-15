@@ -1775,3 +1775,78 @@ manager.workoutStream.listen((workout) {
 8. Create comprehensive example app
 
 **Your existing Swift code is excellent and production-ready!** The main work is integrating it with Flutter's platform channels and adding the background delivery configuration layer.
+
+---
+
+## `markWorkoutsAsPushed` — Flutter → Native Acknowledgement
+
+### Purpose
+
+After `readWorkouts()` returns workout JSON to Flutter and the Flutter app successfully sends those workouts to its backend, the app **must** call `markWorkoutsAsPushed` to inform the native layer. This permanently marks each workout as pushed in `WorkoutRecordStore` so it is excluded from all future `readWorkouts` calls.
+
+Without this call, the same workouts will be returned again on the next `readWorkouts` invocation (they remain in `⏳ pending` state).
+
+### Dart API
+
+```dart
+/// Call after successfully uploading workouts to your backend.
+/// [deviceActivityIds] — the `deviceActivityId` field from each workout JSON.
+/// Returns the number of IDs marked.
+Future<int> markWorkoutsAsPushed(List<String> deviceActivityIds)
+```
+
+### Usage
+
+```dart
+// 1. Fetch workouts
+final jsonStrings = await workoutManager.readWorkouts(startDate, endDate: endDate);
+
+// 2. Parse and upload to your backend
+final uploaded = <String>[];
+for (final json in jsonStrings) {
+  final workout = jsonDecode(json);
+  final success = await myBackend.upload(workout);
+  if (success) {
+    uploaded.add(workout['deviceActivityId'] as String);
+  }
+}
+
+// 3. Acknowledge back to native so they are excluded next time
+if (uploaded.isNotEmpty) {
+  final count = await workoutManager.markWorkoutsAsPushed(uploaded);
+  debugPrint('Marked $count workout(s) as pushed');
+}
+```
+
+### What Happens Internally
+
+| Step | Description |
+|------|-------------|
+| Flutter calls `markWorkoutsAsPushed([id1, id2, ...])` | Sends array to native via MethodChannel |
+| Native iterates each ID | Calls `WorkoutRecordStore.shared.markPushed(deviceActivityId:)` |
+| Store sets `pushed = true` | Persisted to UserDefaults immediately |
+| Next `readWorkouts` call | `shouldPush()` returns `false` → workout skipped |
+| Returns `{ markedCount: N, deviceActivityIds: [...] }` | Flutter receives count of marked IDs |
+
+### Debug Logging
+
+After every `markWorkoutsAsPushed` call (and after every background push from `RouteService`), the full `WorkoutRecordStore` is printed to the console for easy testing:
+
+```
+📋 WorkoutRecordStore [after markWorkoutsAsPushed]: ── ALL RECORDS (3 total) ──
+   ✅ pushed  | id: A1B2C3D4-... | size: 48302B | updated: 2026-03-15T10:22:01Z
+   ✅ pushed  | id: E5F6G7H8-... | size: 31200B | updated: 2026-03-14T08:10:45Z
+   ⏳ pending | id: X9Y0Z1W2-... | size: 52100B | updated: 2026-03-15T10:21:58Z
+📋 WorkoutRecordStore [after markWorkoutsAsPushed]: ────────────────────────────
+```
+
+The same snapshot is also printed after `RouteService` delivers a workout via the background API:
+
+```
+📋 WorkoutRecordStore [after RouteService push]: ── ALL RECORDS (2 total) ──────
+   ⏳ pending | id: A1B2C3D4-... | size: 48302B | updated: 2026-03-15T09:05:12Z
+   ⏳ pending | id: E5F6G7H8-... | size: 31200B | updated: 2026-03-15T09:04:55Z
+📋 WorkoutRecordStore [after RouteService push]: ──────────────────────────────
+```
+
+> **Note:** `RouteService` leaves records as `⏳ pending` (not `✅ pushed`) because it delivers via the background API — the native side cannot confirm backend receipt. `✅ pushed` is only set when Flutter explicitly calls `markWorkoutsAsPushed` after a confirmed upload.
