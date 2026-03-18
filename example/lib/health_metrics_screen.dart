@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:humango_health/humango_health.dart';
 
@@ -7,7 +8,8 @@ class HealthMetricsScreen extends StatefulWidget {
   State<HealthMetricsScreen> createState() => _HealthMetricsScreenState();
 }
 
-class _HealthMetricsScreenState extends State<HealthMetricsScreen> {
+class _HealthMetricsScreenState extends State<HealthMetricsScreen>
+    with WidgetsBindingObserver {
   final HealthMetricsManager _metricsManager = HealthMetricsManager();
 
   bool _isLoading = false;
@@ -19,10 +21,34 @@ class _HealthMetricsScreenState extends State<HealthMetricsScreen> {
   DateTime? _customStartDate;
   DateTime? _customEndDate;
 
+  bool _hrvMonitoringActive = false;
+  StreamSubscription<Map<String, dynamic>>? _hrvSubscription;
+  String? _lastHrvUpdate;
+
   @override
   void initState() {
     super.initState();
+    WidgetsBinding.instance.addObserver(this);
     _fetchAllMetrics();
+    _metricsManager.isHRVMonitoringActive().then((v) {
+      if (mounted) setState(() => _hrvMonitoringActive = v);
+    });
+    // Subscribe to HRV updates so UI reflects adds/deletions immediately
+    _hrvSubscription = _metricsManager.hrvUpdates.listen(_onHrvUpdate);
+  }
+
+  @override
+  void dispose() {
+    WidgetsBinding.instance.removeObserver(this);
+    _hrvSubscription?.cancel();
+    super.dispose();
+  }
+
+  @override
+  void didChangeAppLifecycleState(AppLifecycleState state) {
+    if (state == AppLifecycleState.resumed) {
+      _fetchAllMetrics();
+    }
   }
 
   DateTime _getStartDate() {
@@ -48,6 +74,39 @@ class _HealthMetricsScreenState extends State<HealthMetricsScreen> {
       return _customEndDate!;
     }
     return DateTime.now();
+  }
+
+  Future<void> _toggleHRVMonitoring() async {
+    if (_hrvMonitoringActive) {
+      await _metricsManager.stopHRVMonitoring();
+      _hrvSubscription?.cancel();
+      _hrvSubscription = null;
+      if (mounted) setState(() {
+        _hrvMonitoringActive = false;
+        _lastHrvUpdate = null;
+      });
+      return;
+    }
+    await _metricsManager.startHRVMonitoring();
+    _hrvSubscription?.cancel();
+    _hrvSubscription = _metricsManager.hrvUpdates.listen(_onHrvUpdate);
+    final pending = await _metricsManager.getPendingHRVUpdates();
+    if (mounted) setState(() {
+      _hrvMonitoringActive = true;
+      if (pending.isNotEmpty) {
+        final total = pending.fold<int>(0, (s, e) => s + ((e['sampleCount'] as int?) ?? 0));
+        _lastHrvUpdate = '$total from background';
+      }
+    });
+  }
+
+  void _onHrvUpdate(Map<String, dynamic> update) {
+    if (!mounted) return;
+    final count = update['sampleCount'] as int? ?? 0;
+    setState(() {
+      _lastHrvUpdate = count == 0 ? 'No HRV data' : '$count HRV sample(s)';
+    });
+    _fetchAllMetrics();
   }
 
   Future<void> _fetchAllMetrics() async {
@@ -257,6 +316,7 @@ class _HealthMetricsScreenState extends State<HealthMetricsScreen> {
       child: ListView(
         padding: const EdgeInsets.all(16),
         children: [
+          _buildHRVAutoReadCard(),
           _buildMetricCard(
             HealthMetricType.heartRateVariabilitySDNN,
             _allMetrics!.hrv,
@@ -312,6 +372,59 @@ class _HealthMetricsScreenState extends State<HealthMetricsScreen> {
             ),
           ],
         ],
+      ),
+    );
+  }
+
+  Widget _buildHRVAutoReadCard() {
+    return Card(
+      margin: const EdgeInsets.only(bottom: 12),
+      color: Colors.purple.shade50,
+      child: Padding(
+        padding: const EdgeInsets.all(16),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Row(
+              children: [
+                Icon(Icons.autorenew, color: Colors.purple.shade700),
+                const SizedBox(width: 12),
+                const Expanded(
+                  child: Text(
+                    'HRV auto-read',
+                    style: TextStyle(
+                      fontWeight: FontWeight.w600,
+                      fontSize: 16,
+                    ),
+                  ),
+                ),
+                Switch(
+                  value: _hrvMonitoringActive,
+                  onChanged: (_) => _toggleHRVMonitoring(),
+                  activeColor: Colors.purple,
+                ),
+              ],
+            ),
+            const SizedBox(height: 4),
+            Text(
+              _hrvMonitoringActive
+                  ? 'Updates when Health app (or Watch) writes new HRV. Works in background and when app is closed.'
+                  : 'Turn on to automatically read HRV when HealthKit is updated.',
+              style: TextStyle(fontSize: 12, color: Colors.grey[700]),
+            ),
+            if (_lastHrvUpdate != null) ...[
+              const SizedBox(height: 8),
+              Text(
+                'Last update: $_lastHrvUpdate',
+                style: TextStyle(
+                  fontSize: 12,
+                  fontWeight: FontWeight.w500,
+                  color: Colors.purple.shade700,
+                ),
+              ),
+            ],
+          ],
+        ),
       ),
     );
   }

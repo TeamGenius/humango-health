@@ -4,8 +4,10 @@
 //
 //  Dart manager for reading health quantity metrics from Apple HealthKit.
 //  Supports: HRV, resting heart rate, body fat %, weight (bodyMass), height
+//  Supports automatic HRV updates in foreground, background, and when app is suspended.
 //
 
+import 'dart:async';
 import 'package:flutter/services.dart';
 import '../models/health_metric_sample.dart';
 
@@ -18,6 +20,10 @@ import '../models/health_metric_sample.dart';
 /// - **Weight** (bodyMass) – in kg
 /// - **Height** – in cm
 ///
+/// HRV auto-read: Call [startHRVMonitoring] to observe HealthKit for new HRV data.
+/// Updates are delivered via [hrvUpdates] stream when in foreground, or via
+/// [getPendingHRVUpdates] after returning from background/suspended.
+///
 /// Example usage:
 /// ```dart
 /// final metricsManager = HealthMetricsManager();
@@ -29,14 +35,19 @@ import '../models/health_metric_sample.dart';
 /// );
 /// print('Average HRV: ${hrvResponse.statistics.average} ms');
 ///
-/// // Get all metrics at once
-/// final all = await metricsManager.getAllMetrics();
-/// print('Weight: ${all.weight?.latestValue} kg');
-/// print('Height: ${all.height?.latestValue} cm');
+/// // Auto-read HRV when Health app (or any source) writes new data
+/// await metricsManager.startHRVMonitoring();
+/// metricsManager.hrvUpdates.listen((update) {
+///   print('New HRV: ${update['samples']}');
+/// });
 /// ```
 class HealthMetricsManager {
   static const MethodChannel _channel = MethodChannel(
     'com.humango.health/metrics',
+  );
+
+  static const EventChannel _hrvEventChannel = EventChannel(
+    'com.humango.health/metrics/hrv_updates',
   );
 
   // ---------------------------------------------------------------------------
@@ -227,6 +238,48 @@ class HealthMetricsManager {
     endDate: endDate,
     limit: limit,
   );
+
+  // ---------------------------------------------------------------------------
+  // HRV automatic updates (background / suspended)
+  // ---------------------------------------------------------------------------
+
+  /// Stream of HRV updates when new data is written to HealthKit.
+  /// Only emits while the app is in foreground and [startHRVMonitoring] is active.
+  /// When the app was in background/suspended, use [getPendingHRVUpdates] after
+  /// resuming to get updates that were collected while away.
+  Stream<Map<String, dynamic>> get hrvUpdates =>
+      _hrvEventChannel.receiveBroadcastStream().cast<Map<dynamic, dynamic>>().map(
+            (m) => Map<String, dynamic>.from(m),
+          );
+
+  /// Start observing HealthKit for new HRV data. Works in foreground, background,
+  /// and when app is suspended (iOS wakes the app briefly when new HRV is saved).
+  /// Call once after user logs in; persists across app launches when user stays logged in.
+  Future<void> startHRVMonitoring() async {
+    await _channel.invokeMethod('startHRVMonitoring');
+  }
+
+  /// Stop HRV observation and background delivery.
+  Future<void> stopHRVMonitoring() async {
+    await _channel.invokeMethod('stopHRVMonitoring');
+  }
+
+  /// Returns HRV updates that were collected while the app was in background or
+  /// suspended. Each element has the same shape as a single [getMetric] response
+  /// (metricType, unit, samples, sampleCount, fetchedAt). Clears the pending list.
+  Future<List<Map<String, dynamic>>> getPendingHRVUpdates() async {
+    final result = await _channel.invokeMethod<List<dynamic>>('getPendingHRVUpdates');
+    if (result == null) return [];
+    return result
+        .map((e) => Map<String, dynamic>.from(e as Map<dynamic, dynamic>))
+        .toList();
+  }
+
+  /// Whether HRV monitoring is currently enabled (started and not stopped).
+  Future<bool> isHRVMonitoringActive() async {
+    final result = await _channel.invokeMethod<bool>('isHRVMonitoringActive');
+    return result ?? false;
+  }
 
   // ---------------------------------------------------------------------------
   // Helpers
