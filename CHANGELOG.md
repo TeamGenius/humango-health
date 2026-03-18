@@ -1,3 +1,23 @@
+## 0.0.6 — 2026-03-18
+
+### New Features
+
+#### Health Metrics — HRV data background fetching
+HRV (Heart Rate Variability) can now be observed automatically in foreground, background, and when the app is suspended. iOS wakes the app briefly when new HRV data is written to HealthKit via `enableBackgroundDelivery`.
+
+**Dart API (`HealthMetricsManager`):**
+- `startHRVMonitoring()` — Start observing HealthKit for new HRV data; persists across app launches.
+- `stopHRVMonitoring()` — Stop HRV observation and background delivery.
+- `hrvUpdates` — Stream of HRV updates (emits while app is in foreground and monitoring is active).
+- `getPendingHRVUpdates()` — Returns HRV updates collected while the app was in background or suspended; clears the pending list after retrieval.
+- `isHRVMonitoringActive()` — Whether HRV monitoring is currently enabled.
+
+**iOS:** `HRVObserverManager` (HKObserverQuery + background delivery) and `HRVStreamHandler` (EventChannel for foreground updates). HRV monitoring auto-starts on app launch when it was previously started (no login gate).
+
+**Changed in:** `ios/Classes/HealthMetrics/HRVObserverManager.swift` (new), `ios/Classes/HealthMetrics/HRVStreamHandler.swift` (new), `ios/Classes/HumangoHealthPlugin.swift`, `lib/src/managers/health_metrics_manager.dart`, `example/lib/health_metrics_screen.dart`
+
+---
+
 ## 0.0.5 — 2026-03-15
 
 ### New Features

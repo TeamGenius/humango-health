@@ -2,7 +2,7 @@
 
 A comprehensive Flutter plugin for integrating iOS HealthKit and WorkoutKit functionalities natively into the Humango platform.
 
-> **Version 0.0.5** — See [CHANGELOG](CHANGELOG.md) for what's new.
+> **Version 0.0.6** — See [CHANGELOG](CHANGELOG.md) for what's new.
 
 ## Table of Contents
 
@@ -30,6 +30,7 @@ A comprehensive Flutter plugin for integrating iOS HealthKit and WorkoutKit func
 | **Workout Scheduling** | Push workouts to Apple Watch via WorkoutKit with native deduplication |
 | **Workout Reading** | Real-time workout monitoring with foreground/background modes |
 | **Sleep Data** | Fetch and monitor sleep analysis with foreground (Descriptor) + background (Observer) monitoring; session-aware delivery via API or local storage |
+| **Health Metrics (HRV)** | One-shot fetch plus automatic HRV updates in foreground, background, and when app is suspended (stream + pending retrieval) |
 | **Background Delivery** | Native iOS background processing with API or local storage delivery (workouts + sleep) |
 | **Native Lifecycle Management** | Centralized iOS app lifecycle detection for automatic mode switching |
 
@@ -53,6 +54,7 @@ A comprehensive Flutter plugin for integrating iOS HealthKit and WorkoutKit func
 │  ├─ WorkoutSchedulingService (WorkoutKit integration)            │
 │  ├─ WorkoutService (HKAnchoredObjectQuery + HKObserverQuery)     │
 │  ├─ SleepDataManager (foreground Descriptor + background Observer)          │
+│  ├─ HRVObserverManager (HRV background delivery + foreground stream)        │
 │  └─ WorkoutRecordStore (deduplication + persistence)             │
 └──────────────────────────┬───────────────────────────────────────┘
                            │
@@ -1920,6 +1922,45 @@ Each `HealthMetricSample` includes:
 | `device` | `HealthMetricDevice?` | Device info (name, model, etc.) |
 | `metadata` | `Map?` | HealthKit metadata dictionary |
 
+### HRV automatic updates (background / suspended)
+
+HRV can be observed automatically so new data is delivered when HealthKit is updated — in foreground via a stream, and in background or when the app is suspended via pending updates.
+
+- **Foreground:** While the app is active and monitoring is started, new HRV samples are emitted on the `hrvUpdates` stream.
+- **Background / suspended:** iOS wakes the app briefly when new HRV is saved. The native layer collects updates; call `getPendingHRVUpdates()` after the app returns to foreground to retrieve and clear them.
+
+Call `startHRVMonitoring()` once (e.g. after user logs in or when entering the health metrics flow). Monitoring persists across app launches and auto-starts on next launch. Use `stopHRVMonitoring()` to disable.
+
+```dart
+final metrics = HealthMetricsManager();
+
+// Start observing (foreground + background + suspended)
+await metrics.startHRVMonitoring();
+
+// Foreground: listen to live updates
+metrics.hrvUpdates.listen((update) {
+  print('New HRV: ${update['samples']}');
+});
+
+// When resuming from background: get updates collected while away
+final pending = await metrics.getPendingHRVUpdates();
+for (final update in pending) {
+  print('Pending HRV: ${update['samples']}');
+}
+
+// Optional: check state, stop when done
+final active = await metrics.isHRVMonitoringActive();
+await metrics.stopHRVMonitoring();
+```
+
+| Method / getter | Description |
+|-----------------|-------------|
+| `startHRVMonitoring()` | Start observing HealthKit for new HRV data; enables background delivery |
+| `stopHRVMonitoring()` | Stop observation and background delivery |
+| `hrvUpdates` | Stream of HRV updates (foreground only) |
+| `getPendingHRVUpdates()` | Returns and clears updates collected in background/suspended |
+| `isHRVMonitoringActive()` | Whether monitoring is currently enabled |
+
 ### Error Handling
 
 ```dart
@@ -1947,6 +1988,7 @@ Health Metrics reading requires HealthKit read permissions for the corresponding
 | Channel | Type | Purpose |
 |---------|------|--------|
 | `com.humango.health/metrics` | MethodChannel | Health metrics queries |
+| `com.humango.health/metrics/hrv_updates` | EventChannel | HRV automatic updates (foreground stream) |
 
 ---
 ## Channel Reference
@@ -1963,6 +2005,7 @@ All communication between Flutter and iOS uses these channels:
 | `com.humango.workouts/read/stream` | EventChannel | Real-time workout updates |
 | `com.humango.health/sleep` | MethodChannel | Sleep data operations |
 | `com.humango.health/metrics` | MethodChannel | Health metrics (HRV, HR, body comp) |
+| `com.humango.health/metrics/hrv_updates` | EventChannel | HRV automatic updates (foreground stream) |
 
 ---
 
