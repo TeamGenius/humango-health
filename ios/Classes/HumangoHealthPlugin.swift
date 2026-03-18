@@ -59,7 +59,7 @@ public class HumangoHealthPlugin: NSObject, FlutterPlugin {
           workoutReadChannel.handle(call, result: result)
       } else if ["scheduleWorkoutsFromFlutter", "clearAppleScheduledWorkouts", "requestAuthorizationForWorkoutPush", "getScheduledWorkouts", "computeWorkoutJsonHash"].contains(call.method) {
           WorkoutPlanManager.shared.handle(call, result: result)
-      } else if ["getSleepData", "startSleepMonitoring", "stopSleepMonitoring", "fetchStoredSleepData", "clearStoredSleepData", "enterSleepForeground", "enterSleepBackground", "configureSleepSession", "getSleepSessionStatus", "resetSleepSession", "configureSleepBackgroundDelivery", "getLocalSleepSessions"].contains(call.method) {
+      } else if ["getSleepData", "startSleepMonitoring", "stopSleepMonitoring", "fetchStoredSleepData", "clearStoredSleepData", "enterSleepForeground", "enterSleepBackground", "configureSleepBackgroundDelivery", "getLocalSleepSessions"].contains(call.method) {
           // Sleep data channel - remap foreground/background methods to avoid conflict with workout methods
           var mappedCall = call
           if call.method == "enterSleepForeground" {

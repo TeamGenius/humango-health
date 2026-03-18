@@ -1,3 +1,39 @@
+## 0.0.8 — 2026-03-19
+
+### Breaking Changes
+
+#### Sleep — Dart session methods removed
+
+`configureSleepSession()`, `getSleepSessionStatus()`, and `resetSleepSession()` have been removed from the Dart `SleepDataManager` API. These were already non-functional stubs that returned `FlutterMethodNotImplemented` since the native `SleepSessionDetector` was removed in 0.0.7. They are now gone from both the Dart layer and the plugin method channel routing.
+
+**Removed from `SleepDataManager` (Dart):**
+- `configureSleepSession({freezeWindowStartHour, freezeWindowEndHour, minimumSleepMinutes, stalenessThresholdMinutes, deepSleepAbsenceWindowMinutes})`
+- `getSleepSessionStatus()`
+- `resetSleepSession()`
+
+**Removed from `HumangoHealthPlugin.swift` routing:**
+- `"configureSleepSession"`, `"getSleepSessionStatus"`, `"resetSleepSession"` removed from the sleep method allowlist
+
+**Migration:** Remove any remaining calls to these methods. Sleep session detection is now fully automatic via the inBed-check pipeline introduced in 0.0.7.
+
+**Changed in:** `lib/src/managers/sleep_data_manager.dart`, `ios/Classes/HumangoHealthPlugin.swift`
+
+---
+
+### Bug Fixes
+
+#### User Session — `autoStartIfConfigured()` not called on runtime login
+
+When `setUserLoggedIn(true)` was called at runtime (i.e. after `HumangoHealthPlugin.register()` had already run), background monitoring never resumed even if API delivery was previously configured in `UserDefaults`. This was because `autoStartIfConfigured()` was only called once during `register()` — if `isLoggedIn` was `false` at that point, the auto-start was skipped and never retried.
+
+**Fix:** `handleSetUserLoginState` now calls `autoStartIfConfigured()` on both `WorkoutServiceChannel` and `SleepDataManager` when `loggedIn = true`. Both methods are idempotent and guard against double-starting.
+
+**Practical impact:** After calling `setUserLoggedIn(true)` at runtime (e.g. after a fresh install where the user logs in for the first time), background monitoring resumes automatically if API delivery was already configured — no extra Flutter call needed.
+
+**Changed in:** `ios/Classes/HumangoHealthPlugin.swift`
+
+---
+
 ## 0.0.7 — 2026-03-18
 
 ### Breaking Changes
