@@ -124,7 +124,16 @@ public class HumangoHealthPlugin: NSObject, FlutterPlugin {
 
       debugPrint("🔐 [HumangoHealth] User login state set to: \(loggedIn), userId=\(UserAuthStateManager.shared.userId ?? "nil")")
 
-      if !loggedIn {
+      if loggedIn {
+          // Re-run autoStart for all subsystems in case this login happened at runtime
+          // (not on a cold launch). If API delivery was previously configured it will
+          // resume immediately; if not, this is a no-op.
+          workoutReadChannel.autoStartIfConfigured()
+          if #available(iOS 14.0, *) {
+              SleepDataManager.shared.autoStartIfConfigured()
+          }
+          // HRV auto-start is not gated on login, but re-running is harmless.
+      } else {
           clearAllDataOnLogout()
       }
 
@@ -157,7 +166,7 @@ public class HumangoHealthPlugin: NSObject, FlutterPlugin {
       HRVObserverManager.shared.stopAndClearAll()
 
       debugPrint("🔐 [HumangoHealth] ✅ All data cleared on logout")
-      
+
   }
 }
 
