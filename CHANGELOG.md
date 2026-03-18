@@ -1,3 +1,141 @@
+## 0.0.7 — 2026-03-18
+
+### Breaking Changes
+
+#### Sleep — Background pipeline rewritten; session detector removed
+
+The `SleepSessionDetector` and its multi-factor freeze-window scoring approach have been removed and replaced with a simpler **inBed-check pipeline** that more reliably handles the Apple Watch's limited sleep-stage writing behaviour.
+
+**Removed from iOS (`SleepDataManager.swift`):**
+- `SleepSessionDetector` — entire class removed
+- `SleepSessionConfig` struct
+- `SleepSessionState` enum
+- `freezeCheckTimer` instance variable
+- `fetchAccumulateAndEvaluate()`, `evaluateAndNotifySessionStatus()`, `notifyFlutterSessionEnded()`
+
+**Removed from method channel (`com.humango.health/sleep`):**
+- `configureSleepSession` — no replacement; detection is now automatic
+- `getSleepSessionStatus` — removed
+- `resetSleepSession` — removed
+
+**New background pipeline (every `HKObserverQuery` trigger):**
+
+```
+HKObserverQuery fires
+  │
+  ├─ guard: user must be logged in
+  │
+  └─ STEP 1: isUserCurrentlyInBed? (FIRST — before any HealthKit fetch)
+       YES → STEP 2–3: compute 6PM window, fetch samples
+              STEP 4: store in local cache
+              → start 15-min re-check timer
+                   Timer fires → isUserCurrentlyInBed?
+                     YES → wait for next HKObserver trigger
+                     NO  → fetch → buildAggregatedPayload → deliver
+       NO  → STEP 2–3: compute 6PM window, fetch samples
+              STEP 4: buildAggregatedPayload → deliver immediately
+```
+
+**New query window:** `6:00 PM previous day → now` (matches humango-mobile's `SleepStatisticsManager`). Replaces the previous sliding 12-hour window.
+
+**New flat payload format — 14 keys, all durations in minutes:**
+
+```json
+{
+  "SOURCE":            "Vinay's Apple Watch",
+  "SOURCE_BUNDLE":     "com.apple.health.XXXXXXXXXXXXXXXX",
+  "TIMEZONE":          "Asia/Kolkata",
+  "TOTAL_SLEEP":       420.0,
+  "SLEEP_IN_BED":      0.0,
+  "SLEEP_LIGHT":       180.0,
+  "SLEEP_DEEP":        60.0,
+  "SLEEP_REM":         120.0,
+  "SLEEP_UNSPECIFIED": 60.0,
+  "SLEEP_AWAKE":       15.0,
+  "BED_TIME":          "2026-03-17T22:30:00.000Z",
+  "WAKE_TIME":         "2026-03-18T06:15:00.000Z",
+  "START_DATE":        "2026-03-17T18:00:00.000Z",
+  "END_DATE":          "2026-03-18T06:30:00.000Z"
+}
+```
+
+`TOTAL_SLEEP = SLEEP_LIGHT + SLEEP_DEEP + SLEEP_REM`. Source winner = source with highest `TOTAL_SLEEP` when multiple sources are present.
+
+**Migration:** Remove any calls to `configureSleepSession()`, `getSleepSessionStatus()`, or `resetSleepSession()` — these no longer exist on the method channel.
+
+**Changed in:** `ios/Classes/SleepData/SleepDataManager.swift` (full rewrite)
+
+---
+
+### New Features
+
+#### Sleep — Remote logging (`SleepRemoteLogger`)
+
+A new **fire-and-forget remote logger** sends a structured JSON event to the Humango logging endpoint at every step of the background sleep pipeline, enabling server-side inspection of background observer activity that is invisible in the Xcode console in production.
+
+- **Endpoint:** `https://humango-api-629346406456.us-central1.run.app/log`
+- **Auto-appended fields on every call:** `platform`, `subsystem`, `dateTime`, `userId`, `appVersion`, `buildNumber`
+- **Log levels:** `debug`, `info`, `warn`, `error`
+- All network errors are non-fatal and never disrupt the sleep pipeline
+
+Every branch of the pipeline emits both a local `debugPrint` and a remote log:
+
+| Step | Level |
+|------|-------|
+| Observer error | `error` |
+| Not logged in (auth guard) | `warn` |
+| Observer fired | `info` |
+| STEP 1: inBed check result | `info` |
+| STEP 2: 6PM window computed | `info` |
+| STEP 3: fetch error / empty / success | `error` / `warn` / `info` |
+| STEP 4-YES: cached + timer started | `info` |
+| Timer fired + re-check result | `info` |
+| Timer: still in bed → wait | `info` |
+| Timer: woke up → deliver | `info` |
+| Payload built (all 14 keys) | `info` |
+| Serialization failure | `error` |
+| Delivering payload | `info` |
+| Pipeline complete (with timing) | `info` |
+
+**New file:** `ios/Classes/SleepData/SleepRemoteLogger.swift`
+
+---
+
+#### User Session — `userId` support
+
+`setUserLoggedIn` now accepts an optional `userId` that is persisted to `UserDefaults` alongside the login flag. `SleepRemoteLogger` automatically attaches this value to every remote log event as `context["userId"]`.
+
+**Dart API change (`UserSessionManager`):**
+
+```dart
+// Before
+await UserSessionManager.setUserLoggedIn(true);
+
+// After — userId optional; supply on login for tagged remote logs
+await UserSessionManager.setUserLoggedIn(true, userId: 'user-abc123');
+```
+
+**Persistence:**
+- `UserDefaults` key `com.humango.health.userId` — set on login, cleared automatically on logout
+
+**Changed in:** `ios/Classes/UserAuthStateManager.swift`, `ios/Classes/HumangoHealthPlugin.swift`, `lib/src/managers/user_session_manager.dart`
+
+---
+
+#### Example app — Background Delivery Test Setup card
+
+A new test card has been added at the top of the **Sleep Data** screen in the example app, enabling one-tap end-to-end testing of the background delivery pipeline:
+
+| Button | Action |
+|--------|--------|
+| **Set Logged In** | `UserSessionManager.setUserLoggedIn(true, userId: ...)` with a configurable test user ID |
+| **Set Logged Out** | `UserSessionManager.setUserLoggedIn(false)` |
+| **Configure Background → Logs API** | `configureSleepBackgroundDelivery(mode: .api, apiURL: logsEndpoint)` — routes sleep payloads to the same server as remote logs |
+
+**Changed in:** `example/lib/sleep_data_screen.dart`
+
+---
+
 ## 0.0.6 — 2026-03-18
 
 ### New Features

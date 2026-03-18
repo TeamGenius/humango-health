@@ -75,6 +75,15 @@ struct SleepSessionState: Codable {
     /// ISO8601 date string of the last deep sleep segment's endDate
     var lastDeepSleepEndDate: String?
     
+    /// ISO8601 date string of the latest inBed segment's endDate (tracks user's time in bed).
+    /// Updated on every sample arrival — Apple Watch updates this live throughout the night.
+    var latestInBedEndDate: String?
+    
+    /// Source bundle identifier of the latest inBed sample.
+    /// Used to distinguish iPhone Sleep app (retroactive, reliable wake signal)
+    /// from Apple Watch (continuous live update, NOT a wake signal).
+    var latestInBedSourceBundle: String?
+    
     /// Whether the session has been finalized (end detected)
     var isFinalized: Bool
     
@@ -92,6 +101,8 @@ struct SleepSessionState: Codable {
         segmentCount: 0,
         hasRecentDeepSleep: false,
         lastDeepSleepEndDate: nil,
+        latestInBedEndDate: nil,
+        latestInBedSourceBundle: nil,
         isFinalized: false,
         finalizedAt: nil,
         sampleUUIDs: []
@@ -187,6 +198,23 @@ class SleepSessionDetector {
             return .active
         }
         
+        // Factor 0: inBed end from a retroactive source (iPhone Sleep app / third-party alarm app).
+        // These sources write the inBed sample AFTER the user dismisses their alarm, so inBed.endDate
+        // is a definitive wake-up time. We bypass the freeze window when this is confirmed.
+        // Apple Watch is explicitly excluded — it updates inBed.endDate continuously throughout
+        // the night (a rolling live value), so its endDate is NOT a reliable wake signal.
+        if let inBedEndStr = state.latestInBedEndDate,
+           let inBedEnd = isoFormatter.date(from: inBedEndStr),
+           !isAppleWatchSource(state.latestInBedSourceBundle),
+           state.totalSleepMinutes >= config.minimumSleepMinutes {
+            let minutesSinceInBedEnd = currentTime.timeIntervalSince(inBedEnd) / 60.0
+            if minutesSinceInBedEnd >= config.stalenessThresholdMinutes {
+                let source = state.latestInBedSourceBundle ?? "unknown"
+                print("🛏️ [SleepDetector] Factor 0: inBed end from retroactive source (\(source)) — confirmed wake \(String(format: "%.0f", minutesSinceInBedEnd))m ago")
+                return .ended(reason: "inBed_end_confirmed_wake, source=\(source), stale_\(String(format: "%.0f", minutesSinceInBedEnd))m")
+            }
+        }
+        
         let isInFreeze = isInFreezeWindow(at: currentTime)
         
         // OUTSIDE freeze window (after 12 PM): auto-finalize any accumulated session
@@ -196,6 +224,15 @@ class SleepSessionDetector {
         
         // INSIDE freeze window: use multi-factor scoring
         return evaluateDuringFreeze(state: state, currentTime: currentTime, latestEndStr: latestEndStr)
+    }
+    
+    /// Returns true if the source bundle belongs to Apple Watch.
+    /// Apple Watch writes inBed as a continuous live segment — its endDate advances
+    /// throughout the night and is NOT a reliable wake-up signal.
+    private func isAppleWatchSource(_ bundle: String?) -> Bool {
+        guard let bundle = bundle else { return false }
+        // Apple Watch Health app bundle identifier
+        return bundle == "com.apple.health.watch" || bundle.contains("watch")
     }
     
     /// Multi-factor evaluation during the freeze window.
@@ -258,9 +295,20 @@ class SleepSessionDetector {
             let endDateStr = sample["endDate"] as? String
             let startDateStr = sample["startDate"] as? String
             
-            // Set session start from first segment
-            if state.sessionStartDate == nil {
-                state.sessionStartDate = startDateStr
+            // Track earliest startDate as session start.
+            // Apple Watch delivers inBed and detailed stage samples in arbitrary order across
+            // observer fires. The inBed.startDate (bed time) is earlier than the first detailed
+            // stage (first sleep stage), so we must keep the minimum, not just the first arrival.
+            if let startStr = startDateStr {
+                if let current = state.sessionStartDate,
+                   let currentDate = isoFormatter.date(from: current),
+                   let newDate = isoFormatter.date(from: startStr) {
+                    if newDate < currentDate {
+                        state.sessionStartDate = startStr
+                    }
+                } else {
+                    state.sessionStartDate = startStr
+                }
             }
             
             // Track latest segment end
@@ -283,7 +331,24 @@ class SleepSessionDetector {
             case "awake":
                 state.totalAwakeMinutes += durationMinutes
             case "inBed":
-                break // Don't count inBed
+                // Track latest inBed endDate and its source on every sample arrival.
+                // Apple Watch updates inBed continuously throughout the night (endDate advances live).
+                // iPhone Sleep app writes inBed retroactively after the user dismisses their alarm.
+                // We keep the latest endDate so evaluateSession() can use it as a Factor 0 wake signal.
+                if let endStr = endDateStr {
+                    let shouldUpdate: Bool
+                    if let currentInBed = state.latestInBedEndDate,
+                       let currentDate = isoFormatter.date(from: currentInBed),
+                       let newDate = isoFormatter.date(from: endStr) {
+                        shouldUpdate = newDate > currentDate
+                    } else {
+                        shouldUpdate = true
+                    }
+                    if shouldUpdate {
+                        state.latestInBedEndDate = endStr
+                        state.latestInBedSourceBundle = sample["sourceBundle"] as? String
+                    }
+                }
             default:
                 state.totalSleepMinutes += durationMinutes
             }

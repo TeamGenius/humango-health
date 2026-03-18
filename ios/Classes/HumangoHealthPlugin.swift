@@ -114,7 +114,15 @@ public class HumangoHealthPlugin: NSObject, FlutterPlugin {
       }
 
       UserAuthStateManager.shared.isLoggedIn = loggedIn
-      print("🔐 [HumangoHealth] User login state set to: \(loggedIn)")
+
+      // Persist userId alongside login state so background loggers can attach it
+      if loggedIn, let userId = args["userId"] as? String {
+          UserAuthStateManager.shared.userId = userId
+      } else if !loggedIn {
+          UserAuthStateManager.shared.userId = nil
+      }
+
+      debugPrint("🔐 [HumangoHealth] User login state set to: \(loggedIn), userId=\(UserAuthStateManager.shared.userId ?? "nil")")
 
       if !loggedIn {
           clearAllDataOnLogout()
@@ -124,7 +132,7 @@ public class HumangoHealthPlugin: NSObject, FlutterPlugin {
   }
 
   private func clearAllDataOnLogout() {
-      print("🔐 [HumangoHealth] User logged out — stopping all monitors and clearing data")
+      debugPrint("🔐 [HumangoHealth] User logged out — stopping all monitors and clearing data")
 
       // Stop workout monitoring and clear background delivery config
       workoutReadChannel.stopAndClearAll()
@@ -145,7 +153,11 @@ public class HumangoHealthPlugin: NSObject, FlutterPlugin {
       // Stop HRV observer and clear pending data
       HRVObserverManager.shared.stopAndClearAll()
 
-      print("🔐 [HumangoHealth] ✅ All data cleared on logout")
+      // Stop HRV observer and clear pending data
+      HRVObserverManager.shared.stopAndClearAll()
+
+      debugPrint("🔐 [HumangoHealth] ✅ All data cleared on logout")
+      
   }
 }
 

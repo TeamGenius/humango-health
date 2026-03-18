@@ -45,9 +45,14 @@ class UserSessionManager {
   /// Sets the user's logged-in state.
   ///
   /// Pass `true` after login and `false` after logout.
+  /// Optionally supply a [userId] on login so the native side can attach it
+  /// to remote log events (e.g. `SleepRemoteLogger`).
   /// On `false`, all background monitoring stops and stored data is cleared
   /// immediately on the native side.
-  static Future<void> setUserLoggedIn(bool loggedIn) async {
-    await _channel.invokeMethod('setUserLoginState', {'loggedIn': loggedIn});
+  static Future<void> setUserLoggedIn(bool loggedIn, {String? userId}) async {
+    await _channel.invokeMethod('setUserLoginState', {
+      'loggedIn': loggedIn,
+      if (loggedIn && userId != null) 'userId': userId,
+    });
   }
 }

@@ -2,7 +2,7 @@
 
 A comprehensive Flutter plugin for integrating iOS HealthKit and WorkoutKit functionalities natively into the Humango platform.
 
-> **Version 0.0.6** — See [CHANGELOG](CHANGELOG.md) for what's new.
+> **Version 0.0.7** — See [CHANGELOG](CHANGELOG.md) for what's new.
 
 ## Table of Contents
 
@@ -29,7 +29,7 @@ A comprehensive Flutter plugin for integrating iOS HealthKit and WorkoutKit func
 | **Permission Handling** | Request, verify, and continuously monitor HealthKit permissions |
 | **Workout Scheduling** | Push workouts to Apple Watch via WorkoutKit with native deduplication |
 | **Workout Reading** | Real-time workout monitoring with foreground/background modes |
-| **Sleep Data** | Fetch and monitor sleep analysis with foreground (Descriptor) + background (Observer) monitoring; session-aware delivery via API or local storage |
+| **Sleep Data** | Fetch and monitor sleep analysis with foreground (Descriptor) + background (Observer) monitoring; inBed-check pipeline with 15-min re-check timer; flat aggregated payload delivered via API or local storage |
 | **Health Metrics (HRV)** | One-shot fetch plus automatic HRV updates in foreground, background, and when app is suspended (stream + pending retrieval) |
 | **Background Delivery** | Native iOS background processing with API or local storage delivery (workouts + sleep) |
 | **Native Lifecycle Management** | Centralized iOS app lifecycle detection for automatic mode switching |
@@ -53,8 +53,9 @@ A comprehensive Flutter plugin for integrating iOS HealthKit and WorkoutKit func
 │  ├─ PermissionManager (HealthKit authorization)                  │
 │  ├─ WorkoutSchedulingService (WorkoutKit integration)            │
 │  ├─ WorkoutService (HKAnchoredObjectQuery + HKObserverQuery)     │
-│  ├─ SleepDataManager (foreground Descriptor + background Observer)          │
-│  ├─ HRVObserverManager (HRV background delivery + foreground stream)        │
+│  ├─ SleepDataManager (foreground Descriptor + background Observer + inBed pipeline) │
+│  ├─ SleepRemoteLogger (fire-and-forget remote logging for background pipeline)      │
+│  ├─ HRVObserverManager (HRV background delivery + foreground stream)               │
 │  └─ WorkoutRecordStore (deduplication + persistence)             │
 └──────────────────────────┬───────────────────────────────────────┘
                            │
@@ -143,7 +144,7 @@ Calling `setUserLoggedIn(false)` immediately and synchronously clears all of the
 | **Workout background config** | API URL, headers, delivery mode (`BackgroundDeliveryManager`) |
 | **Sleep background config** | API URL, headers, delivery mode, pending local sleep data (`SleepBackgroundDeliveryManager`) |
 | **Stored sleep data** | Sleep samples stored in `UserDefaults` during background monitoring |
-| **Sleep session state** | In-progress session accumulation state (`SleepSessionDetector`) |
+| **Sleep in-bed timer** | Cancels any pending 15-min re-check timer (`SleepDataManager.inBedCheckTimer`) |
 | **Scheduled workouts** | All workouts in `ScheduledWorkoutStore` (Apple Watch scheduled workouts cache) |
 | **Workout record store** | All push-dedup tracking records in `WorkoutRecordStore` |
 | **Active monitors** | All running `HKObserverQuery` and `HKAnchoredObjectQueryDescriptor` tasks stopped |
@@ -157,8 +158,8 @@ Calling `setUserLoggedIn(false)` immediately and synchronously clears all of the
 ```dart
 import 'package:humango_health/humango_health.dart';
 
-// After a successful login
-await UserSessionManager.setUserLoggedIn(true);
+// After a successful login — optionally supply userId for tagged remote log events
+await UserSessionManager.setUserLoggedIn(true, userId: 'user-abc123');
 
 // After logout
 await UserSessionManager.setUserLoggedIn(false);
@@ -172,9 +173,9 @@ import 'package:humango_health/humango_health.dart';
 class AuthService {
   /// Call after a successful login (token received, user identity confirmed).
   Future<void> onLoginSuccess() async {
-    // 1. Mark the user as logged in — unblocks background observer auto-start
-    //    on the next app launch if API delivery is already configured.
-    await UserSessionManager.setUserLoggedIn(true);
+    // 1. Mark the user as logged in — unblocks background observer auto-start.
+    //    Supply userId so background loggers can tag remote log events with this user.
+    await UserSessionManager.setUserLoggedIn(true, userId: userId);
 
     // 2. Configure background delivery (starts monitoring immediately)
     await WorkoutReadManager().configureBackgroundDelivery(
@@ -1134,47 +1135,42 @@ void initWorkoutMonitoring() async {
 Sleep delivery differs from workouts because sleep data is **accumulated over the entire night** and delivered as a **single finalized session** (not individual samples).
 
 **API mode:**
-- **Foreground:** `HKAnchoredObjectQueryDescriptor` receives live samples → accumulated into session state
-- **Background:** `HKObserverQuery` fires → samples fetched and accumulated into session state
-- **In both cases:** When the session detector determines sleep has ended (multi-factor scoring), the complete session is POSTed to your API
-- Falls back to local storage on API failure (non-2xx or network error)
+- **Foreground:** `HKAnchoredObjectQueryDescriptor` detects new samples → accumulated in background cache
+- **Background:** `HKObserverQuery` fires → **inBed check runs first**; if user is in bed, data is cached and a 15-min re-check timer starts; once the user has woken, the aggregated flat payload is built and POSTed
 
 **localStorage mode:**
-- **Foreground:** `HKAnchoredObjectQueryDescriptor` acculates samples into session state
-- **Background:** `HKObserverQuery` fires → samples accumulated into session state
-- Finalized sessions stored locally; retrieve via `getLocalSleepSessions()`
+- **Foreground:** `HKAnchoredObjectQueryDescriptor` accumulates samples into local cache
+- **Background:** `HKObserverQuery` fires → same inBed-check pipeline → on wakeup, payload is stored in `UserDefaults`; retrieve via `getLocalSleepSessions()`
 
-#### Sleep Session Detection
+#### Background Pipeline (new inBed-check flow)
 
-Before configuring delivery, you can optionally configure the **session detection algorithm** (freeze-window approach). The detector uses multi-factor scoring to determine when a sleep session has ended:
+Every `HKObserverQuery` trigger follows this exact flow:
 
-| Parameter | Default | Description |
-|-----------|---------|-------------|
-| `freezeWindowStartHour` | 0 (midnight) | Local hour when freeze window opens |
-| `freezeWindowEndHour` | 12 (noon) | Local hour when freeze window closes |
-| `minimumSleepMinutes` | 240 (4 hrs) | Minimum sleep time before session can end |
-| `stalenessThresholdMinutes` | 60 | Minutes of no new data → stale |
-| `deepSleepAbsenceWindowMinutes` | 90 | No deep sleep in this window = late sleep |
-
-**Session ends when ALL conditions are met (during freeze window):**
-1. Minimum 4 hours of accumulated sleep
-2. No deep sleep in the last 90 minutes
-3. No new segments for ≥ 60 minutes (staleness)
-4. Current time is within the freeze window (12 AM – 12 PM)
-
-**After freeze window ends (12 PM):** session is auto-finalized.
-
-```dart
-void configureSleepDetection() async {
-  await sleepManager.configureSleepSession(
-    freezeWindowStartHour: 0,
-    freezeWindowEndHour: 12,
-    minimumSleepMinutes: 240,
-    stalenessThresholdMinutes: 60,
-    deepSleepAbsenceWindowMinutes: 90,
-  );
-}
 ```
+HKObserverQuery fires
+  │
+  ├─ guard: user must be logged in (UserAuthStateManager.isLoggedIn)
+  │
+  └─ STEP 1: isUserCurrentlyInBed?  ← checked FIRST, before any HealthKit fetch
+       │
+       YES ─→ STEP 2: compute 6PM window (6:00 PM previous day → now)
+              STEP 3: fetch HealthKit samples
+              STEP 4: store in local cache
+              → start 15-min re-check timer
+                   Timer fires → isUserCurrentlyInBed?
+                     YES → wait for next HKObserver trigger (still sleeping)
+                     NO  → fetch → buildAggregatedPayload → deliver
+       │
+       NO  ─→ STEP 2: compute 6PM window
+              STEP 3: fetch HealthKit samples
+              STEP 4: buildAggregatedPayload → deliver immediately
+```
+
+**Query window:** `6:00 PM previous day → now` — matches humango-mobile's `SleepStatisticsManager`.
+
+**Source selection:** when multiple sources contributed data, the source with the highest `TOTAL_SLEEP` (Core + Deep + REM minutes) wins.
+
+**Remote logging:** `SleepRemoteLogger` POSTs a structured JSON event to the Humango logging endpoint at every step of the pipeline (both local `debugPrint` and remote log). The `userId` from `UserAuthStateManager` is attached to every event automatically.
 
 #### Configuring Sleep API Mode
 
@@ -1199,41 +1195,35 @@ void configureSleepAPIDelivery() async {
 
 **What happens natively:**
 - Configuration persists to `UserDefaults`, surviving app restarts.
-- Foreground uses `HKAnchoredObjectQueryDescriptor`, background uses `HKObserverQuery` — **same query strategy as localStorage mode**.
-- Samples accumulate into on-device session state (both foreground and background paths).
-- When the sleep session ends (multi-factor scoring or freeze window expiry), the **complete session** is POSTed to your API.
-- On HTTP 2xx: success logged.
+- Foreground uses `HKAnchoredObjectQueryDescriptor`, background uses `HKObserverQuery`.
+- On every HKObserver trigger, the inBed-check pipeline runs (see above). When the user has woken, `buildAggregatedPayload()` produces a flat 14-key payload which is POSTed to your API.
+- On HTTP 2xx: success logged remotely via `SleepRemoteLogger`.
 - On failure: session data falls back to local storage.
 
 #### Sleep API Request Payload
 
-When a sleep session is finalized, the following JSON is POSTed:
+When the pipeline determines the user has woken, the following **flat** JSON is POSTed. All duration values are in **minutes**:
 
 ```json
 {
-  "samples": [ ... ],
-  "sampleCount": 19,
-  "totalSleepSeconds": 28260.0,
-  "totalSleepMinutes": 471.0,
-  "totalSleepHours": 7.85,
-  "stageTotals": {
-    "asleepCore": { "seconds": 16800.0, "minutes": 280.0 },
-    "asleepDeep": { "seconds": 3600.0, "minutes": 60.0 },
-    "asleepREM": { "seconds": 7860.0, "minutes": 131.0 },
-    "awake": { "seconds": 900.0, "minutes": 15.0 },
-    "inBed": { "seconds": 0.0, "minutes": 0.0 },
-    "asleepUnspecified": { "seconds": 0.0, "minutes": 0.0 }
-  },
-  "fetchedFrom": "2026-03-04T22:00:00.000Z",
-  "fetchedTo": "2026-03-05T06:00:00.000Z",
-  "reason": "sleep>=471m, no_deep_sleep_recently, stale_65m",
-  "segmentCount": 19,
-  "isFinalized": true,
-  "finalizedAt": "2026-03-05T06:05:00.000Z",
-  "sessionStartDate": "2026-03-04T22:00:00.000Z",
-  "latestSegmentEndDate": "2026-03-05T05:00:00.000Z"
+  "SOURCE":            "Vinay's Apple Watch",
+  "SOURCE_BUNDLE":     "com.apple.health.XXXXXXXXXXXXXXXX",
+  "TIMEZONE":          "Asia/Kolkata",
+  "TOTAL_SLEEP":       420.0,
+  "SLEEP_IN_BED":      0.0,
+  "SLEEP_LIGHT":       180.0,
+  "SLEEP_DEEP":        60.0,
+  "SLEEP_REM":         120.0,
+  "SLEEP_UNSPECIFIED": 60.0,
+  "SLEEP_AWAKE":       15.0,
+  "BED_TIME":          "2026-03-17T22:30:00.000Z",
+  "WAKE_TIME":         "2026-03-18T06:15:00.000Z",
+  "START_DATE":        "2026-03-17T18:00:00.000Z",
+  "END_DATE":          "2026-03-18T06:30:00.000Z"
 }
 ```
+
+`TOTAL_SLEEP = SLEEP_LIGHT + SLEEP_DEEP + SLEEP_REM` (excludes inBed, awake, and unspecified). `SLEEP_IN_BED` will be `0.0` for Apple Watch users — the Watch does not write `inBed` samples.
 
 #### Configuring Sleep Local Storage Mode
 
@@ -1264,16 +1254,9 @@ void fetchPendingSleepSessions() async {
 
 ```dart
 void initSleepMonitoring() async {
-  // 1. Configure session detection parameters (optional — defaults are sensible)
-  await sleepManager.configureSleepSession(
-    freezeWindowStartHour: 0,
-    freezeWindowEndHour: 12,
-    minimumSleepMinutes: 240,
-  );
-
-  // 2. Configure API delivery mode — monitoring starts automatically.
-  // On subsequent app launches, monitoring auto-starts from UserDefaults config
-  // with a 12h lookback window.
+  // Configure API delivery mode — monitoring starts automatically.
+  // Session detection is now automatic (inBed-check pipeline) — no
+  // configureSleepSession() call is needed.
   await sleepManager.configureSleepBackgroundDelivery(
     SleepBackgroundDeliveryConfig(
       mode: SleepBackgroundDeliveryMode.api,
@@ -1313,7 +1296,7 @@ void initAllHealthMonitoring(String authToken) async {
   );
 
   // ── Sleep API delivery (auto-starts monitoring) ──
-  await sleepManager.configureSleepSession();
+  // No configureSleepSession() needed — detection is automatic (inBed-check pipeline).
   await sleepManager.configureSleepBackgroundDelivery(
     SleepBackgroundDeliveryConfig(
       mode: SleepBackgroundDeliveryMode.api,
@@ -2004,6 +1987,7 @@ All communication between Flutter and iOS uses these channels:
 | `com.humango.workouts/read` | MethodChannel | Workout reading |
 | `com.humango.workouts/read/stream` | EventChannel | Real-time workout updates |
 | `com.humango.health/sleep` | MethodChannel | Sleep data operations |
+| `com.humango.health/session` | MethodChannel | User login/logout state (`setUserLoginState`) |
 | `com.humango.health/metrics` | MethodChannel | Health metrics (HRV, HR, body comp) |
 | `com.humango.health/metrics/hrv_updates` | EventChannel | HRV automatic updates (foreground stream) |
 

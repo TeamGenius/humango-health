@@ -16,7 +16,8 @@ import Foundation
 class UserAuthStateManager {
     static let shared = UserAuthStateManager()
 
-    private let key = "com.humango.health.userLoggedIn"
+    private let loggedInKey = "com.humango.health.userLoggedIn"
+    private let userIdKey   = "com.humango.health.userId"
 
     private init() {}
 
@@ -25,9 +26,24 @@ class UserAuthStateManager {
     /// Defaults to `false` on fresh install — no background monitoring starts until
     /// Flutter explicitly calls `setUserLoggedIn(true)` after a successful login.
     var isLoggedIn: Bool {
-        get { UserDefaults.standard.bool(forKey: key) }
+        get { UserDefaults.standard.bool(forKey: loggedInKey) }
         set {
-            UserDefaults.standard.set(newValue, forKey: key)
+            UserDefaults.standard.set(newValue, forKey: loggedInKey)
+            UserDefaults.standard.synchronize()
+        }
+    }
+
+    /// The authenticated user's ID, persisted across app launches.
+    /// Set this alongside `isLoggedIn = true` after a successful login so that
+    /// background logging can attach the userId to every remote log event.
+    var userId: String? {
+        get { UserDefaults.standard.string(forKey: userIdKey) }
+        set {
+            if let id = newValue {
+                UserDefaults.standard.set(id, forKey: userIdKey)
+            } else {
+                UserDefaults.standard.removeObject(forKey: userIdKey)
+            }
             UserDefaults.standard.synchronize()
         }
     }

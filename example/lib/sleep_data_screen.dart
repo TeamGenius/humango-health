@@ -23,6 +23,14 @@ class _SleepDataScreenState extends State<SleepDataScreen> {
   // Live monitoring state
   bool _isMonitoring = false;
 
+  // ── Test Setup ────────────────────────────────────────────────────────────
+  static const _logsApiUrl =
+      'https://humango-api-629346406456.us-central1.run.app/log';
+  final _userIdController =
+      TextEditingController(text: 'test-user-001');
+  String? _sessionStatus;
+  String? _bgConfigStatus;
+
   @override
   void initState() {
     super.initState();
@@ -37,7 +45,43 @@ class _SleepDataScreenState extends State<SleepDataScreen> {
     if (_isMonitoring) {
       _sleepManager.stopMonitoring();
     }
+    _userIdController.dispose();
     super.dispose();
+  }
+
+  // ── Test helpers ─────────────────────────────────────────────────────────
+
+  Future<void> _setUserLoggedIn(bool loggedIn) async {
+    final userId = _userIdController.text.trim();
+    try {
+      await UserSessionManager.setUserLoggedIn(
+        loggedIn,
+        userId: loggedIn && userId.isNotEmpty ? userId : null,
+      );
+      setState(() {
+        _sessionStatus = loggedIn
+            ? '✅ Logged in as "$userId"'
+            : '🔒 Logged out — monitoring stopped & data cleared';
+      });
+    } catch (e) {
+      setState(() => _sessionStatus = '❌ Error: $e');
+    }
+  }
+
+  Future<void> _configureBgDelivery() async {
+    try {
+      final result = await _sleepManager.configureSleepBackgroundDelivery(
+        SleepBackgroundDeliveryConfig(
+          mode: SleepBackgroundDeliveryMode.api,
+          apiURL: _logsApiUrl,
+        ),
+      );
+      setState(() {
+        _bgConfigStatus = '✅ Configured: ${result['mode'] ?? 'api'} → $_logsApiUrl';
+      });
+    } catch (e) {
+      setState(() => _bgConfigStatus = '❌ Error: $e');
+    }
   }
 
   DateTime _getStartDate() {
@@ -237,10 +281,105 @@ class _SleepDataScreenState extends State<SleepDataScreen> {
       ),
       body: Column(
         children: [
+          _buildTestSetupCard(),
           _buildDateRangeSelector(),
           if (_isMonitoring) _buildMonitoringBanner(),
           Expanded(child: _buildBody()),
         ],
+      ),
+    );
+  }
+
+  // ── Test Setup Card ───────────────────────────────────────────────────────
+
+  Widget _buildTestSetupCard() {
+    return Card(
+      margin: const EdgeInsets.fromLTRB(8, 8, 8, 0),
+      color: Colors.indigo.shade50,
+      child: Padding(
+        padding: const EdgeInsets.all(12),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            const Text(
+              '🧪 Background Delivery Test Setup',
+              style: TextStyle(fontWeight: FontWeight.bold, fontSize: 13),
+            ),
+            const SizedBox(height: 8),
+            TextField(
+              controller: _userIdController,
+              decoration: const InputDecoration(
+                labelText: 'Test User ID',
+                border: OutlineInputBorder(),
+                isDense: true,
+                contentPadding:
+                    EdgeInsets.symmetric(horizontal: 10, vertical: 8),
+              ),
+              style: const TextStyle(fontSize: 13),
+            ),
+            const SizedBox(height: 8),
+            Row(
+              children: [
+                Expanded(
+                  child: FilledButton.icon(
+                    icon: const Icon(Icons.login, size: 16),
+                    label: const Text('Set Logged In'),
+                    onPressed: () => _setUserLoggedIn(true),
+                    style: FilledButton.styleFrom(
+                      backgroundColor: Colors.green,
+                      padding: const EdgeInsets.symmetric(vertical: 6),
+                    ),
+                  ),
+                ),
+                const SizedBox(width: 8),
+                Expanded(
+                  child: FilledButton.icon(
+                    icon: const Icon(Icons.logout, size: 16),
+                    label: const Text('Set Logged Out'),
+                    onPressed: () => _setUserLoggedIn(false),
+                    style: FilledButton.styleFrom(
+                      backgroundColor: Colors.red,
+                      padding: const EdgeInsets.symmetric(vertical: 6),
+                    ),
+                  ),
+                ),
+              ],
+            ),
+            if (_sessionStatus != null) ...[                
+              const SizedBox(height: 4),
+              Text(
+                _sessionStatus!,
+                style: const TextStyle(fontSize: 11, color: Colors.indigo),
+              ),
+            ],
+            const SizedBox(height: 8),
+            SizedBox(
+              width: double.infinity,
+              child: FilledButton.icon(
+                icon: const Icon(Icons.cloud_upload, size: 16),
+                label: const Text('Configure Background → Logs API'),
+                onPressed: _configureBgDelivery,
+                style: FilledButton.styleFrom(
+                  backgroundColor: Colors.indigo,
+                  padding: const EdgeInsets.symmetric(vertical: 6),
+                ),
+              ),
+            ),
+            if (_bgConfigStatus != null) ...[                
+              const SizedBox(height: 4),
+              Text(
+                _bgConfigStatus!,
+                style: const TextStyle(fontSize: 11, color: Colors.indigo),
+              ),
+            ],
+            const SizedBox(height: 4),
+            Text(
+              'API: $_logsApiUrl',
+              style: TextStyle(fontSize: 10, color: Colors.grey.shade600),
+              overflow: TextOverflow.ellipsis,
+            ),
+          ],
+        ),
       ),
     );
   }

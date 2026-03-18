@@ -1,0 +1,667 @@
+{
+  "schedule_id": "8de52c5d-0d04-4db7-8045-208c01cac282",
+  "zone_target": "NEUROPOWER",
+  "brick_summaries": [],
+  "id": 19949,
+  "workout_chart": [
+    {
+      "value": 106.5,
+      "intensity": 50,
+      "sport": "CYCLING",
+      "duration": 300
+    },
+    {
+      "value": 128,
+      "intensity": 60,
+      "sport": "CYCLING",
+      "duration": 30
+    },
+    {
+      "value": 149,
+      "intensity": 70,
+      "sport": "CYCLING",
+      "duration": 30
+    },
+    {
+      "value": 170,
+      "intensity": 80,
+      "sport": "CYCLING",
+      "duration": 30
+    },
+    {
+      "value": 192,
+      "intensity": 90,
+      "sport": "CYCLING",
+      "duration": 30
+    },
+    {
+      "value": 149,
+      "intensity": 70,
+      "sport": "CYCLING",
+      "duration": 60
+    },
+    {
+      "value": 352,
+      "intensity": 165,
+      "sport": "CYCLING",
+      "duration": 5
+    },
+    {
+      "value": 117,
+      "intensity": 55,
+      "sport": "CYCLING",
+      "duration": 195
+    },
+    {
+      "value": 149,
+      "intensity": 70,
+      "sport": "CYCLING",
+      "duration": 60
+    },
+    {
+      "value": 352,
+      "intensity": 165,
+      "sport": "CYCLING",
+      "duration": 5
+    },
+    {
+      "value": 117,
+      "intensity": 55,
+      "sport": "CYCLING",
+      "duration": 195
+    },
+    {
+      "value": 149,
+      "intensity": 70,
+      "sport": "CYCLING",
+      "duration": 60
+    },
+    {
+      "value": 352,
+      "intensity": 165,
+      "sport": "CYCLING",
+      "duration": 5
+    },
+    {
+      "value": 117,
+      "intensity": 55,
+      "sport": "CYCLING",
+      "duration": 195
+    },
+    [
+      {
+        "value": 352,
+        "intensity": 165,
+        "sport": "CYCLING",
+        "duration": 15
+      },
+      {
+        "value": 106,
+        "intensity": 50,
+        "sport": "CYCLING",
+        "duration": 45
+      },
+      {
+        "value": 352,
+        "intensity": 165,
+        "sport": "CYCLING",
+        "duration": 15
+      },
+      {
+        "value": 106,
+        "intensity": 50,
+        "sport": "CYCLING",
+        "duration": 45
+      },
+      {
+        "value": 352,
+        "intensity": 165,
+        "sport": "CYCLING",
+        "duration": 15
+      },
+      {
+        "value": 106,
+        "intensity": 50,
+        "sport": "CYCLING",
+        "duration": 45
+      },
+      {
+        "value": 352,
+        "intensity": 165,
+        "sport": "CYCLING",
+        "duration": 15
+      },
+      {
+        "value": 106,
+        "intensity": 50,
+        "sport": "CYCLING",
+        "duration": 45
+      },
+      {
+        "value": 352,
+        "intensity": 165,
+        "sport": "CYCLING",
+        "duration": 15
+      },
+      {
+        "value": 106,
+        "intensity": 50,
+        "sport": "CYCLING",
+        "duration": 45
+      }
+    ],
+    [
+      {
+        "value": 288.5,
+        "intensity": 135,
+        "sport": "CYCLING",
+        "duration": 60
+      },
+      {
+        "value": 106,
+        "intensity": 50,
+        "sport": "CYCLING",
+        "duration": 120
+      }
+    ],
+    {
+      "value": 206.5,
+      "intensity": 96,
+      "sport": "CYCLING",
+      "duration": 600
+    },
+    {
+      "value": 106.5,
+      "intensity": 50,
+      "sport": "CYCLING",
+      "duration": 600
+    }
+  ],
+  "sport": "CYCLING",
+  "average_intensity": 80,
+  "index": 0,
+  "distance": 18381,
+  "duration": 2880,
+  "training_load": 50,
+  "summary": {
+    "form": false,
+    "name": "\"I Hate Coach Pav\" Intervals",
+    "sport": "CYCLING",
+    "measurement_unit": "second",
+    "tags": "",
+    "test_workout": false,
+    "zone_unit": "POWER",
+    "description": {
+      "general": "The Goal Of This Session: is to improve maximal power output, mainly targeting the anaerobic system\n\n20 minute warm-up\n\n15 sec hard 45 sec easy\n1 min hard 2 min easy\n10 min FTP\n\nDuring the hard part your RPE should be 8 or above, and max means maximum sustainable for the time, use prescribed power as a guide only (turn ERG mode off). Cadence of a normal and comfortable amount so gear appropriately. During the recovery parts reduce all resistance and spin legs. Don’t worry about Zones during this session.\n\n10 minute cool-down"
+    },
+    "index_max": 4,
+    "brick": false
+  },
+  "tiz": [
+    1830,
+    240,
+    30,
+    630,
+    0,
+    60,
+    90
+  ],
+  "workout_id": 232550,
+  "duration_ri_adjusted": 2209.05,
+  "date": "2026-03-10T08:26:30Z",
+  "distance_ri_adjusted": 0,
+  "priority": 0,
+  "blocks": [
+    {
+      "description": "Welcome to my workout!   Drinking fluids will be important &amp;, depending on how well you&apos;ve fuelled before, you might consider some carbohydrates in your bottle.  Use cadence targets as a suggestion only, aim to have a comfortable cadence and perhaps increase during recovery periods.",
+      "sport": "CYCLING",
+      "cadence_min": 85,
+      "cadence_max": 85,
+      "target_range": {
+        "low": 85,
+        "high": 128
+      },
+      "measurement_unit": "second",
+      "type": "WARMUP",
+      "zone_unit": "POWER",
+      "training_load": 2,
+      "zone_target": {
+        "range": {
+          "focus_min_range": 40,
+          "focus_max_range": 60
+        }
+      },
+      "duration": 300,
+      "distance": 1596,
+      "equipment_type": ""
+    },
+    {
+      "description": "Let's get you warmed up!!",
+      "sport": "CYCLING",
+      "cadence_min": 85,
+      "cadence_max": 85,
+      "target_range": {
+        "low": 123,
+        "high": 133
+      },
+      "measurement_unit": "second",
+      "type": "INTERVAL",
+      "zone_unit": "POWER",
+      "training_load": 0,
+      "zone_target": {
+        "range": {
+          "focus_min_range": 60,
+          "focus_max_range": 60
+        }
+      },
+      "duration": 30,
+      "distance": 183,
+      "equipment_type": ""
+    },
+    {
+      "description": "Another step",
+      "sport": "CYCLING",
+      "cadence_min": 85,
+      "cadence_max": 85,
+      "target_range": {
+        "low": 144,
+        "high": 154
+      },
+      "measurement_unit": "second",
+      "type": "INTERVAL",
+      "zone_unit": "POWER",
+      "training_load": 0,
+      "zone_target": {
+        "range": {
+          "focus_min_range": 70,
+          "focus_max_range": 70
+        }
+      },
+      "duration": 30,
+      "distance": 203,
+      "equipment_type": ""
+    },
+    {
+      "description": "Nearly there!!",
+      "sport": "CYCLING",
+      "cadence_min": 85,
+      "cadence_max": 85,
+      "target_range": {
+        "low": 165,
+        "high": 175
+      },
+      "measurement_unit": "second",
+      "type": "INTERVAL",
+      "zone_unit": "POWER",
+      "training_load": 0,
+      "zone_target": {
+        "range": {
+          "focus_min_range": 80,
+          "focus_max_range": 80
+        }
+      },
+      "duration": 30,
+      "distance": 217,
+      "equipment_type": ""
+    },
+    {
+      "description": "Last one :)",
+      "sport": "CYCLING",
+      "cadence_min": 85,
+      "cadence_max": 85,
+      "target_range": {
+        "low": 187,
+        "high": 197
+      },
+      "measurement_unit": "second",
+      "type": "INTERVAL",
+      "zone_unit": "POWER",
+      "training_load": 0,
+      "zone_target": {
+        "range": {
+          "focus_min_range": 90,
+          "focus_max_range": 90
+        }
+      },
+      "duration": 30,
+      "distance": 233,
+      "equipment_type": ""
+    },
+    {
+      "sport": "CYCLING",
+      "cadence_min": 85,
+      "cadence_max": 85,
+      "target_range": {
+        "low": 144,
+        "high": 154
+      },
+      "measurement_unit": "second",
+      "type": "INTERVAL",
+      "zone_unit": "POWER",
+      "training_load": 0,
+      "zone_target": {
+        "range": {
+          "focus_min_range": 70,
+          "focus_max_range": 70
+        }
+      },
+      "duration": 60,
+      "distance": 405,
+      "equipment_type": ""
+    },
+    {
+      "zone_unit": "POWER",
+      "distance": 52,
+      "measurement_unit": "second",
+      "sport": "CYCLING",
+      "equipment_type": "",
+      "duration": 5,
+      "target_range": {
+        "low": 321,
+        "high": 383
+      },
+      "description": "Maximum effort!! ",
+      "training_load": 0,
+      "type": "INTERVAL",
+      "zone_target": {
+        "zone": "NEUROPOWER"
+      }
+    },
+    {
+      "description": "Easy now - press lap on your device to move onto the next step",
+      "sport": "CYCLING",
+      "cadence_min": 85,
+      "cadence_max": 85,
+      "target_range": {
+        "low": 112,
+        "high": 122
+      },
+      "measurement_unit": "second",
+      "type": "INTERVAL",
+      "zone_unit": "POWER",
+      "training_load": 1,
+      "zone_target": {
+        "range": {
+          "focus_min_range": 55,
+          "focus_max_range": 55
+        }
+      },
+      "duration": 195,
+      "distance": 1121,
+      "equipment_type": ""
+    },
+    {
+      "sport": "CYCLING",
+      "cadence_min": 85,
+      "cadence_max": 85,
+      "target_range": {
+        "low": 144,
+        "high": 154
+      },
+      "measurement_unit": "second",
+      "type": "INTERVAL",
+      "zone_unit": "POWER",
+      "training_load": 0,
+      "zone_target": {
+        "range": {
+          "focus_min_range": 70,
+          "focus_max_range": 70
+        }
+      },
+      "duration": 60,
+      "distance": 405,
+      "equipment_type": ""
+    },
+    {
+      "zone_unit": "POWER",
+      "distance": 52,
+      "measurement_unit": "second",
+      "sport": "CYCLING",
+      "equipment_type": "",
+      "duration": 5,
+      "target_range": {
+        "low": 321,
+        "high": 383
+      },
+      "description": "Maximum effort!! ",
+      "training_load": 0,
+      "type": "INTERVAL",
+      "zone_target": {
+        "zone": "NEUROPOWER"
+      }
+    },
+    {
+      "description": "Easy now - press lap on your device to move onto the next step",
+      "sport": "CYCLING",
+      "cadence_min": 85,
+      "cadence_max": 85,
+      "target_range": {
+        "low": 112,
+        "high": 122
+      },
+      "measurement_unit": "second",
+      "type": "INTERVAL",
+      "zone_unit": "POWER",
+      "training_load": 1,
+      "zone_target": {
+        "range": {
+          "focus_min_range": 55,
+          "focus_max_range": 55
+        }
+      },
+      "duration": 195,
+      "distance": 1121,
+      "equipment_type": ""
+    },
+    {
+      "sport": "CYCLING",
+      "cadence_min": 85,
+      "cadence_max": 85,
+      "target_range": {
+        "low": 144,
+        "high": 154
+      },
+      "measurement_unit": "second",
+      "type": "INTERVAL",
+      "zone_unit": "POWER",
+      "training_load": 0,
+      "zone_target": {
+        "range": {
+          "focus_min_range": 70,
+          "focus_max_range": 70
+        }
+      },
+      "duration": 60,
+      "distance": 405,
+      "equipment_type": ""
+    },
+    {
+      "zone_unit": "POWER",
+      "distance": 52,
+      "measurement_unit": "second",
+      "sport": "CYCLING",
+      "equipment_type": "",
+      "duration": 5,
+      "target_range": {
+        "low": 321,
+        "high": 383
+      },
+      "description": "Maximum effort!! ",
+      "training_load": 0,
+      "type": "INTERVAL",
+      "zone_target": {
+        "zone": "NEUROPOWER"
+      }
+    },
+    {
+      "description": "Easy now - press lap on your device to move onto the next step",
+      "sport": "CYCLING",
+      "cadence_min": 85,
+      "cadence_max": 85,
+      "target_range": {
+        "low": 112,
+        "high": 122
+      },
+      "measurement_unit": "second",
+      "type": "INTERVAL",
+      "zone_unit": "POWER",
+      "training_load": 1,
+      "zone_target": {
+        "range": {
+          "focus_min_range": 55,
+          "focus_max_range": 55
+        }
+      },
+      "duration": 195,
+      "distance": 1121,
+      "equipment_type": ""
+    },
+    {
+      "repeat": 5,
+      "blocks": [
+        {
+          "description": "Go, go, go!!! ",
+          "sport": "CYCLING",
+          "cadence_min": 100,
+          "cadence_max": 100,
+          "target_range": {
+            "low": 321,
+            "high": 383
+          },
+          "measurement_unit": "second",
+          "type": "INTERVAL",
+          "zone_unit": "POWER",
+          "training_load": 1,
+          "zone_target": {
+            "zone": "NEUROPOWER"
+          },
+          "duration": 15,
+          "distance": 155,
+          "equipment_type": ""
+        },
+        {
+          "description": "Aaaand... relax. Try to keep your cadence higher here as it will promote recovery.",
+          "sport": "CYCLING",
+          "cadence_min": 85,
+          "cadence_max": 85,
+          "target_range": {
+            "low": 101,
+            "high": 111
+          },
+          "measurement_unit": "second",
+          "type": "RECOVERY",
+          "zone_unit": "POWER",
+          "training_load": 0,
+          "zone_target": {
+            "range": {
+              "focus_min_range": 50,
+              "focus_max_range": 50
+            }
+          },
+          "duration": 45,
+          "distance": 239,
+          "equipment_type": ""
+        }
+      ],
+      "training_load": 1,
+      "type": "REPEAT",
+      "distance": 1970,
+      "duration": 300
+    },
+    {
+      "repeat": 1,
+      "blocks": [
+        {
+          "description": "GO, GO, GO...!",
+          "sport": "CYCLING",
+          "cadence_min": 90,
+          "cadence_max": 90,
+          "target_range": {
+            "low": 257,
+            "high": 320
+          },
+          "measurement_unit": "second",
+          "type": "INTERVAL",
+          "zone_unit": "POWER",
+          "training_load": 3,
+          "zone_target": {
+            "zone": "ANAEROBIC"
+          },
+          "duration": 60,
+          "distance": 577,
+          "equipment_type": ""
+        },
+        {
+          "description": "Again, time to relax. Have a drink and keep those legs spinning! ",
+          "sport": "CYCLING",
+          "cadence_min": 85,
+          "cadence_max": 85,
+          "target_range": {
+            "low": 101,
+            "high": 111
+          },
+          "measurement_unit": "second",
+          "type": "RECOVERY",
+          "zone_unit": "POWER",
+          "training_load": 0,
+          "zone_target": {
+            "range": {
+              "focus_min_range": 50,
+              "focus_max_range": 50
+            }
+          },
+          "duration": 120,
+          "distance": 638,
+          "equipment_type": ""
+        }
+      ],
+      "training_load": 4,
+      "type": "REPEAT",
+      "distance": 1215,
+      "duration": 180
+    },
+    {
+      "description": "Last effort of the day! It will be hard, but you can make it!",
+      "sport": "CYCLING",
+      "cadence_min": 90,
+      "cadence_max": 90,
+      "target_range": {
+        "low": 191,
+        "high": 222
+      },
+      "measurement_unit": "second",
+      "type": "INTERVAL",
+      "zone_unit": "POWER",
+      "training_load": 15,
+      "zone_target": {
+        "zone": "THRESHOLD"
+      },
+      "duration": 600,
+      "distance": 4839,
+      "equipment_type": ""
+    },
+    {
+      "description": "Congrats!! You have completed the &quot;I Hate Coach Pav&quot; Intervals - press lap to finish the cool-down, once you are ready",
+      "sport": "CYCLING",
+      "cadence_min": 85,
+      "cadence_max": 85,
+      "target_range": {
+        "low": 85,
+        "high": 128
+      },
+      "measurement_unit": "second",
+      "type": "COOLDOWN",
+      "zone_unit": "POWER",
+      "training_load": 4,
+      "zone_target": {
+        "range": {
+          "focus_min_range": 40,
+          "focus_max_range": 60
+        }
+      },
+      "duration": 600,
+      "distance": 3191,
+      "equipment_type": ""
+    }
+  ]
+}
