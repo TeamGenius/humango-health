@@ -6,6 +6,12 @@ Demonstrates how to use the humango_health plugin.
 
 This example app demonstrates:
 
+### Integration pattern (client contract)
+
+- **[`HealthSyncCoordinator`](lib/health_sync_coordinator.dart)** — Single place for `UserSessionManager` + idempotent `configureBackgroundDelivery` (workouts → local storage) and `configureSleepBackgroundDelivery` (sleep → logs API). Call **Set Logged In** on the Sleep tab to run the same flow a production app would run after auth.
+- **Tabs** subscribe to library streams (`workoutStream`, permission stream, HRV) or one-shot APIs; they do **not** duplicate background configuration.
+- **Other apps:** follow the plugin’s **[Client app integration guide](../docs/client_app_integration_guide.md)** (same pattern in your codebase); semantics: [`client_integration_contract.md`](../docs/client_integration_contract.md).
+
 ### Permission Management
 - Request and verify HealthKit permissions
 - Handle permission denials with deep-link to Settings
@@ -16,9 +22,7 @@ This example app demonstrates:
 - View scheduled workouts
 
 ### Activity Read (Tab 2)
-- Read workout data from HealthKit
-- Configure background delivery
-- Monitor workouts in real-time
+- One-shot fetch and live `workoutStream` monitoring (background config via coordinator)
 
 ### Sleep Data (Tab 3)
 - Fetch sleep data from the last 24 hours

@@ -44,10 +44,14 @@ class BackgroundDeliveryManager {
     }
     
     func configure(mode: BackgroundDeliveryMode, apiURL: URL?, headers: [String: String]) async {
+        if self.mode == mode, self.apiURL == apiURL, self.headers == headers {
+            debugPrint("📦 BackgroundDeliveryManager: configure skipped — unchanged")
+            return
+        }
         self.mode = mode
         self.apiURL = apiURL
         self.headers = headers
-        
+
         UserDefaults.standard.set(mode.rawValue, forKey: "HumangoDeliveryMode")
         UserDefaults.standard.set(apiURL, forKey: "HumangoDeliveryURL")
         UserDefaults.standard.set(headers, forKey: "HumangoDeliveryHeaders")

@@ -1,3 +1,17 @@
+## 0.0.9 — 2026-03-19
+
+### Improvements
+
+- **Idempotent background delivery configure (iOS):** `BackgroundDeliveryManager.configure` (workouts) and `SleepBackgroundDeliveryManager.configure` (sleep) return early when mode, API URL, and headers are unchanged — safe to call again after login or when rebuilding config; updated headers (e.g. new token) still persist.
+
+### Documentation
+
+- **[README.md](README.md)** — consumer integration (guide + contract links, docs index).
+- **[docs/client_integration_contract.md](docs/client_integration_contract.md)** & **[docs/client_app_integration_guide.md](docs/client_app_integration_guide.md)** — contract + consolidated host-app guide (cross-linked).
+- **Example app** — [`HealthSyncCoordinator`](example/lib/health_sync_coordinator.dart) pattern (`Selector`, shared managers, HRV subscription fix).
+
+---
+
 ## 0.0.8 — 2026-03-19
 
 ### Breaking Changes

@@ -1,5 +1,7 @@
 import 'package:flutter/material.dart';
+import 'package:provider/provider.dart';
 import 'package:humango_health/humango_health.dart';
+import 'health_sync_coordinator.dart';
 
 class SleepDataScreen extends StatefulWidget {
   const SleepDataScreen({super.key});
@@ -9,7 +11,8 @@ class SleepDataScreen extends StatefulWidget {
 }
 
 class _SleepDataScreenState extends State<SleepDataScreen> {
-  final SleepDataManager _sleepManager = SleepDataManager();
+  SleepDataManager get _sleepManager =>
+      context.read<HealthSyncCoordinator>().sleep;
 
   SleepDataResponse? _sleepData;
   bool _isLoading = false;
@@ -24,12 +27,8 @@ class _SleepDataScreenState extends State<SleepDataScreen> {
   bool _isMonitoring = false;
 
   // ── Test Setup ────────────────────────────────────────────────────────────
-  static const _logsApiUrl =
-      'https://humango-api-629346406456.us-central1.run.app/log';
   final _userIdController =
       TextEditingController(text: 'test-user-001');
-  String? _sessionStatus;
-  String? _bgConfigStatus;
 
   @override
   void initState() {
@@ -37,7 +36,9 @@ class _SleepDataScreenState extends State<SleepDataScreen> {
     // Note: App lifecycle (foreground/background) is now handled automatically
     // by native iOS AppLifecycleManager - no need to manually call
     // enterForeground/enterBackground from Flutter.
-    _fetchSleepData();
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (mounted) _fetchSleepData();
+    });
   }
 
   @override
@@ -53,35 +54,17 @@ class _SleepDataScreenState extends State<SleepDataScreen> {
 
   Future<void> _setUserLoggedIn(bool loggedIn) async {
     final userId = _userIdController.text.trim();
-    try {
-      await UserSessionManager.setUserLoggedIn(
-        loggedIn,
-        userId: loggedIn && userId.isNotEmpty ? userId : null,
-      );
-      setState(() {
-        _sessionStatus = loggedIn
-            ? '✅ Logged in as "$userId"'
-            : '🔒 Logged out — monitoring stopped & data cleared';
-      });
-    } catch (e) {
-      setState(() => _sessionStatus = '❌ Error: $e');
-    }
+    final coordinator = context.read<HealthSyncCoordinator>();
+    await coordinator.setUserLoggedIn(
+      loggedIn: loggedIn,
+      userId: userId.isNotEmpty ? userId : null,
+      configureBackground: loggedIn,
+    );
   }
 
+  /// Idempotent; same as after login.
   Future<void> _configureBgDelivery() async {
-    try {
-      final result = await _sleepManager.configureSleepBackgroundDelivery(
-        SleepBackgroundDeliveryConfig(
-          mode: SleepBackgroundDeliveryMode.api,
-          apiURL: _logsApiUrl,
-        ),
-      );
-      setState(() {
-        _bgConfigStatus = '✅ Configured: ${result['mode'] ?? 'api'} → $_logsApiUrl';
-      });
-    } catch (e) {
-      setState(() => _bgConfigStatus = '❌ Error: $e');
-    }
+    await context.read<HealthSyncCoordinator>().ensureBackgroundDeliveryConfigured();
   }
 
   DateTime _getStartDate() {
@@ -345,38 +328,66 @@ class _SleepDataScreenState extends State<SleepDataScreen> {
                 ),
               ],
             ),
-            if (_sessionStatus != null) ...[                
-              const SizedBox(height: 4),
-              Text(
-                _sessionStatus!,
-                style: const TextStyle(fontSize: 11, color: Colors.indigo),
-              ),
-            ],
-            const SizedBox(height: 8),
-            SizedBox(
-              width: double.infinity,
-              child: FilledButton.icon(
-                icon: const Icon(Icons.cloud_upload, size: 16),
-                label: const Text('Configure Background → Logs API'),
-                onPressed: _configureBgDelivery,
-                style: FilledButton.styleFrom(
-                  backgroundColor: Colors.indigo,
-                  padding: const EdgeInsets.symmetric(vertical: 6),
-                ),
-              ),
-            ),
-            if (_bgConfigStatus != null) ...[                
-              const SizedBox(height: 4),
-              Text(
-                _bgConfigStatus!,
-                style: const TextStyle(fontSize: 11, color: Colors.indigo),
-              ),
-            ],
-            const SizedBox(height: 4),
-            Text(
-              'API: $_logsApiUrl',
-              style: TextStyle(fontSize: 10, color: Colors.grey.shade600),
-              overflow: TextOverflow.ellipsis,
+            Consumer<HealthSyncCoordinator>(
+              builder: (context, coordinator, _) {
+                final session = coordinator.sessionStatus;
+                final bg = coordinator.backgroundDeliveryStatus;
+                final err = coordinator.lastError;
+                return Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    if (session != null) ...[
+                      const SizedBox(height: 4),
+                      Text(
+                        session,
+                        style: const TextStyle(
+                          fontSize: 11,
+                          color: Colors.indigo,
+                        ),
+                      ),
+                    ],
+                    const SizedBox(height: 8),
+                    SizedBox(
+                      width: double.infinity,
+                      child: FilledButton.icon(
+                        icon: const Icon(Icons.cloud_upload, size: 16),
+                        label: const Text('Re-apply background config (idempotent)'),
+                        onPressed: _configureBgDelivery,
+                        style: FilledButton.styleFrom(
+                          backgroundColor: Colors.indigo,
+                          padding: const EdgeInsets.symmetric(vertical: 6),
+                        ),
+                      ),
+                    ),
+                    if (bg != null) ...[
+                      const SizedBox(height: 4),
+                      Text(
+                        bg,
+                        style: const TextStyle(
+                          fontSize: 11,
+                          color: Colors.indigo,
+                        ),
+                      ),
+                    ],
+                    if (err != null) ...[
+                      const SizedBox(height: 4),
+                      Text(
+                        err,
+                        style: const TextStyle(fontSize: 11, color: Colors.red),
+                      ),
+                    ],
+                    const SizedBox(height: 4),
+                    Text(
+                      'Sleep API: ${HealthSyncCoordinator.defaultSleepLogsApiUrl}',
+                      style: TextStyle(
+                        fontSize: 10,
+                        color: Colors.grey.shade600,
+                      ),
+                      overflow: TextOverflow.ellipsis,
+                    ),
+                  ],
+                );
+              },
             ),
           ],
         ),

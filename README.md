@@ -2,11 +2,13 @@
 
 A comprehensive Flutter plugin for integrating iOS HealthKit and WorkoutKit functionalities natively into the Humango platform.
 
-> **Version 0.0.8** — See [CHANGELOG](CHANGELOG.md) for what's new.
+> **Version 0.0.9** — See [CHANGELOG](CHANGELOG.md) for what's new.
 
 ## Table of Contents
 
 - [Features](#features)
+- [Consumer app integration](#consumer-app-integration)
+- [Documentation](#documentation)
 - [Architecture Overview](#architecture-overview)
 - [Requirements](#requirements)
 - [User Session Management](#user-session-management)
@@ -33,6 +35,27 @@ A comprehensive Flutter plugin for integrating iOS HealthKit and WorkoutKit func
 | **Health Metrics (HRV)** | One-shot fetch plus automatic HRV updates in foreground, background, and when app is suspended (stream + pending retrieval) |
 | **Background Delivery** | Native iOS background processing with API or local storage delivery (workouts + sleep) |
 | **Native Lifecycle Management** | Centralized iOS app lifecycle detection for automatic mode switching |
+
+## Consumer app integration
+
+The plugin **reads HealthKit on the device** and **pushes** updates via streams (and optional background HTTP). Host apps **subscribe** and **configure** session/background delivery—see **[Client app integration guide](docs/client_app_integration_guide.md)** for the coordinator pattern and **[Client integration contract](docs/client_integration_contract.md)** for semantics.
+
+Use **streams** and **one-shot** reads for catch-up after login—not a repeating poll for data the library already observes. Configure `configureBackgroundDelivery` / sleep delivery **once** after auth (idempotent; safe on token refresh). The [`example`](example/) app demonstrates this via [`HealthSyncCoordinator`](example/lib/health_sync_coordinator.dart).
+
+## Documentation
+
+Subsystem reference (under `docs/`):
+
+| Document | Topic |
+|----------|--------|
+| [client_app_integration_guide.md](docs/client_app_integration_guide.md) | **Consolidated guide for host apps** (coordinator, checklist, example map) |
+| [client_integration_contract.md](docs/client_integration_contract.md) | **Client ↔ library contract** (streams, polling, envelopes) |
+| [activity_reading.md](docs/activity_reading.md) | Workout reading & monitoring |
+| [sleep_data.md](docs/sleep_data.md) | Sleep fetch & monitoring |
+| [permissions_management.md](docs/permissions_management.md) | HealthKit permissions |
+| [health_data_reading.md](docs/health_data_reading.md) | General health data reading |
+| [workout_scheduling.md](docs/workout_scheduling.md) | Push workouts to Apple Watch |
+| [workout_scheduling_errors.md](docs/workout_scheduling_errors.md) | Scheduling errors |
 
 ## Architecture Overview
 

@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 import 'package:url_launcher/url_launcher.dart';
 import 'health_permissions_provider.dart';
+import 'health_sync_coordinator.dart';
 import 'workout_push_screen.dart' as workouts;
 import 'workout_read_screen.dart' as readworkouts;
 import 'sleep_data_screen.dart' as sleep;
@@ -13,6 +14,7 @@ void main() {
     MultiProvider(
       providers: [
         ChangeNotifierProvider(create: (_) => HealthPermissionsProvider()),
+        ChangeNotifierProvider(create: (_) => HealthSyncCoordinator()),
       ],
       child: const MyApp(),
     ),
@@ -92,26 +94,26 @@ class HealthPermissionsScreen extends StatelessWidget {
       appBar: AppBar(title: const Text('Humango Health Permissions')),
       body: Padding(
         padding: const EdgeInsets.all(16.0),
-        child: Consumer<HealthPermissionsProvider>(
-          builder: (context, provider, child) {
-            // Check for denied and optionally show dialog
-            // NOTE: In production you might want to debounce this or
-            // show it based on explicit user action rather than on every rebuild.
-            WidgetsBinding.instance.addPostFrameCallback((_) {
-              if (provider.hasAnyDenied) {
-                // To avoid spamming dialogs, you might use a shared preference or state flag.
-                // For this example we just log it to avoid endless loops on rebuilds.
-                print("Permissions Denied Detected!");
-              }
-            });
+        child: Selector<HealthPermissionsProvider,
+            (bool, String, Map<HealthDataType, PermissionStatus>)>(
+          selector: (_, p) => (
+            p.isAuthorized,
+            p.streamError,
+            p.statuses,
+          ),
+          builder: (context, data, child) {
+            final isAuthorized = data.$1;
+            final streamError = data.$2;
+            final statuses = data.$3;
 
             return Column(
               crossAxisAlignment: CrossAxisAlignment.stretch,
               children: [
                 ElevatedButton(
                   onPressed: () async {
-                    await provider.verifyPermissions();
-                    if (provider.hasAnyDenied && context.mounted) {
+                    final perm = context.read<HealthPermissionsProvider>();
+                    await perm.verifyPermissions();
+                    if (perm.hasAnyDenied && context.mounted) {
                       _showPermissionDeniedDialog(context);
                     }
                   },
@@ -119,13 +121,14 @@ class HealthPermissionsScreen extends StatelessWidget {
                 ),
                 const SizedBox(height: 16),
                 ElevatedButton(
-                  onPressed: () => provider.requestPermissions(),
+                  onPressed: () =>
+                      context.read<HealthPermissionsProvider>().requestPermissions(),
                   child: const Text('Request Permissions'),
                 ),
-                if (provider.streamError.isNotEmpty) ...[
+                if (streamError.isNotEmpty) ...[
                   const SizedBox(height: 16),
                   Text(
-                    provider.streamError,
+                    streamError,
                     style: const TextStyle(color: Colors.red),
                   ),
                 ],
@@ -143,8 +146,8 @@ class HealthPermissionsScreen extends StatelessWidget {
                       ),
                     ),
                     Icon(
-                      provider.isAuthorized ? Icons.check_circle : Icons.cancel,
-                      color: provider.isAuthorized ? Colors.green : Colors.red,
+                      isAuthorized ? Icons.check_circle : Icons.cancel,
+                      color: isAuthorized ? Colors.green : Colors.red,
                     ),
                   ],
                 ),
@@ -178,12 +181,12 @@ class HealthPermissionsScreen extends StatelessWidget {
                 ),
                 const SizedBox(height: 8),
                 Expanded(
-                  child: provider.statuses.isEmpty
+                  child: statuses.isEmpty
                       ? const Center(child: Text("No statuses loaded yet."))
                       : ListView.builder(
-                          itemCount: provider.statuses.length,
+                          itemCount: statuses.length,
                           itemBuilder: (context, index) {
-                            final entry = provider.statuses.entries.elementAt(
+                            final entry = statuses.entries.elementAt(
                               index,
                             );
                             final type = entry.key;

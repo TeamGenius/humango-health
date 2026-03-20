@@ -70,10 +70,15 @@ class SleepBackgroundDeliveryManager {
     ///   - apiURL: The API endpoint URL (required for `.api` mode)
     ///   - headers: Custom HTTP headers for API requests (e.g., auth tokens)
     func configure(mode: SleepBackgroundDeliveryMode, apiURL: URL?, headers: [String: String]) {
+        if self.mode == mode, self.apiURL == apiURL, self.headers == headers {
+            debugPrint("🛏️ [SleepDelivery] configure skipped — unchanged")
+            return
+        }
+
         self.mode = mode
         self.apiURL = apiURL
         self.headers = headers
-        
+
         // Persist to UserDefaults
         UserDefaults.standard.set(mode.rawValue, forKey: SleepDeliveryKeys.mode)
         UserDefaults.standard.set(apiURL, forKey: SleepDeliveryKeys.apiURL)

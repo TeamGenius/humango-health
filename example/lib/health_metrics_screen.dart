@@ -30,11 +30,27 @@ class _HealthMetricsScreenState extends State<HealthMetricsScreen>
     super.initState();
     WidgetsBinding.instance.addObserver(this);
     _fetchAllMetrics();
-    _metricsManager.isHRVMonitoringActive().then((v) {
-      if (mounted) setState(() => _hrvMonitoringActive = v);
-    });
-    // Subscribe to HRV updates so UI reflects adds/deletions immediately
+    _restoreHrvStreamIfNativeMonitoringActive();
+  }
+
+  /// One subscription for HRV updates when monitoring is on — not duplicated with [_toggleHRVMonitoring].
+  Future<void> _restoreHrvStreamIfNativeMonitoringActive() async {
+    final active = await _metricsManager.isHRVMonitoringActive();
+    if (!mounted) return;
+    if (!active) return;
     _hrvSubscription = _metricsManager.hrvUpdates.listen(_onHrvUpdate);
+    final pending = await _metricsManager.getPendingHRVUpdates();
+    if (!mounted) return;
+    setState(() {
+      _hrvMonitoringActive = true;
+      if (pending.isNotEmpty) {
+        final total = pending.fold<int>(
+          0,
+          (s, e) => s + ((e['sampleCount'] as int?) ?? 0),
+        );
+        _lastHrvUpdate = '$total from background';
+      }
+    });
   }
 
   @override
@@ -81,23 +97,30 @@ class _HealthMetricsScreenState extends State<HealthMetricsScreen>
       await _metricsManager.stopHRVMonitoring();
       _hrvSubscription?.cancel();
       _hrvSubscription = null;
-      if (mounted) setState(() {
-        _hrvMonitoringActive = false;
-        _lastHrvUpdate = null;
-      });
+      if (mounted) {
+        setState(() {
+          _hrvMonitoringActive = false;
+          _lastHrvUpdate = null;
+        });
+      }
       return;
     }
     await _metricsManager.startHRVMonitoring();
     _hrvSubscription?.cancel();
     _hrvSubscription = _metricsManager.hrvUpdates.listen(_onHrvUpdate);
     final pending = await _metricsManager.getPendingHRVUpdates();
-    if (mounted) setState(() {
-      _hrvMonitoringActive = true;
-      if (pending.isNotEmpty) {
-        final total = pending.fold<int>(0, (s, e) => s + ((e['sampleCount'] as int?) ?? 0));
-        _lastHrvUpdate = '$total from background';
-      }
-    });
+    if (mounted) {
+      setState(() {
+        _hrvMonitoringActive = true;
+        if (pending.isNotEmpty) {
+          final total = pending.fold<int>(
+            0,
+            (s, e) => s + ((e['sampleCount'] as int?) ?? 0),
+          );
+          _lastHrvUpdate = '$total from background';
+        }
+      });
+    }
   }
 
   void _onHrvUpdate(Map<String, dynamic> update) {

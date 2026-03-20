@@ -1,8 +1,9 @@
 import 'dart:async';
 import 'dart:convert';
 import 'package:flutter/material.dart';
-import 'package:flutter/foundation.dart';
+import 'package:provider/provider.dart';
 import 'package:humango_health/humango_health.dart';
+import 'health_sync_coordinator.dart';
 
 class WorkoutReadScreen extends StatefulWidget {
   const WorkoutReadScreen({super.key});
@@ -12,7 +13,8 @@ class WorkoutReadScreen extends StatefulWidget {
 }
 
 class _WorkoutReadScreenState extends State<WorkoutReadScreen> {
-  final WorkoutReadManager _readManager = WorkoutReadManager();
+  WorkoutReadManager get _readManager =>
+      context.read<HealthSyncCoordinator>().workoutRead;
 
   bool _isLoading = false;
   bool _isMonitoring = false;
@@ -92,11 +94,7 @@ class _WorkoutReadScreenState extends State<WorkoutReadScreen> {
 
   // ── Live monitoring ──────────────────────────────────────────────────────────
 
-  /// Starts the native WorkoutService (open-ended anchor query).
-  /// The native layer automatically switches between foreground live-streaming
-  /// and background observer mode via AppLifecycleManager — no manual calls needed.
-  /// Each fully-routed workout is delivered to [workoutStream] once the
-  /// 3-minute RouteService debounce timer fires.
+  /// Live monitoring; background delivery is configured in [HealthSyncCoordinator], not here.
   Future<void> _startMonitoring() async {
     setState(() {
       _isLoading = true;
@@ -109,12 +107,6 @@ class _WorkoutReadScreenState extends State<WorkoutReadScreen> {
       final startDate = DateTime.now().subtract(const Duration(hours: 2));
 
       await _readManager.startMonitoring(startDate);
-
-      // Background workouts are stored locally and delivered to the stream
-      // when the app returns to foreground.
-      await _readManager.configureBackgroundDelivery(
-        BackgroundDeliveryConfig(mode: BackgroundDeliveryMode.localStorage),
-      );
 
       // Subscribe once — accumulate every completed workout arriving on the stream.
       _streamSubscription?.cancel();
