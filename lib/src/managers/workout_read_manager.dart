@@ -52,7 +52,8 @@ class WorkoutReadManager {
     return [];
   }
 
-  /// Configure how background workouts are delivered (API vs Local Storage)
+  /// Arms native workout delivery: [workoutStream] when listening, else pending storage.
+  /// Does not perform HTTP — upload from your app (Dart or Runner native).
   Future<void> configureBackgroundDelivery(
     BackgroundDeliveryConfig config,
   ) async {

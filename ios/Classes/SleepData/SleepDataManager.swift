@@ -56,7 +56,6 @@ public class SleepDataManager: NSObject, AppLifecycleObserver {
     // if still in bed the timer is not restarted and the next HK observer handles it.
     private var inBedCheckTimer: Timer?
 
-    // Background delivery manager (API vs localStorage mode)
     private let deliveryManager = SleepBackgroundDeliveryManager.shared
 
     // Configuration
@@ -76,17 +75,14 @@ public class SleepDataManager: NSObject, AppLifecycleObserver {
     
     // MARK: - Auto-Start on App Launch
     
-    /// Auto-starts sleep monitoring if API delivery is configured in UserDefaults.
-    /// Called from HumangoHealthPlugin.register() on every app launch/background wake.
-    /// First launch: no config in UserDefaults → no-op.
-    /// Subsequent launches: config persisted from previous configureSleepBackgroundDelivery() call → auto-start.
+    /// Auto-starts sleep monitoring if `configureSleepBackgroundDelivery` has armed delivery.
     func autoStartIfConfigured() {
         guard UserAuthStateManager.shared.isLoggedIn else {
             debugPrint("🛏️ [SleepDataManager] autoStart skipped — user not logged in")
             return
         }
-        guard deliveryManager.isAPIConfigured else {
-            debugPrint("🛏️ [SleepDataManager] autoStart skipped — no API config persisted")
+        guard deliveryManager.isArmedForAutoStart else {
+            debugPrint("🛏️ [SleepDataManager] autoStart skipped — sleep delivery not armed")
             return
         }
         guard monitorStartDate == nil else {
@@ -129,22 +125,18 @@ public class SleepDataManager: NSObject, AppLifecycleObserver {
     
     // MARK: - Mode Switching (shared logic)
     
-    /// Switches to foreground mode.
-    /// Both API and localStorage modes use HKAnchoredObjectQueryDescriptor in foreground.
-    /// - localStorage mode: pushes individual samples to Flutter EventChannel
-    /// - API mode: accumulates samples into session state, triggers API on session end
     private func switchToForegroundMode() {
         guard monitorStartDate != nil else { return }
         stopBackgroundMonitoring()
         startLiveUpdates()
-        debugPrint("🛏️ [SleepDataManager] → foreground mode (delivery=\(deliveryManager.mode.rawValue))")
+        debugPrint("🛏️ [SleepDataManager] → foreground mode (delivery=\(SleepBackgroundDeliveryManager.deliveryModeLogLabel))")
     }
 
     private func switchToBackgroundMode() {
         guard monitorStartDate != nil else { return }
         stopLiveUpdates()
         startBackgroundMonitoring()
-        debugPrint("🛏️ [SleepDataManager] → background mode (delivery=\(deliveryManager.mode.rawValue))")
+        debugPrint("🛏️ [SleepDataManager] → background mode (delivery=\(SleepBackgroundDeliveryManager.deliveryModeLogLabel))")
     }
     
     // MARK: - Method Channel Handler
@@ -243,8 +235,8 @@ public class SleepDataManager: NSObject, AppLifecycleObserver {
             startBackgroundMonitoring()
         }
         
-        debugPrint("🛏️ [SleepDataManager] started monitoring (delivery=\(deliveryManager.mode.rawValue)) from \(isoFormatter.string(from: startDate))")
-        result(["status": "started", "startDate": isoFormatter.string(from: startDate), "deliveryMode": deliveryManager.mode.rawValue])
+        debugPrint("🛏️ [SleepDataManager] started monitoring (delivery=\(SleepBackgroundDeliveryManager.deliveryModeLogLabel)) from \(isoFormatter.string(from: startDate))")
+        result(["status": "started", "startDate": isoFormatter.string(from: startDate), "deliveryMode": SleepBackgroundDeliveryManager.deliveryModeLogLabel])
     }
 
     private func handleStopMonitoring(result: @escaping FlutterResult) {
@@ -271,33 +263,25 @@ public class SleepDataManager: NSObject, AppLifecycleObserver {
             result(FlutterError(code: "INVALID_ARGS", message: "Missing 'mode' argument", details: nil))
             return
         }
-        
-        guard let mode = SleepBackgroundDeliveryMode(rawValue: modeStr) else {
-            result(FlutterError(code: "INVALID_MODE", message: "Mode must be 'api' or 'localStorage'", details: nil))
+
+        guard modeStr == "localStorage" else {
+            result(FlutterError(code: "INVALID_MODE", message: "Unknown mode \"\(modeStr)\". Use localStorage.", details: nil))
             return
         }
-        
-        var apiURL: URL? = nil
-        if let urlStr = args["apiURL"] as? String {
-            apiURL = URL(string: urlStr)
-        }
-        let headers = args["headers"] as? [String: String] ?? [:]
-        
-        deliveryManager.configure(mode: mode, apiURL: apiURL, headers: headers)
-        
-        if mode == .api && monitorStartDate == nil {
+
+        deliveryManager.arm()
+
+        if monitorStartDate == nil {
             autoStartIfConfigured()
-        } else if monitorStartDate != nil && isLiveStreaming {
+        } else if isLiveStreaming {
             stopLiveUpdates()
             startLiveUpdates()
         }
 
-        debugPrint("🛏️ [SleepDataManager] delivery configured: mode=\(mode.rawValue)")
+        debugPrint("🛏️ [SleepDataManager] sleep delivery armed (localStorage)")
         result([
             "status": "configured",
-            "mode": mode.rawValue,
-            "apiURL": apiURL?.absoluteString as Any,
-            "headersCount": headers.count
+            "mode": SleepBackgroundDeliveryManager.deliveryModeLogLabel,
         ])
     }
     
@@ -452,7 +436,7 @@ public class SleepDataManager: NSObject, AppLifecycleObserver {
                     debugPrint("🛏️ [SleepDataManager] foreground monitoring error: \(error)")
                 }
             }
-            debugPrint("🛏️ [SleepDataManager] started foreground monitoring (delivery=\(deliveryManager.mode.rawValue))")
+            debugPrint("🛏️ [SleepDataManager] started foreground monitoring (delivery=\(SleepBackgroundDeliveryManager.deliveryModeLogLabel))")
         } else {
             debugPrint("🛏️ [SleepDataManager] foreground monitoring requires iOS 15.0+")
         }
@@ -895,7 +879,7 @@ public class SleepDataManager: NSObject, AppLifecycleObserver {
 
         let sessionId = payload["BED_TIME"] as? String ?? isoFormatter.string(from: queryStart)
 
-        debugPrint("🛏️ [SleepDataManager] [\(trigger.uppercased())] delivering sessionId=\(sessionId) mode=\(deliveryManager.mode.rawValue) size=\(jsonData.count)B")
+        debugPrint("🛏️ [SleepDataManager] [\(trigger.uppercased())] delivering sessionId=\(sessionId) mode=\(SleepBackgroundDeliveryManager.deliveryModeLogLabel) size=\(jsonData.count)B")
         await SleepRemoteLogger.shared.log(
             level: .info,
             message: "[\(trigger.uppercased())] Delivering sleep payload",
@@ -903,7 +887,7 @@ public class SleepDataManager: NSObject, AppLifecycleObserver {
                 "step":         "delivering",
                 "trigger":      trigger,
                 "sessionId":    sessionId,
-                "deliveryMode": deliveryManager.mode.rawValue,
+                "deliveryMode": SleepBackgroundDeliveryManager.deliveryModeLogLabel,
                 "jsonBytes":    jsonData.count
             ]
         )

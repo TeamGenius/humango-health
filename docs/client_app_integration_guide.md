@@ -34,7 +34,7 @@ flowchart TB
   C -->|session + configure| lib
 ```
 
-- **`humango_health`** reads HealthKit on the device and **pushes** updates via streams and optional background HTTP. It does **not** rely on your UI polling for the same data.
+- **`humango_health`** reads HealthKit on the device and **pushes** updates via streams and local queues. Workout and sleep **session** payloads are not POSTed by the plugin; your app uploads them.
 - **Your app** supplies **when** configuration runs (after login / token), **one subscription per domain**, and **narrow UI updates**.
 
 ---
@@ -44,13 +44,13 @@ flowchart TB
 1. **Single orchestration for background delivery**  
    One module (e.g. `HealthSyncCoordinator`) calls:
    - `UserSessionManager.setUserLoggedIn` when your user session changes  
-   - `WorkoutReadManager.configureBackgroundDelivery` (workouts)  
+   - `WorkoutReadManager.configureBackgroundDelivery` (workouts — arms stream/pending only, no native HTTP)  
    - `SleepDataManager.configureSleepBackgroundDelivery` (sleep)  
    after **auth (and athlete/user id)** is available.  
    Do **not** scatter these calls across unrelated widgets or routes.
 
 2. **Idempotent configure**  
-   Safe to call again after **token refresh** or app resume: native code skips no-op writes when mode/URL/headers are unchanged; when the token changes, new headers must be persisted (re-call configure with updated `headers` where the API supports it).
+   Safe to call again after **token refresh** or app resume: native code skips no-op writes when the armed state is unchanged.
 
 3. **One stable subscription per domain**  
    For each stream (`workoutStream`, `permissionStream`, `hrvUpdates`, …): one listener per manager instance, **cancel** in `dispose` / when turning monitoring off. Avoid multiple listeners that each fire the same side effects.
@@ -58,20 +58,20 @@ flowchart TB
 4. **No timer‑based sync as primary path**  
    Do not poll the library on an interval for data that observers already deliver. Use **explicit** one-shot APIs for catch-up (`readWorkouts`, `getSleepData`, `refreshSince`, etc.) on login, pull-to-refresh, or cold start—not a repeating background timer.
 
-5. **Foreground stream vs background API**  
-   Treat in-app streams and `BackgroundDeliveryMode.api` / sleep API delivery as **separate** paths; both may be on. Document in your app which UI reacts to which.
+5. **Foreground streams vs local queues**  
+   **Workouts:** `workoutStream` + optional UserDefaults pending JSON. **Sleep:** finalized sessions in `UserDefaults`; drain with `getLocalSleepSessions()` and upload from your app.
 
-### Background uploads: your backend, but native execution
+### Background uploads: your backend
 
-Backend calls from the **client** while the app may be **suspended** must run in **native iOS** (plugin background delivery and/or Runner)—not Dart `http` alone.
+The plugin does **not** POST workout or sleep session JSON. While the app is **suspended**, uploading those payloads requires **native iOS** (e.g. Runner `URLSession` background tasks) or waiting until the app runs again—not Dart `http` alone.
 
 | Approach | Who calls your API | Coordinator |
 |----------|-------------------|-------------|
-| **Plugin API mode** | Plugin native (`BackgroundDeliveryMode.api`, sleep API + `apiURL` / `headers`) | Supplies `configure*` + session after login / token refresh. |
-| **localStorage + Runner Swift** | Your native code + e.g. background `URLSession` | Session + `configure*`; your code owns HTTP. |
-| **Dart on stream events** | Foreground Flutter | Subscriptions + session only; not sole background sync. |
+| **Workouts** | Your app (Dart when foreground, or Runner native) | Coordinator arms delivery; you consume stream / pending JSON. |
+| **Sleep** | Your app (same) | Coordinator calls `configureSleepBackgroundDelivery`; you drain `getLocalSleepSessions()`. |
+| **Runner Swift + background `URLSession`** | Your native code | Session + `configure*`; your code owns HTTP. |
 
-The coordinator **orchestrates** (session, idempotent configure, shared managers); it does **not** replace native background networking.
+The coordinator **orchestrates** (session, idempotent configure, shared managers); it does **not** replace your networking layer.
 
 ---
 
@@ -102,7 +102,7 @@ The coordinator **orchestrates** (session, idempotent configure, shared managers
 
 ### Background delivery (one place)
 
-- [ ] **Workouts:** `configureBackgroundDelivery(BackgroundDeliveryConfig(...))` — e.g. `localStorage` for client-side replay, or `api` with URL + headers for server upload.
+- [ ] **Workouts:** `configureBackgroundDelivery(const BackgroundDeliveryConfig())` — arms stream/pending; upload from your app.
 - [ ] **Sleep:** `configureSleepBackgroundDelivery(SleepBackgroundDeliveryConfig(...))` — mode `api` with `apiURL` and optional `headers`, or `localStorage` per product.
 - [ ] On **token refresh**, call the same configure methods again with **new headers**; rely on idempotent native behavior for unchanged fields.
 
@@ -164,5 +164,5 @@ Copy the **pattern**, not necessarily the class names: use Riverpod, GetIt, or y
 ## 8. Related links
 
 - [README — Consumer app integration](../README.md#consumer-app-integration)
-- [README — Background Delivery Manager (API Configuration)](../README.md#background-delivery-manager-api-configuration)
+- [README — Background delivery configuration](../README.md#background-delivery-configuration)
 - [CHANGELOG](../CHANGELOG.md) for breaking API or behavior changes per release

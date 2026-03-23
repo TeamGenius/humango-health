@@ -2,215 +2,88 @@
 //  SleepBackgroundDeliveryManager.swift
 //  humango_health
 //
-//  Manages background delivery of finalized sleep session data.
-//  Supports two modes:
-//  - `.api`: POSTs sleep data directly to a configured API endpoint (no foreground streaming)
-//  - `.localStorage`: Default behavior — foreground live streaming + background UserDefaults storage
-//
-//  Mirrors the WorkoutReading/BackgroundDeliveryManager pattern.
+//  Persists finalized sleep session JSON to UserDefaults for the host app to retrieve.
+//  No HTTP — upload from Dart or Runner native (same policy as workout delivery).
 //
 
 import Foundation
 
-// MARK: - Sleep Background Delivery Mode
-
-@available(iOS 14.0, *)
-enum SleepBackgroundDeliveryMode: String, Codable {
-    /// API mode: sleep session data is POSTed directly to a remote API.
-    /// No foreground live streaming occurs in this mode.
-    case api
-    
-    /// Local storage mode (default): foreground uses EventChannel streaming,
-    /// background stores to UserDefaults for later retrieval.
-    case localStorage
-}
-
 // MARK: - UserDefaults Keys
 
 private struct SleepDeliveryKeys {
-    static let mode = "com.humango.health.sleepDeliveryMode"
-    static let apiURL = "com.humango.health.sleepDeliveryURL"
-    static let headers = "com.humango.health.sleepDeliveryHeaders"
+    static let armed = "HumangoSleepDeliveryArmed"
     static let pendingLocalSleep = "com.humango.health.sleepPendingLocal"
+    /// Legacy from removed API mode
+    static let legacyMode = "com.humango.health.sleepDeliveryMode"
+    static let legacyApiURL = "com.humango.health.sleepDeliveryURL"
+    static let legacyHeaders = "com.humango.health.sleepDeliveryHeaders"
 }
 
 // MARK: - SleepBackgroundDeliveryManager
 
 @available(iOS 14.0, *)
-class SleepBackgroundDeliveryManager {
+final class SleepBackgroundDeliveryManager {
     static let shared = SleepBackgroundDeliveryManager()
-    
-    private(set) var mode: SleepBackgroundDeliveryMode = .localStorage
-    private var apiURL: URL?
-    private var headers: [String: String] = [:]
-    
-    private init() {
-        // Restore persisted configuration
-        if let savedModeStr = UserDefaults.standard.string(forKey: SleepDeliveryKeys.mode),
-           let savedMode = SleepBackgroundDeliveryMode(rawValue: savedModeStr) {
-            self.mode = savedMode
-            self.apiURL = UserDefaults.standard.url(forKey: SleepDeliveryKeys.apiURL)
-            self.headers = UserDefaults.standard.dictionary(forKey: SleepDeliveryKeys.headers) as? [String: String] ?? [:]
-            debugPrint("🛏️ [SleepDelivery] Restored config: mode=\(savedMode.rawValue), url=\(self.apiURL?.absoluteString ?? "nil")")
-        }
-    }
-    
-    /// Whether API delivery is fully configured (mode=.api AND apiURL is set).
-    /// Used by auto-start logic to determine if monitoring should begin on app launch.
-    var isAPIConfigured: Bool {
-        return mode == .api && apiURL != nil
-    }
-    
-    // MARK: - Configuration
-    
-    /// Configures the sleep background delivery mode.
-    ///
-    /// - Parameters:
-    ///   - mode: `.api` for direct API delivery, `.localStorage` for default behavior
-    ///   - apiURL: The API endpoint URL (required for `.api` mode)
-    ///   - headers: Custom HTTP headers for API requests (e.g., auth tokens)
-    func configure(mode: SleepBackgroundDeliveryMode, apiURL: URL?, headers: [String: String]) {
-        if self.mode == mode, self.apiURL == apiURL, self.headers == headers {
-            debugPrint("🛏️ [SleepDelivery] configure skipped — unchanged")
-            return
-        }
 
-        self.mode = mode
-        self.apiURL = apiURL
-        self.headers = headers
+    /// Log label for delivery path (only local storage).
+    static let deliveryModeLogLabel = "localStorage"
 
-        // Persist to UserDefaults
-        UserDefaults.standard.set(mode.rawValue, forKey: SleepDeliveryKeys.mode)
-        UserDefaults.standard.set(apiURL, forKey: SleepDeliveryKeys.apiURL)
-        UserDefaults.standard.set(headers, forKey: SleepDeliveryKeys.headers)
+    private init() {}
+
+    private var isArmed: Bool {
+        get { UserDefaults.standard.bool(forKey: SleepDeliveryKeys.armed) }
+        set { UserDefaults.standard.set(newValue, forKey: SleepDeliveryKeys.armed) }
+    }
+
+    var isArmedForAutoStart: Bool {
+        isArmed
+    }
+
+    /// Clears legacy API keys and sets armed (idempotent).
+    func arm() {
+        clearLegacyApiKeys()
+        if !isArmed {
+            isArmed = true
+            debugPrint("🛏️ [SleepDelivery] armed for local session delivery")
+        } else {
+            debugPrint("🛏️ [SleepDelivery] configure — already armed, legacy keys cleared")
+        }
         UserDefaults.standard.synchronize()
-        
-        debugPrint("🛏️ [SleepDelivery] Configured: mode=\(mode.rawValue), url=\(apiURL?.absoluteString ?? "nil"), headers=\(headers.count) keys")
     }
 
-    /// Clears all persisted background delivery configuration.
-    /// Called on user logout so sleep monitoring does not auto-restart on the next app launch.
     func clearConfiguration() {
-        mode = .localStorage
-        apiURL = nil
-        headers = [:]
-        UserDefaults.standard.removeObject(forKey: SleepDeliveryKeys.mode)
-        UserDefaults.standard.removeObject(forKey: SleepDeliveryKeys.apiURL)
-        UserDefaults.standard.removeObject(forKey: SleepDeliveryKeys.headers)
+        isArmed = false
+        clearLegacyApiKeys()
         UserDefaults.standard.removeObject(forKey: SleepDeliveryKeys.pendingLocalSleep)
         UserDefaults.standard.synchronize()
-        debugPrint("🔐 [SleepDelivery] Cleared background delivery configuration on logout")
+        debugPrint("🔐 [SleepDelivery] cleared configuration on logout")
     }
-    
-    // MARK: - Deliver Sleep Session
-    
-    /// Delivers a finalized sleep session based on the configured mode.
-    ///
-    /// - Parameters:
-    ///   - sleepDataJSON: JSON string of the full sleep session data
-    ///   - sessionId: Unique identifier for this session (e.g., session start date)
+
+    private func clearLegacyApiKeys() {
+        UserDefaults.standard.removeObject(forKey: SleepDeliveryKeys.legacyMode)
+        UserDefaults.standard.removeObject(forKey: SleepDeliveryKeys.legacyApiURL)
+        UserDefaults.standard.removeObject(forKey: SleepDeliveryKeys.legacyHeaders)
+    }
+
     func deliverSleepSession(_ sleepDataJSON: String, sessionId: String) async {
-        debugPrint("🛏️ [SleepDelivery] ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━")
-        debugPrint("🛏️ [SleepDelivery] Delivering sleep session: sessionId=\(sessionId)")
-        debugPrint("🛏️ [SleepDelivery] Mode: \(mode.rawValue)")
-        debugPrint("🛏️ [SleepDelivery] JSON size: \(sleepDataJSON.count) chars / \(sleepDataJSON.data(using: .utf8)?.count ?? 0) bytes")
-        debugPrint("🛏️ [SleepDelivery] JSON preview: \(String(sleepDataJSON.prefix(500)))...")
-        debugPrint("🛏️ [SleepDelivery] ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━")
-        
-        switch mode {
-        case .api:
-            // API mode: always push to API regardless of foreground/background
-            debugPrint("🛏️ [SleepDelivery] API mode — pushing session \(sessionId) to API")
-            await pushToAPI(sleepDataJSON, sessionId: sessionId)
-            
-        case .localStorage:
-            // localStorage mode: store locally for retrieval via getLocalSleepSessions()
-            debugPrint("🛏️ [SleepDelivery] localStorage mode — storing session \(sessionId) locally")
-            storeLocally(sleepDataJSON)
-        }
+        debugPrint("🛏️ [SleepDelivery] storing session sessionId=\(sessionId) size=\(sleepDataJSON.count)")
+        storeLocally(sleepDataJSON)
     }
-    
-    // MARK: - API Push
-    
-    /// POSTs the sleep session JSON to the configured API endpoint.
-    private func pushToAPI(_ sleepJSON: String, sessionId: String) async {
-        guard let url = apiURL else {
-            debugPrint("⚠️ [SleepDelivery] API push failed: No API URL configured")
-            storeLocally(sleepJSON)
-            return
-        }
-        
-        guard let data = sleepJSON.data(using: .utf8) else {
-            debugPrint("⚠️ [SleepDelivery] API push failed: Cannot encode JSON to UTF8 data")
-            return
-        }
-        
-        var request = URLRequest(url: url)
-        request.httpMethod = "POST"
-        request.httpBody = data
-        request.setValue("application/json", forHTTPHeaderField: "Content-Type")
-        
-        // Apply custom headers (e.g., authorization)
-        for (key, value) in headers {
-            request.setValue(value, forHTTPHeaderField: key)
-        }
-        
-        // Log API call details
-        debugPrint("🌐 [SleepDelivery] ── API REQUEST ──────────────────────────")
-        debugPrint("🌐 [SleepDelivery] URL: \(url.absoluteString)")
-        debugPrint("🌐 [SleepDelivery] Method: POST")
-        debugPrint("🌐 [SleepDelivery] Headers:")
-        debugPrint("🌐 [SleepDelivery]   Content-Type: application/json")
-        for (key, value) in headers {
-            let maskedValue = key.lowercased().contains("auth") ? "\(value.prefix(10))...***" : value
-            debugPrint("🌐 [SleepDelivery]   \(key): \(maskedValue)")
-        }
-        debugPrint("🌐 [SleepDelivery] Body size: \(data.count) bytes")
-        debugPrint("🌐 [SleepDelivery] Body preview: \(String(sleepJSON.prefix(300)))...")
-        debugPrint("🌐 [SleepDelivery] SessionId: \(sessionId)")
-        debugPrint("🌐 [SleepDelivery] Sending request...")
-        
-        do {
-            let (responseData, response) = try await URLSession.shared.data(for: request)
-            let statusCode = (response as? HTTPURLResponse)?.statusCode ?? -1
-            let responseBody = String(data: responseData, encoding: .utf8) ?? "<non-UTF8>"
-            
-            debugPrint("🌐 [SleepDelivery] ── API RESPONSE ─────────────────────────")
-            debugPrint("🌐 [SleepDelivery] Status: \(statusCode)")
-            debugPrint("🌐 [SleepDelivery] Response body: \(String(responseBody.prefix(500)))")
-            
-            if (200...299).contains(statusCode) {
-                debugPrint("✅ [SleepDelivery] API push succeeded for session \(sessionId) (HTTP \(statusCode))")
-            } else {
-                debugPrint("⚠️ [SleepDelivery] API push failed with HTTP \(statusCode) for session \(sessionId) — storing locally as fallback")
-                storeLocally(sleepJSON)
-            }
-        } catch {
-            debugPrint("❌ [SleepDelivery] API push network error for session \(sessionId): \(error)")
-            debugPrint("❌ [SleepDelivery] Error type: \(type(of: error)), description: \(error.localizedDescription)")
-            storeLocally(sleepJSON)
-        }
-    }
-    
-    // MARK: - Local Storage
-    
-    /// Stores sleep session JSON in UserDefaults for later retrieval.
+
     private func storeLocally(_ sleepJSON: String) {
         var existing = UserDefaults.standard.stringArray(forKey: SleepDeliveryKeys.pendingLocalSleep) ?? []
         existing.append(sleepJSON)
         UserDefaults.standard.set(existing, forKey: SleepDeliveryKeys.pendingLocalSleep)
         UserDefaults.standard.synchronize()
-        debugPrint("💾 [SleepDelivery] Stored sleep session locally. Total pending: \(existing.count)")
+        debugPrint("💾 [SleepDelivery] pending sessions=\(existing.count)")
     }
-    
-    /// Retrieves and clears all locally stored sleep sessions.
-    /// Call this from Flutter after app becomes active to retrieve background-collected data.
+
     func retrieveLocalSleepSessions() -> [String] {
         let sessions = UserDefaults.standard.stringArray(forKey: SleepDeliveryKeys.pendingLocalSleep) ?? []
         UserDefaults.standard.removeObject(forKey: SleepDeliveryKeys.pendingLocalSleep)
         UserDefaults.standard.synchronize()
         if !sessions.isEmpty {
-            debugPrint("🛏️ [SleepDelivery] Retrieved \(sessions.count) locally stored sleep sessions")
+            debugPrint("🛏️ [SleepDelivery] retrieved \(sessions.count) session(s)")
         }
         return sessions
     }

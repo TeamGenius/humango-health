@@ -77,33 +77,19 @@ Intelligent detection of when a sleep session has ended, using a **freeze window
 - `getSleepSessionStatus()` — query current session state
 - `resetSleepSession()` — clear state for next night
 
-#### 6. Background Delivery System (API Mode)
-
-Users configure how finalized sleep sessions are delivered:
+#### 6. Background delivery (local queue only)
 
 ```dart
 enum SleepBackgroundDeliveryMode {
-  api,          // POST to API endpoint — NO foreground streaming
-  localStorage, // Store in UserDefaults (default)
+  localStorage,
 }
 ```
 
-**API Mode (`SleepBackgroundDeliveryMode.api`):**
-- User provides: `apiURL`, `headers` (including auth tokens)
-- **Foreground**: `HKAnchoredObjectQueryDescriptor` runs, samples accumulate into session state
-- **Background**: `HKObserverQuery` runs, samples accumulate into session state
-- In **both** foreground and background, when a session ends, native iOS makes direct HTTP POST to the API
-- Falls back to local storage on API failure (non-2xx or network error)
-- Configuration persists across app restarts via UserDefaults
+- **`configureSleepBackgroundDelivery`** arms delivery (`HumangoSleepDeliveryArmed`), clears legacy API `UserDefaults` keys, and enables auto-start when the user is logged in.
+- When a session is finalized, native code builds the flat aggregated JSON and appends it to `com.humango.health.sleepPendingLocal`. The plugin **does not** POST session payloads to your API.
+- **`getLocalSleepSessions()`** returns pending JSON strings and clears the queue.
 
-**Local Storage Mode (`SleepBackgroundDeliveryMode.localStorage`):**
-- Both foreground and background accumulate samples into session state
-- Finalized sessions stored in UserDefaults; retrieve via `getLocalSleepSessions()` on app open
-- Sessions cleared from storage after retrieval
-
-**Key difference from workouts:**  
-Workout delivery pushes individual workout records immediately.  
-Sleep delivery accumulates data over the entire night (session detection), then delivers the **complete finalized session** as a single payload.
+**Key difference from workouts:** workout delivery emits per completed workout (stream or pending). Sleep accumulates overnight, then stores **one** finalized JSON per session.
 
 #### 7. Sleep Stage Classification
 
@@ -156,7 +142,7 @@ Return computed totals:
 │  ├─ startBackgroundMonitoring() → HKObserverQuery        │
 │  │   └─ accumulate → session state                       │
 │  ├─ SleepSessionDetector → freeze window + multi-factor  │
-│  ├─ SleepBackgroundDeliveryManager → API POST / local    │
+│  ├─ SleepBackgroundDeliveryManager → local queue only   │
 │  └─ UserDefaults storage for background data             │
 └─────────────────────┬────────────────────────────────────┘
                       │
@@ -378,59 +364,21 @@ void checkSessionStatus() async {
 }
 ```
 
-### Background API Delivery (API Mode)
+### Background delivery — configure and drain
 
 ```dart
 import 'package:humango_health/humango_health.dart';
 
 final sleepManager = SleepDataManager();
 
-// Configure API delivery mode BEFORE starting monitoring.
-// This should be called early in app lifecycle (e.g., after login).
-void configureSleepAPIDelivery() async {
-  await sleepManager.configureSleepBackgroundDelivery(
-    SleepBackgroundDeliveryConfig(
-      mode: SleepBackgroundDeliveryMode.api,
-      apiURL: 'https://api.example.com/v1/sleep-sessions',
-      headers: {
-        'Authorization': 'Bearer YOUR_AUTH_TOKEN',
-        'X-Device-Id': 'device-123',
-      },
-    ),
-  );
-  
-  // Start monitoring — in API mode, both foreground (HKAnchoredObjectQueryDescriptor)
-  // and background (HKObserverQuery) run normally. Samples accumulate into session
-  // state and are POSTed to the API when the session ends.
-  await sleepManager.startMonitoring(
-    startDate: DateTime.now().subtract(const Duration(hours: 12)),
-  );
+Future<void> afterLogin() async {
+  await sleepManager.configureSleepBackgroundDelivery(const SleepBackgroundDeliveryConfig());
 }
 
-// Switch back to localStorage mode if needed
-void switchToLocalStorage() async {
-  await sleepManager.configureSleepBackgroundDelivery(
-    SleepBackgroundDeliveryConfig(
-      mode: SleepBackgroundDeliveryMode.localStorage,
-    ),
-  );
-}
-```
-
-### Background Local Storage Delivery
-
-```dart
-import 'package:humango_health/humango_health.dart';
-
-final sleepManager = SleepDataManager();
-
-// On app startup, retrieve any sleep sessions stored while app was in background
-void retrieveBackgroundSessions() async {
+Future<void> uploadPending() async {
   final sessions = await sleepManager.getLocalSleepSessions();
   for (final sessionJson in sessions) {
-    // Each session is a JSON string containing the full sleep data
-    print('Retrieved stored session: ${sessionJson.substring(0, 100)}...');
-    // Parse and process the session data as needed
+    // POST sessionJson to your API from Dart or Runner native
   }
 }
 ```
@@ -464,7 +412,7 @@ await permissionManager.request(
 |-------|------|-------------|
 | iOS | `ios/Classes/SleepData/SleepDataManager.swift` | Native HealthKit query, monitoring & session evaluation |
 | iOS | `ios/Classes/SleepData/SleepSessionDetector.swift` | Freeze-window session detection algorithm |
-| iOS | `ios/Classes/SleepData/SleepBackgroundDeliveryManager.swift` | Background delivery manager (API POST / local storage) |
+| iOS | `ios/Classes/SleepData/SleepBackgroundDeliveryManager.swift` | Persists finalized session JSON to UserDefaults |
 | iOS | `ios/Classes/HumangoHealthPlugin.swift` | Method channel routing |
 | Dart | `lib/src/managers/sleep_data_manager.dart` | Dart manager class |
 | Dart | `lib/src/models/sleep_sample.dart` | Data models (SleepSample, SleepDataResponse, SleepStageTotals) |
@@ -473,106 +421,21 @@ await permissionManager.request(
 
 ---
 
-## Background Delivery — Detailed Design
+## Background delivery — detailed design
 
-### Delivery Mode Switching
+After `configureSleepBackgroundDelivery` (`localStorage` only), foreground and background use the same HealthKit strategy (`HKAnchoredObjectQueryDescriptor` / `HKObserverQuery`). On finalize, `SleepDataManager.buildAggregatedPayload` produces flat JSON (stage totals as integer **seconds**), serialized and appended to `com.humango.health.sleepPendingLocal`.
 
-```
-                  configureSleepBackgroundDelivery(mode)
-                              │
-              ┌───────────────┴───────────────┐
-              │                               │
-       mode == .api                    mode == .localStorage
-              │                               │
-    ┌─────────┴─────────┐           ┌─────────┴─────────┐
-    │ Same fg/bg query   │           │ Same fg/bg query   │
-    │ strategy:          │           │ strategy:          │
-    │ FG: AnchoredQuery  │           │ FG: AnchoredQuery  │
-    │ BG: ObserverQuery  │           │ BG: ObserverQuery  │
-    │                    │           │                    │
-    │ Data routing:      │           │ Data routing:      │
-    │ Accumulate →       │           │ FG: EventChannel   │
-    │ session state →    │           │ BG: UserDefaults   │
-    │ POST to apiURL     │           │                    │
-    │ on session end     │           │ On session end:    │
-    │                    │           │ local storage      │
-    └────────────────────┘           └────────────────────┘
-```
-
-### API Mode Flow
-
-```
-1. App calls configureSleepBackgroundDelivery(mode: .api, apiURL: ..., headers: ...)
-2. Config persists to UserDefaults (survives restart)
-3. App calls startMonitoring()
-   └─ Starts HKAnchoredObjectQueryDescriptor (foreground) or HKObserverQuery (background)
-   └─ Same query strategy as localStorage mode — only data routing differs
-4. Foreground (HKAnchoredObjectQueryDescriptor):
-   └─ Live samples received → accumulated into SleepSessionState (NOT pushed to EventChannel)
-   └─ Session state persisted, SleepSessionDetector evaluates multi-factor scoring
-5. Background (HKObserverQuery):
-   └─ Observer fires → SleepDataManager fetches + accumulates into SleepSessionState
-   └─ SleepSessionDetector evaluates multi-factor scoring
-6. When session ends (or freeze window expires) — in EITHER foreground or background:
-   └─ Full sleep data fetched (all samples from session)
-   └─ JSON serialized and POSTed to configured apiURL
-   └─ Custom headers included (Authorization, etc.)
-   └─ On 2xx: success logged
-   └─ On failure: falls back to local storage
-7. EventChannel still emits sleepSessionEnded event (for awareness)
-```
-
-### API Request Format
-
-When a sleep session is finalized, the following JSON payload is POSTed:
-
-```json
-{
-  "samples": [ ... ],
-  "sampleCount": 19,
-  "totalSleepSeconds": 28260.0,
-  "totalSleepMinutes": 471.0,
-  "totalSleepHours": 7.85,
-  "stageTotals": {
-    "asleepCore": { "seconds": 16800.0, "minutes": 280.0 },
-    "asleepDeep": { "seconds": 3600.0, "minutes": 60.0 },
-    "asleepREM": { "seconds": 7860.0, "minutes": 131.0 },
-    "awake": { "seconds": 900.0, "minutes": 15.0 },
-    "inBed": { "seconds": 0.0, "minutes": 0.0 },
-    "asleepUnspecified": { "seconds": 0.0, "minutes": 0.0 }
-  },
-  "fetchedFrom": "2026-03-04T22:00:00.000Z",
-  "fetchedTo": "2026-03-05T06:00:00.000Z",
-  "reason": "sleep>=471m, no_deep_sleep_recently, stale_65m",
-  "segmentCount": 19,
-  "isFinalized": true,
-  "finalizedAt": "2026-03-05T06:05:00.000Z",
-  "sessionStartDate": "2026-03-04T22:00:00.000Z",
-  "latestSegmentEndDate": "2026-03-05T05:00:00.000Z"
-}
-```
-
-**HTTP Request:**
-```
-POST https://api.example.com/v1/sleep-sessions
-Content-Type: application/json
-Authorization: Bearer YOUR_AUTH_TOKEN
-X-Device-Id: device-123
-
-<body: JSON above>
-```
-
-### UserDefaults Persistence Keys
+### UserDefaults keys (delivery-related)
 
 | Key | Purpose |
 |-----|---------|
-| `com.humango.health.sleepDeliveryMode` | Delivery mode (`api` or `localStorage`) |
-| `com.humango.health.sleepDeliveryURL` | Configured API endpoint URL |
-| `com.humango.health.sleepDeliveryHeaders` | Custom HTTP headers dictionary |
-| `com.humango.health.sleepPendingLocal` | Pending locally stored session JSON strings |
-| `com.humango.health.sleepSessionState` | Persisted SleepSessionState (Codable) |
+| `HumangoSleepDeliveryArmed` | Delivery armed after successful configure |
+| `com.humango.health.sleepPendingLocal` | Pending finalized session JSON strings |
+| `com.humango.health.sleepSessionState` | Persisted `SleepSessionState` (Codable) |
 | `com.humango.health.storedSleepData` | Most recent sleep data snapshot |
 | `com.humango.health.lastSleepFetchDate` | Timestamp of last background fetch |
+
+Legacy `com.humango.health.sleepDeliveryMode` / `sleepDeliveryURL` / `sleepDeliveryHeaders` are cleared when arming; `mode: api` is rejected (`INVALID_MODE`).
 
 ---
 

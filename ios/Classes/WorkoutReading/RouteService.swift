@@ -478,9 +478,8 @@ class RouteService {
             debugPrint("🏋️ [WorkoutDelivery] JSON preview: \(String(jsonString.prefix(300)))...")
             debugPrint("🏋️ [WorkoutDelivery] ─────────────────────────────────────────")
 
-            debugPrint("📤 RouteService: Calling BackgroundDeliveryManager.deliverWorkout for \(deviceId)")
-            // Delegate background delivery to Manager (API vs Local vs Foreground Stream)
-            await BackgroundDeliveryManager.shared.deliverWorkout(jsonString, deviceId: deviceId)
+            debugPrint("📤 RouteService: Calling WorkoutStreamDelivery.deliverWorkout for \(deviceId)")
+            await WorkoutStreamDelivery.shared.deliverWorkout(jsonString, deviceId: deviceId)
             debugPrint("✅ RouteService: deliverWorkout completed for \(deviceId)")
             await WorkoutRecordStore.shared.printAllRecords(context: "after RouteService push")
             

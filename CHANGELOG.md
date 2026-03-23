@@ -1,8 +1,38 @@
+## 0.0.11 — 2026-03-19
+
+### Breaking Changes
+
+#### Sleep — no native HTTP for session payloads; `SleepBackgroundDeliveryMode.api` removed
+
+- **iOS:** `SleepBackgroundDeliveryManager` only stores finalized session JSON in `UserDefaults` (`com.humango.health.sleepPendingLocal`). Legacy keys `com.humango.health.sleepDeliveryMode` / `sleepDeliveryURL` / `sleepDeliveryHeaders` are cleared when delivery is armed. Arming uses `HumangoSleepDeliveryArmed`.
+- **Dart:** `SleepBackgroundDeliveryConfig` has only `localStorage` (default). `apiURL` and `headers` are removed. Calling `configureSleepBackgroundDelivery` with `mode: api` fails on iOS with `PlatformException` (e.g. `INVALID_MODE`).
+- **Migration:** Call `getLocalSleepSessions()` and POST to your API from Dart or Runner native (same pattern as workout pending JSON).
+
+**Changed in:** `lib/src/models/sleep_background_delivery_config.dart`, `ios/Classes/SleepData/SleepBackgroundDeliveryManager.swift`, `ios/Classes/SleepData/SleepDataManager.swift`, README, subsystem docs.
+
+---
+
+## 0.0.10 — 2026-03-19
+
+### Breaking Changes
+
+#### Workouts — no native HTTP; `BackgroundDeliveryManager` removed
+
+- **Removed** `ios/Classes/WorkoutReading/BackgroundDeliveryManager.swift`. **Added** `WorkoutStreamDelivery.swift`: sends completed workout JSON to Flutter’s `workoutStream` when a listener exists, otherwise appends to `UserDefaults` (`BackgroundWorkouts.pending`). The plugin **never** POSTs workout data to your API.
+- **Dart:** `BackgroundDeliveryMode.api` removed. `BackgroundDeliveryConfig` no longer has `apiURL` or `headers`. Calling `configureBackgroundDelivery` from Dart with `mode: api` (legacy JSON) fails on iOS with `PlatformException` (e.g. `INVALID_ARGS`).
+- **Auto-start:** Workout monitoring resumes when `HumangoWorkoutStreamDeliveryArmed` is set (after successful `configureBackgroundDelivery`), not when a workout API URL was stored.
+
+**Migration:** Use `workoutStream` and/or consume pending JSON from your app and POST to your backend (Dart or Runner native). Sleep session API mode was removed in **0.0.11** — use local queue + app-side upload. *(Supersedes older changelog text that referred to workout `BackgroundDeliveryMode.api`.)*
+
+**Changed in:** `lib/src/models/background_delivery_config.dart`, `ios/Classes/WorkoutReading/WorkoutServiceChannel.swift`, `ios/Classes/WorkoutReading/RouteService.swift`, README.
+
+---
+
 ## 0.0.9 — 2026-03-19
 
 ### Improvements
 
-- **Idempotent background delivery configure (iOS):** `BackgroundDeliveryManager.configure` (workouts) and `SleepBackgroundDeliveryManager.configure` (sleep) return early when mode, API URL, and headers are unchanged — safe to call again after login or when rebuilding config; updated headers (e.g. new token) still persist.
+- **Idempotent background delivery configure (iOS):** workout `BackgroundDeliveryManager.configure` (removed in 0.0.10) and `SleepBackgroundDeliveryManager.configure` (sleep) return early when unchanged — safe to call again after login or when rebuilding config.
 
 ### Documentation
 
@@ -180,7 +210,7 @@ A new test card has been added at the top of the **Sleep Data** screen in the ex
 |--------|--------|
 | **Set Logged In** | `UserSessionManager.setUserLoggedIn(true, userId: ...)` with a configurable test user ID |
 | **Set Logged Out** | `UserSessionManager.setUserLoggedIn(false)` |
-| **Configure Background → Logs API** | `configureSleepBackgroundDelivery(mode: .api, apiURL: logsEndpoint)` — routes sleep payloads to the same server as remote logs |
+| **Re-apply delivery arm** | `configureSleepBackgroundDelivery` with local-only config (idempotent) |
 
 **Changed in:** `example/lib/sleep_data_screen.dart`
 
@@ -355,7 +385,7 @@ A new **"Date Format Tests"** section has been added to the Push Workouts screen
 **Removed from iOS (`HumangoHealthPlugin.swift`):**
 - `"getLocalWorkouts"` from the workout read channel routing list
 
-**Migration:** If you were calling `getLocalWorkouts()` on app startup, switch to `BackgroundDeliveryMode.api`. Workouts will be pushed directly to your API endpoint by the native iOS layer — both in foreground and background — with no additional Flutter call required.
+**Migration:** If you were calling `getLocalWorkouts()` on app startup, use `workoutStream` and/or consume native `BackgroundWorkouts.pending` (see 0.0.10+) and POST from your app — the plugin does not HTTP workouts.
 
 ---
 
@@ -408,7 +438,7 @@ A **login/logout gate** prevents background HealthKit observers from auto-starti
 **What is cleared on logout:**
 | Data | Cleared by |
 |------|-----------|
-| Workout background delivery config | `BackgroundDeliveryManager.clearConfiguration()` |
+| Workout background delivery config | `WorkoutStreamDelivery.clearConfiguration()` |
 | Sleep background delivery config + local sessions | `SleepBackgroundDeliveryManager.clearConfiguration()` |
 | Sleep session state (in-progress accumulation) | `SleepSessionDetector` reset |
 | Scheduled workouts cache | `ScheduledWorkoutStore` clear |

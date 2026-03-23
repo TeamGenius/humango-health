@@ -285,7 +285,7 @@ class _SleepDataScreenState extends State<SleepDataScreen> {
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
             const Text(
-              '🧪 Background Delivery Test Setup',
+              '🧪 Session + local sleep/workout delivery',
               style: TextStyle(fontWeight: FontWeight.bold, fontSize: 13),
             ),
             const SizedBox(height: 8),
@@ -350,8 +350,8 @@ class _SleepDataScreenState extends State<SleepDataScreen> {
                     SizedBox(
                       width: double.infinity,
                       child: FilledButton.icon(
-                        icon: const Icon(Icons.cloud_upload, size: 16),
-                        label: const Text('Re-apply background config (idempotent)'),
+                        icon: const Icon(Icons.settings_backup_restore, size: 16),
+                        label: const Text('Re-apply delivery arm (idempotent)'),
                         onPressed: _configureBgDelivery,
                         style: FilledButton.styleFrom(
                           backgroundColor: Colors.indigo,
@@ -378,12 +378,11 @@ class _SleepDataScreenState extends State<SleepDataScreen> {
                     ],
                     const SizedBox(height: 4),
                     Text(
-                      'Sleep API: ${HealthSyncCoordinator.defaultSleepLogsApiUrl}',
+                      'Plugin stores sleep sessions locally — upload from your app.',
                       style: TextStyle(
                         fontSize: 10,
                         color: Colors.grey.shade600,
                       ),
-                      overflow: TextOverflow.ellipsis,
                     ),
                   ],
                 );

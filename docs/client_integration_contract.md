@@ -25,10 +25,10 @@ The library is intended to be **self-contained** on iOS: it **fetches** HealthKi
 
 | Role | Responsibility |
 |------|----------------|
-| **Library (`humango_health`)** | **Owns** HealthKit access on the device: **fetches** data via native queries/observers/delivery, and **pushes** updates to subscribed Dart clients (and optionally to a configured backend). **Emits when there is a real update** (or when an explicit one-shot completes). Does **not** depend on the app polling to discover HealthKit changes. |
+| **Library (`humango_health`)** | **Owns** HealthKit access on the device: **fetches** data via native queries/observers/delivery, and **pushes** updates to subscribed Dart clients and local queues. **Emits when there is a real update** (or when an explicit one-shot completes). Does **not** depend on the app polling to discover HealthKit changes. |
 | **Client app** | **Subscribes once per domain**, parses events, updates local state and UI. Does **not** use periodic polling as the primary sync mechanism for data the library already observes. |
 
-**Background upload to your API** (e.g. sleep/workout `BackgroundDeliveryMode.api`) is a **separate path** from the **foreground UI stream**; both may coexist. The library should avoid redundant work and document when each path fires.
+**Workouts** are delivered via `workoutStream` or pending `UserDefaults` JSON only. **Sleep** finalized sessions are stored locally for `getLocalSleepSessions()` — the plugin **does not** POST workout or sleep session payloads to your API.
 
 ---
 
@@ -42,9 +42,9 @@ flowchart LR
   API[Backend API]
 
   HK -->|observer / delivery on change| Lib
-  Lib -->|EventChannel / Dart Stream| App
-  Lib -->|optional background HTTP| API
-  App -->|configure URLs, headers, subscribe| Lib
+  Lib -->|streams + local queues| App
+  App -->|POST session payloads| API
+  App -->|configure, subscribe| Lib
 ```
 
 ---
@@ -120,12 +120,12 @@ For each public `Stream` / `EventChannel` surface:
 
 Optional: configuration (debounce window, strict dedupe on/off) for different app tradeoffs.
 
-### 4. Foreground stream vs background API mode
+### 4. Foreground stream vs background delivery
 
 | Path | Purpose |
 |------|---------|
-| **UI stream** (e.g. `WorkoutReadManager.workoutStream`) | In-app state and screens. |
-| **Background delivery** (`BackgroundDeliveryConfig` / API URL) | Server sync from **native iOS** (plugin API mode or your Runner code), not Dart-only while suspended. Host app still uses one orchestration module for `configure*` + session. See [guide § Background uploads](client_app_integration_guide.md#background-uploads-your-backend-but-native-execution). |
+| **Workout UI stream** (`WorkoutReadManager.workoutStream`) | Real-time workout JSON; pending queue in `UserDefaults` when no listener. **No** plugin HTTP for workouts. |
+| **Sleep** (`SleepBackgroundDeliveryConfig`) | Local pending queue only; retrieve with `getLocalSleepSessions()` and upload from the app. |
 
 If the client must react to background upload outcomes, provide a **small, documented** stream or callback that fires only on those outcomes — **not** as a stand-in for polling.
 

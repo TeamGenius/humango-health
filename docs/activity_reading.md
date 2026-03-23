@@ -1005,17 +1005,8 @@ manager.workoutStream.listen((workout) {
 **User Action:** App goes to background, workouts continue to be captured
 
 ```dart
-// Configure background delivery BEFORE backgrounding
-await manager.configureBackgroundDelivery(
-  BackgroundDeliveryConfig(
-    mode: BackgroundDeliveryMode.api,
-    apiURL: 'https://api.example.com/workouts',
-    headers: {
-      'Authorization': 'Bearer $token',
-      'Content-Type': 'application/json',
-    },
-  ),
-);
+// Arm stream / pending delivery (no plugin HTTP)
+await manager.configureBackgroundDelivery(const BackgroundDeliveryConfig());
 ```
 
 **iOS Flow:**
@@ -1033,21 +1024,12 @@ await manager.configureBackgroundDelivery(
    - Create `RouteService` (background mode)
    - Fetch routes (one-shot)
    - Build `HuWorkout`
-9. `BackgroundDeliveryManager.deliverWorkout()`:
-   - If API mode: POST to configured URL
-   - If localStorage mode: Store in UserDefaults
-10. App returns to background
+9. `WorkoutStreamDelivery` delivers JSON to Flutter’s `workoutStream` if a listener exists; otherwise appends to `UserDefaults` (`BackgroundWorkouts.pending`) for your Runner/native or a future bridge to consume.
 
 **On App Resume:**
 ```dart
-// App returns to foreground
 await manager.enterForegroundMode();
-
-// Retrieve locally stored workouts
-final localWorkouts = await manager.getLocalWorkouts();
-print('Retrieved ${localWorkouts.length} workouts from background');
-
-// Process and display workouts...
+// Prefer a `workoutStream` subscription for live delivery; use `readWorkouts` for catch-up if needed.
 ```
 
 ### Workflow 4: Matching with Pushed Workouts
@@ -1209,110 +1191,17 @@ if ageSinceEnd <= twoHours {
 
 ---
 
-## Background Delivery Configuration
+## Background delivery configuration
 
-### User-Facing Configuration
+Workout background delivery is **stream + pending JSON only**. Call:
 
 ```dart
-// Example: Configure API delivery
-await workoutManager.configureBackgroundDelivery(
-  BackgroundDeliveryConfig(
-    mode: BackgroundDeliveryMode.api,
-    apiURL: 'https://api.example.com/workouts',
-    headers: {
-      'Authorization': 'Bearer eyJhbGc...',
-      'X-User-ID': 'user_123',
-      'Content-Type': 'application/json',
-    },
-  ),
-);
-
-// Example: Configure local storage
-await workoutManager.configureBackgroundDelivery(
-  BackgroundDeliveryConfig(
-    mode: BackgroundDeliveryMode.localStorage,
-  ),
-);
-
-
+await workoutManager.configureBackgroundDelivery(const BackgroundDeliveryConfig());
 ```
 
-### iOS Background Delivery Implementation
+Native `WorkoutStreamDelivery` sends completed workout JSON on `workoutStream` when the Dart side is listening; otherwise it appends to `UserDefaults` under `BackgroundWorkouts.pending`. The plugin does **not** POST workouts to your API — upload from your app (Dart when foreground, or Runner native for suspended uploads).
 
-**API Delivery:**
-```swift
-private func pushToAPI(_ workout: HuWorkout) async {
-    guard let url = apiURL else { return }
-    guard let data = workout.toJson() else { return }
-    
-    var request = URLRequest(url: url)
-    request.httpMethod = "POST"
-    request.httpBody = data
-    request.timeoutInterval = 30
-    
-    // Add configured headers
-    for (key, value) in headers {
-        request.setValue(value, forHTTPHeaderField: key)
-    }
-    
-    do {
-        let (responseData, response) = try await URLSession.shared.data(for: request)
-        
-        if let http = response as? HTTPURLResponse {
-            debugPrint("API push status: \(http.statusCode)")
-            
-            if http.statusCode == 200 || http.statusCode == 201 {
-                // Success - mark as pushed
-                await WorkoutRecordStore.shared.markPushed(
-                    deviceActivityId: workout.deviceActivityId
-                )
-            } else {
-                // Server error - leave pushed=false for retry
-                debugPrint("API error: \(http.statusCode)")
-            }
-        }
-    } catch {
-        debugPrint("Network error: \(error.localizedDescription)")
-        // Leave pushed=false for retry on next fetch
-    }
-}
-```
-
-**Local Storage:**
-```swift
-private func storeLocally(_ workout: HuWorkout) async {
-    guard let json = workout.toJson(),
-          let jsonString = String(data: json, encoding: .utf8) else {
-        return
-    }
-    
-    let key = "BackgroundWorkouts.pending"
-    var existing = UserDefaults.standard.stringArray(forKey: key) ?? []
-    existing.append(jsonString)
-    
-    // Limit to 100 workouts to prevent storage bloat
-    if existing.count > 100 {
-        existing = Array(existing.suffix(100))
-    }
-    
-    UserDefaults.standard.set(existing, forKey: key)
-    UserDefaults.standard.synchronize()
-    
-    debugPrint("Stored workout locally: \(workout.deviceActivityId)")
-}
-
-func retrieveLocalWorkouts() async -> [String] {
-    let key = "BackgroundWorkouts.pending"
-    let workouts = UserDefaults.standard.stringArray(forKey: key) ?? []
-    
-    // Clear after retrieval
-    UserDefaults.standard.removeObject(forKey: key)
-    UserDefaults.standard.synchronize()
-    
-    debugPrint("Retrieved \(workouts.count) local workouts")
-    return workouts
-}
-```
+Legacy `mode: api` is rejected on iOS (only `localStorage` is valid).
 
 ---
 
@@ -1422,7 +1311,7 @@ func handleSetImportPreferences(_ call: FlutterMethodCall, _ result: FlutterResu
 | `authorizationFailed` | HealthKit permission denied | Return error to Flutter |
 | `queryFailed` | HKQuery error | Log error, return empty array |
 | `backgroundDeliveryFailed` | Background delivery setup failed | Fall back to foreground only |
-| `apiPushFailed` | Network/server error | Leave pushed=false, retry later |
+| *(removed)* | Native workout HTTP upload | Use app-side POST from stream/pending JSON |
 
 ---
 
@@ -1634,65 +1523,48 @@ await manager.stopMonitoring();
 await subscription.cancel();
 ```
 
-### Example 3: Configure Background API Push
+### Example 3: Arm background delivery (stream / pending)
 
 ```dart
-// Configure API delivery
-await manager.configureBackgroundDelivery(
-  BackgroundDeliveryConfig(
-    mode: BackgroundDeliveryMode.api,
-    apiURL: 'https://api.myapp.com/workouts',
-    headers: {
-      'Authorization': 'Bearer ${userToken}',
-      'Content-Type': 'application/json',
-    },
-  ),
-);
-
-print('Background delivery configured - workouts will push to API');
+await manager.configureBackgroundDelivery(const BackgroundDeliveryConfig());
 ```
 
-### Example 4: Retrieve Background Workouts on App Launch
+### Example 4: Subscribe to completed workouts
 
 ```dart
+import 'dart:async';
+
 class MyApp extends StatefulWidget {
   @override
-  _MyAppState createState() => _MyAppState();
+  State<MyApp> createState() => _MyAppState();
 }
 
 class _MyAppState extends State<MyApp> with WidgetsBindingObserver {
   final manager = WorkoutReadManager();
-  
+  StreamSubscription<String>? _workoutSub;
+
   @override
   void initState() {
     super.initState();
     WidgetsBinding.instance.addObserver(this);
-    _checkForBackgroundWorkouts();
+    _workoutSub = manager.workoutStream.listen((json) {
+      // POST json to your API or update local state
+    });
   }
-  
-  Future<void> _checkForBackgroundWorkouts() async {
-    final localWorkouts = await manager.getLocalWorkouts();
-    
-    if (localWorkouts.isNotEmpty) {
-      print('Found ${localWorkouts.length} workouts from background');
-      
-      // Process and display
-      for (var workout in localWorkouts) {
-        _processWorkout(workout);
-      }
-      
-      // Show notification
-      _showNotification('${localWorkouts.length} workouts synced');
-    }
+
+  @override
+  void dispose() {
+    _workoutSub?.cancel();
+    WidgetsBinding.instance.removeObserver(this);
+    super.dispose();
   }
-  
+
   @override
   void didChangeAppLifecycleState(AppLifecycleState state) {
     if (state == AppLifecycleState.paused) {
       manager.enterBackgroundMode();
     } else if (state == AppLifecycleState.resumed) {
       manager.enterForegroundMode();
-      _checkForBackgroundWorkouts();
     }
   }
 }
@@ -1729,16 +1601,16 @@ manager.workoutStream.listen((workout) {
 2. **Background Delivery Limits:** System may throttle if too many wake-ups
 3. **Route Sync Delay:** GPS routes may take minutes/hours to fully sync from Apple Watch
 4. **2-Hour Window Assumption:** Assumes route data completes within 2 hours (may vary)
-5. **UserDefaults Size:** Storing large workout JSON may hit UserDefaults limits (use local storage mode sparingly)
-6. **API Retry Logic:** Current implementation doesn't retry failed API pushes (left to app logic)
-7. **Network Dependency:** Background API push requires network connectivity
+5. **UserDefaults Size:** Large pending workout JSON in `BackgroundWorkouts.pending` can grow; drain or cap in your app / Runner code.
+6. **Upload retries:** Your app owns HTTP — implement retry/backoff where needed.
+7. **Suspended Dart:** When no stream listener is attached, workouts queue natively until your app or Runner consumes them.
 
 ---
 
 ## Future Enhancements
 
-1. **Exponential Backoff for API Retries:** Implement in `BackgroundDeliveryManager`
-2. **Batch API Uploads:** Send multiple workouts in single request
+1. **Dart API for pending queue:** Optional method channel to read `BackgroundWorkouts.pending` without Runner code
+2. **Batch uploads:** App-side batching when posting queued JSON
 3. **Local SQLite Storage:** Replace UserDefaults for large workout volumes
 4. **Incremental Route Updates:** Stream route data as it arrives (don't wait for completion)
 5. **Workout Editing:** Support for updating/deleting workouts

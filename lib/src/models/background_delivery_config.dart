@@ -1,34 +1,26 @@
-enum BackgroundDeliveryMode { api, localStorage }
+/// Workout background delivery: [workoutStream] when the app has a listener, otherwise
+/// native queues JSON in UserDefaults until the host app reads it (no HTTP from the plugin).
+enum BackgroundDeliveryMode {
+  localStorage,
+}
 
 class BackgroundDeliveryConfig {
   final BackgroundDeliveryMode mode;
-  final String? apiURL;
-  final Map<String, String>? headers;
 
-  BackgroundDeliveryConfig({
-    required this.mode,
-    this.apiURL,
-    this.headers,
+  const BackgroundDeliveryConfig({
+    this.mode = BackgroundDeliveryMode.localStorage,
   });
 
   Map<String, dynamic> toJson() {
-    return {
-      'mode': mode.name,
-      'apiURL': apiURL,
-      'headers': headers ?? {},
-    };
+    return {'mode': mode.name};
   }
 
   factory BackgroundDeliveryConfig.fromJson(Map<String, dynamic> json) {
-    return BackgroundDeliveryConfig(
-      mode: BackgroundDeliveryMode.values.firstWhere(
-        (e) => e.name == json['mode'],
-        orElse: () => BackgroundDeliveryMode.localStorage,
-      ),
-      apiURL: json['apiURL'],
-      headers: (json['headers'] as Map<String, dynamic>?)?.map(
-        (k, v) => MapEntry(k, v.toString()),
-      ),
+    final modeName = json['mode'] as String?;
+    final mode = BackgroundDeliveryMode.values.firstWhere(
+      (e) => e.name == modeName,
+      orElse: () => BackgroundDeliveryMode.localStorage,
     );
+    return BackgroundDeliveryConfig(mode: mode);
   }
 }

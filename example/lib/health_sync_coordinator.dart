@@ -9,16 +9,11 @@ class HealthSyncCoordinator extends ChangeNotifier {
   final WorkoutReadManager workoutRead = WorkoutReadManager();
   final SleepDataManager sleep = SleepDataManager();
 
-  /// Example logs endpoint (same as previous Sleep tab default).
-  static const String defaultSleepLogsApiUrl =
-      'https://humango-api-629346406456.us-central1.run.app/log';
-
   String? sessionStatus;
   String? backgroundDeliveryStatus;
   String? lastError;
 
-  /// Call after credentials / user id are available. Safe to repeat (e.g. token refresh
-  /// flows should re-call [ensureBackgroundDeliveryConfigured] with updated headers later).
+  /// Call after credentials / user id are available. Safe to repeat.
   Future<void> setUserLoggedIn({
     required bool loggedIn,
     String? userId,
@@ -46,26 +41,16 @@ class HealthSyncCoordinator extends ChangeNotifier {
     notifyListeners();
   }
 
-  /// Idempotent: configures workout background (local storage) + sleep background (API).
-  /// Native layer skips no-op persists when unchanged.
-  Future<void> ensureBackgroundDeliveryConfigured({
-    String sleepApiUrl = defaultSleepLogsApiUrl,
-  }) async {
+  /// Idempotent: arms workout stream/pending + sleep local session queue (no plugin HTTP).
+  Future<void> ensureBackgroundDeliveryConfigured() async {
     lastError = null;
     try {
-      await workoutRead.configureBackgroundDelivery(
-        BackgroundDeliveryConfig(
-          mode: BackgroundDeliveryMode.localStorage,
-        ),
-      );
+      await workoutRead.configureBackgroundDelivery(const BackgroundDeliveryConfig());
       final sleepResult = await sleep.configureSleepBackgroundDelivery(
-        SleepBackgroundDeliveryConfig(
-          mode: SleepBackgroundDeliveryMode.api,
-          apiURL: sleepApiUrl,
-        ),
+        const SleepBackgroundDeliveryConfig(),
       );
       backgroundDeliveryStatus =
-          'Workouts → localStorage; sleep → api (${sleepResult['mode'] ?? 'api'}) → $sleepApiUrl';
+          'Workouts + sleep → local pending (${sleepResult['mode'] ?? 'localStorage'}) — upload from app';
     } catch (e, st) {
       lastError = '$e';
       backgroundDeliveryStatus = 'Error: $e';

@@ -4,13 +4,13 @@
 #
 Pod::Spec.new do |s|
   s.name             = 'humango_health'
-  s.version          = '0.0.9'
+  s.version          = '0.0.11'
   s.summary          = 'Flutter plugin for iOS HealthKit & WorkoutKit — health metrics, workouts, sleep.'
   s.description      = <<-DESC
   Flutter plugin for integrating iOS HealthKit and WorkoutKit into other apps.
   Capture health metrics (HRV, resting HR, body fat, weight, height), read and
   monitor workouts, push scheduled workouts to Apple Watch, and read/monitor
-  sleep data. Supports API or local background delivery. iOS 18.0+.
+  sleep data. Workout delivery is stream/UserDefaults only; sleep sessions are queued locally (no plugin HTTP). iOS 18.0+.
                        DESC
   s.homepage         = 'https://github.com/humango/humango-health'
   s.license          = { :file => '../LICENSE' }

@@ -370,7 +370,7 @@ class WorkoutServiceChannel: NSObject, FlutterStreamHandler {
             workoutService = WorkoutService(startDate: startDate)
             
             // Pass the eventSink to the manager so RouteService can push to it.
-            BackgroundDeliveryManager.shared.attachEventSink(eventSink)
+            WorkoutStreamDelivery.shared.attachEventSink(eventSink)
         }
         
         Task {
@@ -390,32 +390,23 @@ class WorkoutServiceChannel: NSObject, FlutterStreamHandler {
     
     private func handleConfigureBackground(_ call: FlutterMethodCall, _ result: @escaping FlutterResult) {
         guard let args = call.arguments as? [String: Any],
-              let modeStr = args["mode"] as? String,
-              let mode = BackgroundDeliveryMode(rawValue: modeStr) else {
+              let modeStr = args["mode"] as? String else {
             result(FlutterError(code: "INVALID_ARGS", message: "Missing or invalid mode", details: nil))
             return
         }
-        
-        let apiURL = (args["apiURL"] as? String).flatMap(URL.init(string:))
-        let headers = args["headers"] as? [String: String] ?? [:]
-        
-        Task {
-            await BackgroundDeliveryManager.shared.configure(
-                mode: mode,
-                apiURL: apiURL,
-                headers: headers
-            )
-            
-            // Auto-start monitoring when API is configured for the first time
-            if mode == .api && apiURL != nil && self.workoutService == nil {
-                DispatchQueue.main.async {
-                    self.autoStartIfConfigured()
-                }
+
+        guard modeStr == "localStorage" else {
+            result(FlutterError(code: "INVALID_ARGS", message: "Unknown mode \"\(modeStr)\". Use localStorage.", details: nil))
+            return
+        }
+
+        WorkoutStreamDelivery.shared.arm()
+
+        DispatchQueue.main.async {
+            if self.workoutService == nil {
+                self.autoStartIfConfigured()
             }
-            
-            DispatchQueue.main.async {
-                result(nil)
-            }
+            result(nil)
         }
     }
     
@@ -543,17 +534,15 @@ class WorkoutServiceChannel: NSObject, FlutterStreamHandler {
     
     // MARK: - Auto-Start on App Launch
     
-    /// Auto-starts workout monitoring if API delivery is configured in UserDefaults.
+    /// Auto-starts workout monitoring if `configureBackgroundDelivery` has armed stream delivery.
     /// Called from HumangoHealthPlugin.register() on every app launch/background wake.
-    /// First launch: no config in UserDefaults → no-op.
-    /// Subsequent launches: config persisted from previous configureBackgroundDelivery() call → auto-start.
     func autoStartIfConfigured() {
         guard UserAuthStateManager.shared.isLoggedIn else {
             debugPrint("Read Workouts: Auto-start skipped — user not logged in")
             return
         }
-        guard BackgroundDeliveryManager.shared.isAPIConfigured else {
-            debugPrint("Read Workouts: Auto-start skipped — no API config in UserDefaults")
+        guard WorkoutStreamDelivery.shared.isArmedForAutoStart else {
+            debugPrint("Read Workouts: Auto-start skipped — workout stream delivery not armed (call configureBackgroundDelivery)")
             return
         }
         guard workoutService == nil else {
@@ -563,11 +552,11 @@ class WorkoutServiceChannel: NSObject, FlutterStreamHandler {
         
         let startDate = Date().addingTimeInterval(-24 * 60 * 60) // 24h lookback
         workoutService = WorkoutService(startDate: startDate)
-        BackgroundDeliveryManager.shared.attachEventSink(eventSink)
-        
+        WorkoutStreamDelivery.shared.attachEventSink(eventSink)
+
         Task {
             await workoutService?.start()
-            debugPrint("Read Workouts: ✅ Auto-started workout monitoring (API mode) from \(startDate)")
+            debugPrint("Read Workouts: ✅ Auto-started workout monitoring (stream/pending) from \(startDate)")
         }
     }
 
@@ -577,8 +566,8 @@ class WorkoutServiceChannel: NSObject, FlutterStreamHandler {
         workoutService?.stopLiveUpdates()
         workoutService?.stopBackgroundMonitoring()
         workoutService = nil
-        BackgroundDeliveryManager.shared.clearConfiguration()
-        BackgroundDeliveryManager.shared.attachEventSink(nil)
+        WorkoutStreamDelivery.shared.clearConfiguration()
+        WorkoutStreamDelivery.shared.attachEventSink(nil)
         debugPrint("Read Workouts: ✅ Stopped monitoring and cleared all background config on logout")
     }
     
@@ -587,13 +576,13 @@ class WorkoutServiceChannel: NSObject, FlutterStreamHandler {
     func onListen(withArguments arguments: Any?, eventSink events: @escaping FlutterEventSink) -> FlutterError? {
         self.eventSink = events
         // If startMonitoring was already called, attach it now
-        BackgroundDeliveryManager.shared.attachEventSink(events)
+        WorkoutStreamDelivery.shared.attachEventSink(events)
         return nil
     }
     
     func onCancel(withArguments arguments: Any?) -> FlutterError? {
         self.eventSink = nil
-        BackgroundDeliveryManager.shared.attachEventSink(nil)
+        WorkoutStreamDelivery.shared.attachEventSink(nil)
         return nil
     }
 }

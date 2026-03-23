@@ -191,64 +191,48 @@ await sleepManager.configureSleepSession(
 
 ---
 
-## Background Delivery System
+## Background delivery (local queue only)
 
-### Delivery Modes
+Finalized sleep sessions are stored as JSON strings in `UserDefaults` (`com.humango.health.sleepPendingLocal`). The plugin does **not** POST them to your API. Call `getLocalSleepSessions()` from your app and upload (Dart or Runner native).
 
 ```dart
 enum SleepBackgroundDeliveryMode {
-  api,          // POST finalized session JSON to a remote API
-  localStorage, // Store finalized session in UserDefaults (default)
+  localStorage,
 }
-```
 
-#### API Mode
-
-```dart
 await sleepManager.configureSleepBackgroundDelivery(
-  SleepBackgroundDeliveryConfig(
-    mode: SleepBackgroundDeliveryMode.api,
-    apiURL: 'https://api.example.com/sleep-sessions',
-    headers: {'Authorization': 'Bearer <token>'},
-  ),
+  const SleepBackgroundDeliveryConfig(),
 );
-// No need to call startMonitoring() — auto-starts on next app launch
-// if API is configured and user is logged in.
 ```
 
-- Configuration is persisted to UserDefaults and survives app restarts.
-- On app launch `SleepDataManager.autoStartIfConfigured()` is called automatically from the plugin's `register()`.
-- If the API call returns a non-2xx HTTP status or a network error occurs, the session JSON is stored locally as a fallback.
+- Arming persists to `UserDefaults` (`HumangoSleepDeliveryArmed`) and survives app restarts. Legacy keys from removed API mode are cleared when you arm.
+- On app launch, `SleepDataManager.autoStartIfConfigured()` runs from the plugin `register()` when the user is logged in and delivery is armed.
+- Passing `mode: api` to the channel fails (`INVALID_MODE` on iOS — only `localStorage` is accepted).
 
 ### Background payload
 
-The JSON delivered (via API POST or local storage) contains:
+The JSON stored for each finalized session follows this shape (example — actual keys match native aggregation):
 
 ```json
 {
-  "samples": [ /* full list of SleepSample objects */ ],
-  "sampleCount": 42,
-  "totalSleepSeconds": 25200,
-  "totalSleepMinutes": 420,
-  "totalSleepHours": 7.0,
-  "stageTotals": {
-    "inBed":            { "seconds": 300,  "minutes": 5   },
-    "asleepCore":       { "seconds": 9000, "minutes": 150 },
-    "asleepDeep":       { "seconds": 5400, "minutes": 90  },
-    "asleepREM":        { "seconds": 7200, "minutes": 120 },
-    "asleepUnspecified":{ "seconds": 3600, "minutes": 60  },
-    "awake":            { "seconds": 600,  "minutes": 10  }
-  },
-  "fetchedFrom": "2026-03-17T22:00:00.000Z",
-  "fetchedTo":   "2026-03-18T07:00:00.000Z",
-  "reason": "sleep>=420m, no_deep_sleep_recently, stale_65m",
-  "segmentCount": 42,
-  "isFinalized": true,
-  "finalizedAt": "2026-03-18T07:15:00.000Z",
-  "sessionStartDate": "2026-03-17T22:05:00.000Z",
-  "latestSegmentEndDate": "2026-03-18T06:50:00.000Z"
+  "SOURCE": "Apple Watch",
+  "SOURCE_BUNDLE": "com.apple.health.…",
+  "TIMEZONE": "Asia/Kolkata",
+  "TOTAL_SLEEP": 25200,
+  "SLEEP_IN_BED": 0,
+  "SLEEP_LIGHT": 10800,
+  "SLEEP_DEEP": 3600,
+  "SLEEP_REM": 7200,
+  "SLEEP_UNSPECIFIED": 3600,
+  "SLEEP_AWAKE": 900,
+  "BED_TIME": "2026-03-17T22:30:00.000Z",
+  "WAKE_TIME": "2026-03-18T06:15:00.000Z",
+  "START_DATE": "2026-03-17T18:00:00.000Z",
+  "END_DATE": "2026-03-18T06:30:00.000Z"
 }
 ```
+
+Numeric stage fields are **seconds** (see `SleepDataManager.buildAggregatedPayload` on iOS).
 
 ---
 
@@ -322,7 +306,7 @@ UserDefaults key: com.humango.health.sleepSessionState
 | `configureSleepSession` | `freezeWindowStartHour?, freezeWindowEndHour?, minimumSleepMinutes?, stalenessThresholdMinutes?, deepSleepAbsenceWindowMinutes?` | `{status, ...config}` |
 | `getSleepSessionStatus` | — | `{status, reason, isInFreezeWindow, segmentCount, totalSleepMinutes, hasRecentDeepSleep, isFinalized, ...}` |
 | `resetSleepSession` | — | `{status}` |
-| `configureSleepBackgroundDelivery` | `mode: "api"\|"localStorage"`, `apiURL?: String`, `headers?: Map` | `{status, mode, apiURL, headersCount}` |
+| `configureSleepBackgroundDelivery` | `mode: "localStorage"` only | `{status, mode}` |
 | `getLocalSleepSessions` | — | `[String]` — list of session JSON strings |
 | `enterForeground` | — | `null` (manual override, rarely needed) |
 | `enterBackground` | — | `null` (manual override, rarely needed) |
@@ -336,10 +320,9 @@ UserDefaults key: com.humango.health.sleepSessionState
 | `com.humango.health.storedSleepData` | Latest full sleep data snapshot (binary JSON) |
 | `com.humango.health.lastSleepFetchDate` | Date of last UserDefaults write |
 | `com.humango.health.sleepSessionState` | Serialised `SleepSessionState` |
-| `com.humango.health.sleepDeliveryMode` | `"api"` or `"localStorage"` |
-| `com.humango.health.sleepDeliveryURL` | Configured API URL |
-| `com.humango.health.sleepDeliveryHeaders` | Custom HTTP headers dictionary |
-| `com.humango.health.sleepPendingLocal` | Array of locally-stored session JSON strings |
+| `HumangoSleepDeliveryArmed` | `true` after successful configure (auto-start gate) |
+| `com.humango.health.sleepPendingLocal` | Pending finalized session JSON strings (cleared after `getLocalSleepSessions`) |
+| *(legacy)* `com.humango.health.sleepDeliveryMode` / `sleepDeliveryURL` / `sleepDeliveryHeaders` | Removed on arm; not used for delivery |
 
 ---
 
@@ -354,7 +337,7 @@ HumangoHealthPlugin.register()
         ▼
 SleepDataManager.autoStartIfConfigured()
         ├─ user NOT logged in → skip
-        ├─ no API config in UserDefaults → skip
+        ├─ sleep delivery not armed → skip
         ├─ already monitoring → skip
         └─ else → set monitorStartDate (12 h lookback)
                    start live updates (foreground) OR background monitoring
@@ -373,10 +356,9 @@ On **logout**, `stopAndClearAll()` must be called:
 |-------|---------------|-------------|
 | HealthKit unavailable | `SleepDataException(SLEEP_FETCH_ERROR)` | Device does not support HealthKit |
 | Sleep type unavailable | `SleepDataException(SLEEP_FETCH_ERROR)` | `HKCategoryTypeIdentifier.sleepAnalysis` not found |
-| Invalid delivery mode | `SleepDataException(INVALID_MODE)` | `mode` is not `"api"` or `"localStorage"` |
+| Invalid delivery mode | `SleepDataException(INVALID_MODE)` | `mode` is not `"localStorage"` |
 | Missing mode argument | `SleepDataException(INVALID_ARGS)` | `configureSleepBackgroundDelivery` called without `mode` |
-| API HTTP error (non-2xx) | — (falls back to localStorage) | Logged on iOS, session stored locally |
-| API network error | — (falls back to localStorage) | Logged on iOS, session stored locally |
+| Legacy `api` mode | `PlatformException` (`INVALID_MODE` on iOS) | Use local queue + app-side upload |
 
 All Dart exceptions are of type `SleepDataException`:
 
@@ -405,37 +387,29 @@ print('Slept ${data.totalSleepHours.toStringAsFixed(1)} hours');
 print('Deep sleep: ${data.stageTotals.asleepDeepMinutes.toStringAsFixed(0)} min');
 ```
 
-### Full setup with API delivery
+### Full setup: arm delivery + drain pending sessions
 
 ```dart
-// 1. Configure delivery (persists across restarts)
-await mgr.configureSleepBackgroundDelivery(
-  SleepBackgroundDeliveryConfig(
-    mode: SleepBackgroundDeliveryMode.api,
-    apiURL: 'https://api.example.com/sleep',
-    headers: {'Authorization': 'Bearer $token'},
-  ),
-);
+// 1. After login — arm local delivery (persists across restarts)
+await mgr.configureSleepBackgroundDelivery(const SleepBackgroundDeliveryConfig());
 
-// 2. Optionally customise session detection
-await mgr.configureSleepSession(minimumSleepMinutes: 300);
+// 2. Optional: startMonitoring / auto-start when logged in — see README
 
-// 3. Start monitoring (not required — autoStartIfConfigured() does it on next launch)
-await mgr.startMonitoring();
-
-// 4. On logout
-await mgr.stopMonitoring();
-// + call UserSessionManager.shared.setLoggedOut() which triggers stopAndClearAll()
+// 3. Upload from your app when the engine runs
+final sessions = await mgr.getLocalSleepSessions();
+for (final json in sessions) {
+  // POST `json` to your API
+}
 ```
 
-### localStorage mode — retrieve on app open
+### Retrieve on app open
 
 ```dart
-// On app resume
 final sessions = await mgr.getLocalSleepSessions();
 for (final json in sessions) {
   final decoded = jsonDecode(json) as Map<String, dynamic>;
-  print('Session: ${decoded['totalSleepHours']} h, reason: ${decoded['reason']}');
+  final totalSec = decoded['TOTAL_SLEEP'] as int? ?? 0;
+  print('Total sleep: ${totalSec / 3600} h');
 }
 ```
 

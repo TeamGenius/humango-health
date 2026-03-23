@@ -2,7 +2,7 @@
 
 A comprehensive Flutter plugin for integrating iOS HealthKit and WorkoutKit functionalities natively into the Humango platform.
 
-> **Version 0.0.9** — See [CHANGELOG](CHANGELOG.md) for what's new.
+> **Version 0.0.10** — See [CHANGELOG](CHANGELOG.md) for what's new.
 
 ## Table of Contents
 
@@ -18,7 +18,7 @@ A comprehensive Flutter plugin for integrating iOS HealthKit and WorkoutKit func
   - [Removing Scheduled Workouts](#removing-scheduled-workouts)
   - [Remove All Scheduled Workouts](#remove-all-scheduled-workouts)
 - [Workout Reading & Monitoring](#workout-reading--monitoring)
-- [Background Delivery Manager (Workouts + Sleep)](#background-delivery-manager-api-configuration)
+- [Background delivery configuration](#background-delivery-configuration)
 - [Sleep Data Reading & Monitoring](#sleep-data-reading--monitoring)
 - [Health Metrics Reading](#health-metrics-reading)
 - [Native iOS Lifecycle Management](#native-ios-lifecycle-management)
@@ -31,14 +31,14 @@ A comprehensive Flutter plugin for integrating iOS HealthKit and WorkoutKit func
 | **Permission Handling** | Request, verify, and continuously monitor HealthKit permissions |
 | **Workout Scheduling** | Push workouts to Apple Watch via WorkoutKit with native deduplication |
 | **Workout Reading** | Real-time workout monitoring with foreground/background modes |
-| **Sleep Data** | Fetch and monitor sleep analysis with foreground (Descriptor) + background (Observer) monitoring; inBed-check pipeline with 15-min re-check timer; flat aggregated payload delivered via API or local storage |
+| **Sleep Data** | Fetch and monitor sleep analysis with foreground (Descriptor) + background (Observer) monitoring; inBed-check pipeline with 15-min re-check timer; flat aggregated payload queued locally for your app to upload |
 | **Health Metrics (HRV)** | One-shot fetch plus automatic HRV updates in foreground, background, and when app is suspended (stream + pending retrieval) |
-| **Background Delivery** | Native iOS background processing with API or local storage delivery (workouts + sleep) |
+| **Background Delivery** | Workouts: stream + UserDefaults pending (no plugin HTTP). Sleep: UserDefaults pending session JSON (no plugin HTTP for session payloads). |
 | **Native Lifecycle Management** | Centralized iOS app lifecycle detection for automatic mode switching |
 
 ## Consumer app integration
 
-The plugin **reads HealthKit on the device** and **pushes** updates via streams (and optional background HTTP). Host apps **subscribe** and **configure** session/background delivery—see **[Client app integration guide](docs/client_app_integration_guide.md)** for the coordinator pattern and **[Client integration contract](docs/client_integration_contract.md)** for semantics.
+The plugin **reads HealthKit on the device** and **pushes** updates via streams and local queues. Session payloads for workouts and sleep are **not** POSTed by the plugin—your app uploads them. Host apps **subscribe** and **configure** session/background delivery—see **[Client app integration guide](docs/client_app_integration_guide.md)** for the coordinator pattern and **[Client integration contract](docs/client_integration_contract.md)** for semantics.
 
 Use **streams** and **one-shot** reads for catch-up after login—not a repeating poll for data the library already observes. Configure `configureBackgroundDelivery` / sleep delivery **once** after auth (idempotent; safe on token refresh). The [`example`](example/) app demonstrates this via [`HealthSyncCoordinator`](example/lib/health_sync_coordinator.dart).
 
@@ -96,10 +96,10 @@ The library uses a **user session gate** to prevent background health observers 
 
 ### Why This Matters
 
-The plugin persists background delivery configuration (API URL, headers, mode) across app launches so that HealthKit observers can auto-restart even when iOS relaunches the app in the background. Without a session gate:
+The plugin persists delivery configuration (workout armed flag; sleep URL/mode/headers where applicable) across app launches so HealthKit observers can auto-restart when iOS relaunches the app. Without a session gate:
 
 - A freshly installed app (no user yet) would attempt to start background observers on every launch.
-- After logout, background observers would continue running and posting data to the previous user's API endpoint.
+- After logout, background observers could continue running with stale configuration.
 
 The `UserSessionManager` solves both problems with a single boolean persisted in `UserDefaults`.
 
@@ -120,13 +120,13 @@ HumangoHealthPlugin.register()
 │  false ──→ Skip all auto-start                      │
 │            (no observers started)                   │
 │                                                     │
-│  true  ──→ Check API configuration                  │
+│  true  ──→ Check persisted delivery config          │
 │              │                                      │
-│              ├─ Workout API configured? ──→ Auto-start WorkoutService (24h lookback)
-│              │                          ──→ Not configured → no-op
+│              ├─ Workout delivery armed? ──→ Auto-start WorkoutService (24h lookback)
+│              │                          ──→ Not armed → no-op
 │              │                                      │
-│              └─ Sleep API configured?   ──→ Auto-start SleepDataManager (12h lookback)
-│                                         ──→ Not configured → no-op
+│              └─ Sleep delivery armed? ──→ Auto-start SleepDataManager (12h lookback)
+│                                         ──→ Not armed → no-op
 └─────────────────────────────────────────────────────┘
 ```
 
@@ -135,12 +135,12 @@ HumangoHealthPlugin.register()
 ```
 User installs app
   → Logs in → setUserLoggedIn(true)
-  → Sleep/workout background API NOT configured
+  → Does not call configureBackgroundDelivery / sleep configure
   → Kills app
 
 Next launch:
   → isLoggedIn = true  ✅
-  → isAPIConfigured = false  → auto-start skipped ✅
+  → Workout not armed, sleep not configured → auto-start skipped ✅
   → Done — no observers running
 ```
 
@@ -149,12 +149,12 @@ Next launch:
 ```
 User installs app
   → Logs in → setUserLoggedIn(true)
-  → Configures sleep/workout API → monitoring starts immediately
+  → Calls configureBackgroundDelivery + sleep configure as needed → monitoring starts
   → Kills app
 
 Next launch:
   → isLoggedIn = true  ✅
-  → isAPIConfigured = true  → auto-start begins ✅
+  → Persisted workout/sleep config present → auto-start begins ✅
   → Sleep and workout observers resume automatically
 ```
 
@@ -164,8 +164,8 @@ Calling `setUserLoggedIn(false)` immediately and synchronously clears all of the
 
 | Data | What Is Cleared |
 |------|-----------------|
-| **Workout background config** | API URL, headers, delivery mode (`BackgroundDeliveryManager`) |
-| **Sleep background config** | API URL, headers, delivery mode, pending local sleep data (`SleepBackgroundDeliveryManager`) |
+| **Workout background config** | Armed flag + legacy keys cleared (`WorkoutStreamDelivery` — stream / UserDefaults pending only) |
+| **Sleep background config** | Armed flag, pending local sleep session queue (`SleepBackgroundDeliveryManager`) |
 | **Stored sleep data** | Sleep samples stored in `UserDefaults` during background monitoring |
 | **Sleep in-bed timer** | Cancels any pending 15-min re-check timer (`SleepDataManager.inBedCheckTimer`) |
 | **Scheduled workouts** | All workouts in `ScheduledWorkoutStore` (Apple Watch scheduled workouts cache) |
@@ -200,21 +200,14 @@ class AuthService {
     //    Supply userId so background loggers can tag remote log events with this user.
     await UserSessionManager.setUserLoggedIn(true, userId: userId);
 
-    // 2. Configure background delivery (starts monitoring immediately)
+    // 2. Arm workout delivery (stream when app listens; else UserDefaults queue).
+    //    POST workouts to your API from Dart or Runner native — the plugin does not HTTP workouts.
     await WorkoutReadManager().configureBackgroundDelivery(
-      BackgroundDeliveryConfig(
-        mode: BackgroundDeliveryMode.api,
-        apiURL: 'https://api.example.com/v1/workouts/ingest',
-        headers: {'Authorization': 'Bearer $authToken'},
-      ),
+      const BackgroundDeliveryConfig(),
     );
 
     await SleepDataManager().configureSleepBackgroundDelivery(
-      SleepBackgroundDeliveryConfig(
-        mode: SleepBackgroundDeliveryMode.api,
-        apiURL: 'https://api.example.com/v1/sleep-sessions',
-        headers: {'Authorization': 'Bearer $authToken'},
-      ),
+      const SleepBackgroundDeliveryConfig(),
     );
   }
 
@@ -227,7 +220,7 @@ class AuthService {
 }
 ```
 
-> **Important:** Always call `setUserLoggedIn(true)` **before** calling `configureBackgroundDelivery()` or `configureSleepBackgroundDelivery()`. The login flag must be set first so that if the app is killed and relaunched immediately, the auto-start logic finds both `isLoggedIn=true` and the API config in place.
+> **Important:** Always call `setUserLoggedIn(true)` **before** calling `configureBackgroundDelivery()` or `configureSleepBackgroundDelivery()`. The login flag must be set first so that if the app is killed and relaunched immediately, auto-start finds `isLoggedIn=true` and persisted delivery config (workouts and sleep: armed flags for stream/pending and local sleep queue).
 
 ---
 
@@ -995,9 +988,9 @@ final results = await pushManager.removeScheduledWorkouts(
 
 ---
 
-## Background Delivery Manager (API Configuration)
+## Background delivery configuration
 
-Both the **Workout** and **Sleep** subsystems support configurable background delivery — either pushing data directly to your backend API via native HTTP POST, or storing locally for retrieval on next app open.
+**Workouts:** `workoutStream` + `UserDefaults` pending queue only (no plugin HTTP). **Sleep:** finalized sessions are stored in `UserDefaults`; call `getLocalSleepSessions()` and POST from your app — the plugin does **not** HTTP sleep session payloads.
 
 ### Unified Architecture
 
@@ -1008,25 +1001,22 @@ Both subsystems share the same foreground/background query strategy regardless o
 | **Foreground** | `HKAnchoredObjectQueryDescriptor` | Yes — both modes |
 | **Background** | `HKObserverQuery` + `enableBackgroundDelivery()` | Yes — both modes |
 
-The **delivery mode** only controls how data is routed after it's received:
+**Workouts:** After `configureBackgroundDelivery`, completed workouts go to Flutter’s `workoutStream` when a listener is attached; otherwise they are queued in `UserDefaults` (`BackgroundWorkouts.pending`). The plugin **does not** POST workout JSON to your API — upload from your app (Dart or Runner native).
 
-| Delivery Mode | Foreground Behavior | Background Behavior |
-|---------------|--------------------|--------------------|  
-| **API** | Data accumulated → native HTTP POST on completion | Data accumulated → native HTTP POST on completion |
-| **localStorage** | Push to Flutter EventChannel in real-time | Store in UserDefaults for later retrieval |
+**Sleep:** After `configureSleepBackgroundDelivery`, the inBed-check pipeline stores one flat JSON object per finalized night in `com.humango.health.sleepPendingLocal` (see [Sleep background delivery](#sleep-background-delivery-local-storage-only)).
 
 ### Configuration Persistence
 
-All delivery configuration (`mode`, `apiURL`, `headers`) is persisted to `UserDefaults` and survives app restarts. This is critical because HealthKit background observers can fire when iOS relaunches your app.
+Persisted settings survive app restarts so HealthKit background observers can run after iOS relaunches the app.
 
-| Subsystem | UserDefaults Keys |
-|-----------|------------------|
-| **Workouts** | `HumangoDeliveryMode`, `HumangoDeliveryURL`, `HumangoDeliveryHeaders` |
-| **Sleep** | `com.humango.health.sleepDeliveryMode`, `com.humango.health.sleepDeliveryURL`, `com.humango.health.sleepDeliveryHeaders` |
+| Subsystem | UserDefaults (representative) |
+|-----------|------------------------------|
+| **Workouts** | `HumangoWorkoutStreamDeliveryArmed`, `BackgroundWorkouts.pending` (legacy `HumangoDelivery*` keys are cleared on configure) |
+| **Sleep** | `HumangoSleepDeliveryArmed`, `com.humango.health.sleepPendingLocal` (legacy `com.humango.health.sleepDelivery*` cleared when delivery is armed) |
 
 ### Auto-Start Monitoring
 
-Once API delivery is configured, monitoring **auto-starts on every subsequent app launch** — no Flutter `startMonitoring()` call is needed.
+When the user is logged in and delivery is configured, monitoring **auto-starts on app launch** (workouts: stream delivery armed; sleep: local delivery armed after `configureSleepBackgroundDelivery`).
 
 **How it works:**
 
@@ -1037,15 +1027,15 @@ App Launch / Background Wake
 HumangoHealthPlugin.register()
         │
         ▼
-Check UserDefaults:
-  ┌─ Workout API URL configured? ──→ Yes → Auto-start WorkoutService (24h lookback)
-  └─ Sleep API URL configured?   ──→ Yes → Auto-start SleepDataManager (12h lookback)
-                                  ──→ No  → No-op (wait for Flutter to configure)
+Check UserDefaults + session:
+  ┌─ Workout stream delivery armed? ──→ Yes → Auto-start WorkoutService (24h lookback)
+  └─ Sleep delivery armed? ──→ Yes → Auto-start SleepDataManager (12h lookback)
+                                       ──→ No  → No-op (wait for Flutter to configure)
 ```
 
-**First launch:** No monitoring starts — UserDefaults is empty. Flutter must call `configureBackgroundDelivery()` and/or `configureSleepBackgroundDelivery()` with API details. This also **immediately starts monitoring** after configuration.
+**First launch:** Flutter calls `configureBackgroundDelivery()` and/or `configureSleepBackgroundDelivery()` after login. Workout configure **arms** delivery and can start monitoring the same session.
 
-**Subsequent launches:** The persisted API config is detected at plugin registration time → monitoring starts automatically in the correct mode (foreground `HKAnchoredObjectQueryDescriptor` or background `HKObserverQuery` based on current app state).
+**Subsequent launches:** Persisted config is detected at plugin registration → monitoring starts when logged in.
 
 **Default lookback windows:**
 
@@ -1063,111 +1053,41 @@ await UserSessionManager.setUserLoggedIn(false);
 
 ---
 
-### Workout API Configuration
+### Workout background delivery (stream / pending only)
 
-#### Delivery Modes
-
-| Mode | Description |
-|------|-------------|
-| `BackgroundDeliveryMode.api` | Native iOS directly POSTs workout JSON to your configured API endpoint. |
-| `BackgroundDeliveryMode.localStorage` | Workouts are pushed to Flutter's `workoutStream` via EventChannel in real-time (foreground). In background, native iOS POSTs to API — `localStorage` mode is no longer supported for background delivery. |
-
-#### How It Works
-
-**API mode:**
-- Workouts are **always** pushed directly to your API endpoint via native HTTP POST — whether the app is in the foreground or background. Flutter's event stream is bypassed entirely.
-
-**localStorage mode (default):**
-- **Foreground:** Workouts are pushed to Flutter's `workoutStream` via EventChannel in real-time.
-- **Background:** Not applicable for background delivery. When background monitoring is required, use `BackgroundDeliveryMode.api` — the native iOS layer will POST workouts directly to your API endpoint.
-
-#### Configuring Workout API Mode
+| Behavior | Description |
+|----------|-------------|
+| **Foreground + stream listener** | Completed workout JSON is sent on `workoutStream`. |
+| **No listener (e.g. background)** | JSON is appended to `BackgroundWorkouts.pending` in `UserDefaults` for your app to consume. |
+| **HTTP** | Not performed by the plugin. POST to your backend from Dart when the app runs, or from your Runner native code. |
 
 ```dart
-import 'package:humango_health/humango_health.dart';
-
 final workoutManager = WorkoutReadManager();
 
-void configureWorkoutAPIDelivery() async {
-  await workoutManager.configureBackgroundDelivery(
-    BackgroundDeliveryConfig(
-      mode: BackgroundDeliveryMode.api,
-      apiURL: 'https://api.example.com/v1/workouts/ingest',
-      headers: {
-        'Authorization': 'Bearer <your-auth-token>',
-        'X-Device-Id': '<device-identifier>',
-        'Content-Type': 'application/json',
-      },
-    ),
-  );
-}
+await workoutManager.configureBackgroundDelivery(const BackgroundDeliveryConfig());
+// Optionally also call startMonitoring(startDate) for your desired lookback; auto-start may already run after configure when logged in.
 ```
 
-**What happens natively:**
-- The `apiURL` and `headers` are persisted to `UserDefaults`, surviving app restarts.
-- **All** detected workouts (foreground and background) are pushed via native HTTP POST.
-- On HTTP 2xx, the workout is marked as pushed in `WorkoutRecordStore` to prevent duplicates.
-- On failure, the error is logged natively.
-
-#### Configuring Workout Local Storage Mode
-
-```dart
-void configureWorkoutLocalDelivery() async {
-  await workoutManager.configureBackgroundDelivery(
-    BackgroundDeliveryConfig(mode: BackgroundDeliveryMode.localStorage),
-  );
-}
-```
-
-> **Note:** `localStorage` mode delivers workouts via the Flutter `workoutStream` EventChannel while the app is in the foreground. For background delivery (when the app is suspended), configure `BackgroundDeliveryMode.api` instead — the native iOS layer will POST directly to your API without requiring the app to be active.
-
-#### Recommended Workout Setup
-
-Call `configureBackgroundDelivery` early in your app lifecycle (e.g., after login). **Monitoring starts automatically** — no need to call `startMonitoring()` in API mode:
-
-```dart
-void initWorkoutMonitoring() async {
-  // Configure API delivery — monitoring starts automatically.
-  // On subsequent app launches, monitoring auto-starts from UserDefaults config.
-  await workoutManager.configureBackgroundDelivery(
-    BackgroundDeliveryConfig(
-      mode: BackgroundDeliveryMode.api,
-      apiURL: 'https://api.example.com/v1/workouts/ingest',
-      headers: {'Authorization': 'Bearer $authToken'},
-    ),
-  );
-  
-  // That's it! No startMonitoring() call needed in API mode.
-  // The native iOS layer auto-starts with a 24h lookback window.
-}
-```
+Calling `configureBackgroundDelivery` with `mode: api` **fails** with `PlatformException` (unknown mode — only `localStorage` is valid).
 
 ---
 
-### Sleep API Configuration
+### Sleep background delivery (local storage only)
 
-#### Delivery Modes
+Sleep differs from workouts because data is **accumulated over the night** and emitted as **one finalized session** (flat JSON), not per-sample.
 
-| Mode | Description |
-|------|-------------|
-| `SleepBackgroundDeliveryMode.api` | Finalized sleep sessions are POSTed directly to your configured API endpoint. |
-| `SleepBackgroundDeliveryMode.localStorage` | Finalized sleep sessions are stored in UserDefaults; retrieve via `getLocalSleepSessions()`. |
+| Step | Behavior |
+|------|----------|
+| **Configure** | `configureSleepBackgroundDelivery(const SleepBackgroundDeliveryConfig())` arms delivery, clears legacy API keys from `UserDefaults`, and persists the armed flag across restarts. |
+| **Native** | Same HealthKit strategy as before: foreground `HKAnchoredObjectQueryDescriptor`, background `HKObserverQuery`, inBed-first pipeline and 6PM→now window. |
+| **On finalize** | Native builds the flat aggregated payload and appends it to `com.humango.health.sleepPendingLocal`. **No** HTTP to your API from the plugin. |
+| **Your app** | Call `getLocalSleepSessions()` when convenient; the plugin returns pending JSON strings and **clears** the queue (same pattern as workout pending JSON). |
 
-#### How It Works
+Calling `configureSleepBackgroundDelivery` with `mode: api` (legacy JSON) **fails** with `PlatformException` (`INVALID_MODE` — only `localStorage` is valid).
 
-Sleep delivery differs from workouts because sleep data is **accumulated over the entire night** and delivered as a **single finalized session** (not individual samples).
+#### Background pipeline (inBed-check)
 
-**API mode:**
-- **Foreground:** `HKAnchoredObjectQueryDescriptor` detects new samples → accumulated in background cache
-- **Background:** `HKObserverQuery` fires → **inBed check runs first**; if user is in bed, data is cached and a 15-min re-check timer starts; once the user has woken, the aggregated flat payload is built and POSTed
-
-**localStorage mode:**
-- **Foreground:** `HKAnchoredObjectQueryDescriptor` accumulates samples into local cache
-- **Background:** `HKObserverQuery` fires → same inBed-check pipeline → on wakeup, payload is stored in `UserDefaults`; retrieve via `getLocalSleepSessions()`
-
-#### Background Pipeline (new inBed-check flow)
-
-Every `HKObserverQuery` trigger follows this exact flow:
+Every `HKObserverQuery` trigger:
 
 ```
 HKObserverQuery fires
@@ -1176,128 +1096,60 @@ HKObserverQuery fires
   │
   └─ STEP 1: isUserCurrentlyInBed?  ← checked FIRST, before any HealthKit fetch
        │
-       YES ─→ STEP 2: compute 6PM window (6:00 PM previous day → now)
-              STEP 3: fetch HealthKit samples
-              STEP 4: store in local cache
-              → start 15-min re-check timer
-                   Timer fires → isUserCurrentlyInBed?
-                     YES → wait for next HKObserver trigger (still sleeping)
-                     NO  → fetch → buildAggregatedPayload → deliver
+       YES ─→ fetch window → cache → 15-min re-check timer → when out of bed → build payload → store locally
        │
-       NO  ─→ STEP 2: compute 6PM window
-              STEP 3: fetch HealthKit samples
-              STEP 4: buildAggregatedPayload → deliver immediately
+       NO  ─→ fetch window → build payload → store locally
 ```
 
-**Query window:** `6:00 PM previous day → now` — matches humango-mobile's `SleepStatisticsManager`.
+**Source selection:** the source with the highest `TOTAL_SLEEP` (Core + Deep + REM) wins when multiple sources contribute.
 
-**Source selection:** when multiple sources contributed data, the source with the highest `TOTAL_SLEEP` (Core + Deep + REM minutes) wins.
+**Remote logging:** `SleepRemoteLogger` may still POST **diagnostic** events to a logging endpoint; that is separate from your **sleep session** backend.
 
-**Remote logging:** `SleepRemoteLogger` POSTs a structured JSON event to the Humango logging endpoint at every step of the pipeline (both local `debugPrint` and remote log). The `userId` from `UserAuthStateManager` is attached to every event automatically.
+#### Session JSON shape (stored locally)
 
-#### Configuring Sleep API Mode
-
-```dart
-import 'package:humango_health/humango_health.dart';
-
-final sleepManager = SleepDataManager();
-
-void configureSleepAPIDelivery() async {
-  await sleepManager.configureSleepBackgroundDelivery(
-    SleepBackgroundDeliveryConfig(
-      mode: SleepBackgroundDeliveryMode.api,
-      apiURL: 'https://api.example.com/v1/sleep-sessions',
-      headers: {
-        'Authorization': 'Bearer <your-auth-token>',
-        'X-Device-Id': '<device-identifier>',
-      },
-    ),
-  );
-}
-```
-
-**What happens natively:**
-- Configuration persists to `UserDefaults`, surviving app restarts.
-- Foreground uses `HKAnchoredObjectQueryDescriptor`, background uses `HKObserverQuery`.
-- On every HKObserver trigger, the inBed-check pipeline runs (see above). When the user has woken, `buildAggregatedPayload()` produces a flat 14-key payload which is POSTed to your API.
-- On HTTP 2xx: success logged remotely via `SleepRemoteLogger`.
-- On failure: session data falls back to local storage.
-
-#### Sleep API Request Payload
-
-When the pipeline determines the user has woken, the following **flat** JSON is POSTed. All duration values are in **minutes**:
+Numeric sleep durations are **seconds** (integers). Divide by 60 for minutes when displaying.
 
 ```json
 {
-  "SOURCE":            "Vinay's Apple Watch",
-  "SOURCE_BUNDLE":     "com.apple.health.XXXXXXXXXXXXXXXX",
-  "TIMEZONE":          "Asia/Kolkata",
-  "TOTAL_SLEEP":       420.0,
-  "SLEEP_IN_BED":      0.0,
-  "SLEEP_LIGHT":       180.0,
-  "SLEEP_DEEP":        60.0,
-  "SLEEP_REM":         120.0,
-  "SLEEP_UNSPECIFIED": 60.0,
-  "SLEEP_AWAKE":       15.0,
-  "BED_TIME":          "2026-03-17T22:30:00.000Z",
-  "WAKE_TIME":         "2026-03-18T06:15:00.000Z",
-  "START_DATE":        "2026-03-17T18:00:00.000Z",
-  "END_DATE":          "2026-03-18T06:30:00.000Z"
+  "SOURCE": "Apple Watch",
+  "SOURCE_BUNDLE": "com.apple.health.…",
+  "TIMEZONE": "Asia/Kolkata",
+  "TOTAL_SLEEP": 25200,
+  "SLEEP_IN_BED": 0,
+  "SLEEP_LIGHT": 10800,
+  "SLEEP_DEEP": 3600,
+  "SLEEP_REM": 7200,
+  "SLEEP_UNSPECIFIED": 3600,
+  "SLEEP_AWAKE": 900,
+  "BED_TIME": "2026-03-17T22:30:00.000Z",
+  "WAKE_TIME": "2026-03-18T06:15:00.000Z",
+  "START_DATE": "2026-03-17T18:00:00.000Z",
+  "END_DATE": "2026-03-18T06:30:00.000Z"
 }
 ```
 
-`TOTAL_SLEEP = SLEEP_LIGHT + SLEEP_DEEP + SLEEP_REM` (excludes inBed, awake, and unspecified). `SLEEP_IN_BED` will be `0.0` for Apple Watch users — the Watch does not write `inBed` samples.
-
-#### Configuring Sleep Local Storage Mode
+#### Example: configure + drain pending sessions
 
 ```dart
-void configureSleepLocalDelivery() async {
-  await sleepManager.configureSleepBackgroundDelivery(
-    SleepBackgroundDeliveryConfig(
-      mode: SleepBackgroundDeliveryMode.localStorage,
-    ),
-  );
-}
-```
+final sleepManager = SleepDataManager();
 
-Retrieve stored sessions on app startup:
+await sleepManager.configureSleepBackgroundDelivery(
+  const SleepBackgroundDeliveryConfig(),
+);
 
-```dart
-void fetchPendingSleepSessions() async {
+Future<void> uploadPendingSleep() async {
   final sessions = await sleepManager.getLocalSleepSessions();
-  
-  for (final sessionJson in sessions) {
-    print('Retrieved sleep session: ${sessionJson.substring(0, 100)}...');
+  for (final json in sessions) {
+    // POST json to your API from Dart or Runner native
   }
-  // Local storage is cleared after retrieval
-}
-```
-
-#### Recommended Sleep Setup
-
-```dart
-void initSleepMonitoring() async {
-  // Configure API delivery mode — monitoring starts automatically.
-  // Session detection is now automatic (inBed-check pipeline) — no
-  // configureSleepSession() call is needed.
-  await sleepManager.configureSleepBackgroundDelivery(
-    SleepBackgroundDeliveryConfig(
-      mode: SleepBackgroundDeliveryMode.api,
-      apiURL: 'https://api.example.com/v1/sleep-sessions',
-      headers: {'Authorization': 'Bearer $authToken'},
-    ),
-  );
-
-  // No startMonitoring() call needed in API mode.
-  // Monitoring starts automatically on configureSleepBackgroundDelivery.
 }
 ```
 
 ---
 
-### Combined Setup (Both Workouts + Sleep)
+### Combined setup (workouts + sleep)
 
-For apps that need both workout and sleep API delivery, configure them together after login:
+After login, arm **both** deliveries (idempotent):
 
 ```dart
 import 'package:humango_health/humango_health.dart';
@@ -1305,38 +1157,13 @@ import 'package:humango_health/humango_health.dart';
 final workoutManager = WorkoutReadManager();
 final sleepManager = SleepDataManager();
 
-void initAllHealthMonitoring(String authToken) async {
-  // ── Workout API delivery (auto-starts monitoring) ──
-  await workoutManager.configureBackgroundDelivery(
-    BackgroundDeliveryConfig(
-      mode: BackgroundDeliveryMode.api,
-      apiURL: 'https://api.example.com/v1/workouts/ingest',
-      headers: {
-        'Authorization': 'Bearer $authToken',
-        'Content-Type': 'application/json',
-      },
-    ),
-  );
-
-  // ── Sleep API delivery (auto-starts monitoring) ──
-  // No configureSleepSession() needed — detection is automatic (inBed-check pipeline).
-  await sleepManager.configureSleepBackgroundDelivery(
-    SleepBackgroundDeliveryConfig(
-      mode: SleepBackgroundDeliveryMode.api,
-      apiURL: 'https://api.example.com/v1/sleep-sessions',
-      headers: {
-        'Authorization': 'Bearer $authToken',
-        'Content-Type': 'application/json',
-      },
-    ),
-  );
-
-  // No startMonitoring() calls needed! Both auto-start in API mode.
-  // On subsequent app launches, monitoring resumes automatically from UserDefaults.
+Future<void> initAllHealthMonitoring() async {
+  await workoutManager.configureBackgroundDelivery(const BackgroundDeliveryConfig());
+  await sleepManager.configureSleepBackgroundDelivery(const SleepBackgroundDeliveryConfig());
 }
 ```
 
-> **Note:** Both subsystems auto-switch between `HKAnchoredObjectQueryDescriptor` (foreground) and `HKObserverQuery` (background) via the native `AppLifecycleManager`. No Flutter lifecycle code is needed. Monitoring auto-starts on app launch when API delivery is configured.
+> **Note:** Workouts and sleep auto-switch foreground/background queries via `AppLifecycleManager`. Auto-start requires the user to be logged in and each subsystem’s delivery to be armed.
 
 ---
 
@@ -1397,7 +1224,7 @@ The plugin provides comprehensive access to Apple HealthKit's sleep analysis dat
 - **One-shot fetch**: Query sleep data for a configurable date range
 - **Foreground monitoring**: `HKAnchoredObjectQueryDescriptor` accumulates samples into session state while the app is active
 - **Background monitoring**: `HKObserverQuery` detects changes and accumulates samples into session state when the app is suspended
-- **Session-aware delivery**: When the session detector determines sleep has ended (multi-factor scoring or freeze-window expiry), the complete session is delivered — either POSTed to your API or stored locally
+- **Session-aware delivery**: When the session detector determines sleep has ended (multi-factor scoring or freeze-window expiry), the complete session JSON is appended to the local pending queue for your app to retrieve and upload
 
 ### Sleep Stages (iOS 16+)
 
@@ -1524,8 +1351,7 @@ void startSleepMonitoring() async {
   await sleepManager.startMonitoring(
     startDate: DateTime.now().subtract(const Duration(hours: 24)),
   );
-  // Samples accumulate on-device; finalized session is delivered
-  // via API or stored locally when the session ends.
+  // Samples accumulate on-device; finalized session JSON is stored locally when the session ends.
 }
 
 void stopSleepMonitoring() async {
@@ -1535,13 +1361,13 @@ void stopSleepMonitoring() async {
 
 ### Background Sleep Monitoring
 
-When the app enters the background, the native `AppLifecycleManager` automatically switches to `HKObserverQuery` mode. New sleep samples are accumulated into the same on-device session state as foreground samples. When the session ends, the finalized session is delivered via your configured delivery mode (API POST or local storage).
+When the app enters the background, the native `AppLifecycleManager` automatically switches to `HKObserverQuery` mode. New sleep samples are accumulated into the same on-device session state as foreground samples. When the session ends, the finalized flat JSON is stored in `UserDefaults` for retrieval.
 
 To retrieve locally stored finalized sessions when the app next opens:
 
 ```dart
 void fetchPendingSleepSessions() async {
-  // Retrieve finalized sessions stored while app was in background (localStorage mode)
+  // Retrieve finalized sessions stored while the app was in background
   final sessions = await sleepManager.getLocalSleepSessions();
   
   for (final sessionJson in sessions) {
@@ -1551,8 +1377,6 @@ void fetchPendingSleepSessions() async {
 }
 ```
 
-> In API mode, finalized sessions are POSTed directly to your endpoint — no retrieval step needed.
-
 ### Dual-Mode Architecture
 
 | Mode | Trigger | Technology | Data Handling |
@@ -1560,9 +1384,7 @@ void fetchPendingSleepSessions() async {
 | **Foreground** | App active | `HKAnchoredObjectQueryDescriptor` | Accumulates samples into on-device session state |
 | **Background** | App suspended | `HKObserverQuery` + `enableBackgroundDelivery()` | Accumulates samples into the same session state |
 
-In **both** modes, once the session detector determines sleep has ended, the finalized session is delivered:
-- **API mode** → HTTP POST to your endpoint
-- **localStorage mode** → stored in `UserDefaults`; retrieve with `getLocalSleepSessions()`
+In **both** modes, once the session detector determines sleep has ended, the finalized session JSON is stored in `UserDefaults`; retrieve with `getLocalSleepSessions()` and POST to your backend from your app.
 
 **Automatic switching**: The `AppLifecycleManager` switches between modes on iOS lifecycle notifications. No Flutter code needed.
 

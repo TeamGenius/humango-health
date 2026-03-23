@@ -85,10 +85,8 @@ class SleepDataManager {
   /// In **background**: Uses HKObserverQuery to detect changes and accumulates
   /// samples into session state.
   ///
-  /// When the session ends (multi-factor scoring or freeze window expiry),
-  /// the finalized session is delivered via API POST ([BackgroundDeliveryMode.api])
-  /// or stored locally ([BackgroundDeliveryMode.localStorage]).
-  /// Retrieve local sessions with [getLocalSleepSessions].
+  /// When the session ends, the finalized session JSON is stored locally;
+  /// retrieve with [getLocalSleepSessions] and upload from your app.
   Future<Map<String, dynamic>> startMonitoring({DateTime? startDate}) async {
     final effectiveStartDate =
         startDate ?? DateTime.now().subtract(const Duration(hours: 24));
@@ -203,29 +201,14 @@ class SleepDataManager {
     }
   }
 
-  /// Configures background delivery mode for sleep session data.
+  /// Arms native sleep session delivery: finalized sessions are stored in
+  /// UserDefaults for [getLocalSleepSessions]. The plugin does not HTTP POST.
   ///
-  /// **API mode** (`SleepBackgroundDeliveryMode.api`):
-  /// - Finalized sleep sessions are POSTed directly to the configured API endpoint.
-  /// - Both foreground (`HKAnchoredObjectQueryDescriptor`) and background (`HKObserverQuery`)
-  ///   accumulate samples into session state.
-  /// - When the session ends (multi-factor scoring), the complete session is POSTed to your API.
+  /// Call after login (with [UserSessionManager]) so auto-start can resume.
   ///
-  /// **Local storage mode** (`SleepBackgroundDeliveryMode.localStorage`):
-  /// - Finalized sleep sessions are stored locally in UserDefaults.
-  /// - Retrieve them with [getLocalSleepSessions] when the app becomes active.
-  ///
-  /// Call this before [startMonitoring] for best results. If called while
-  /// monitoring is active, the mode switch takes effect immediately.
-  ///
-  /// Example:
   /// ```dart
   /// await sleepManager.configureSleepBackgroundDelivery(
-  ///   SleepBackgroundDeliveryConfig(
-  ///     mode: SleepBackgroundDeliveryMode.api,
-  ///     apiURL: 'https://api.example.com/sleep-sessions',
-  ///     headers: {'Authorization': 'Bearer token123'},
-  ///   ),
+  ///   const SleepBackgroundDeliveryConfig(),
   /// );
   /// ```
   Future<Map<String, dynamic>> configureSleepBackgroundDelivery(
