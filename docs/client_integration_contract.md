@@ -125,7 +125,7 @@ Optional: configuration (debounce window, strict dedupe on/off) for different ap
 | Path | Purpose |
 |------|---------|
 | **UI stream** (e.g. `WorkoutReadManager.workoutStream`) | In-app state and screens. |
-| **Background delivery** (`BackgroundDeliveryConfig` / API URL) | Server sync without requiring the UI stream. |
+| **Background delivery** (`BackgroundDeliveryConfig` / API URL) | Server sync from **native iOS** (plugin API mode or your Runner code), not Dart-only while suspended. Host app still uses one orchestration module for `configure*` + session. See [guide § Background uploads](client_app_integration_guide.md#background-uploads-your-backend-but-native-execution). |
 
 If the client must react to background upload outcomes, provide a **small, documented** stream or callback that fires only on those outcomes — **not** as a stand-in for polling.
 

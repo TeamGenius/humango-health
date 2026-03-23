@@ -61,6 +61,18 @@ flowchart TB
 5. **Foreground stream vs background API**  
    Treat in-app streams and `BackgroundDeliveryMode.api` / sleep API delivery as **separate** paths; both may be on. Document in your app which UI reacts to which.
 
+### Background uploads: your backend, but native execution
+
+Backend calls from the **client** while the app may be **suspended** must run in **native iOS** (plugin background delivery and/or Runner)—not Dart `http` alone.
+
+| Approach | Who calls your API | Coordinator |
+|----------|-------------------|-------------|
+| **Plugin API mode** | Plugin native (`BackgroundDeliveryMode.api`, sleep API + `apiURL` / `headers`) | Supplies `configure*` + session after login / token refresh. |
+| **localStorage + Runner Swift** | Your native code + e.g. background `URLSession` | Session + `configure*`; your code owns HTTP. |
+| **Dart on stream events** | Foreground Flutter | Subscriptions + session only; not sole background sync. |
+
+The coordinator **orchestrates** (session, idempotent configure, shared managers); it does **not** replace native background networking.
+
 ---
 
 ## 3. Recommended app structure

@@ -7,7 +7,7 @@
 ### Documentation
 
 - **[README.md](README.md)** — consumer integration (guide + contract links, docs index).
-- **[docs/client_integration_contract.md](docs/client_integration_contract.md)** & **[docs/client_app_integration_guide.md](docs/client_app_integration_guide.md)** — contract + consolidated host-app guide (cross-linked).
+- **[docs/client_integration_contract.md](docs/client_integration_contract.md)** & **[docs/client_app_integration_guide.md](docs/client_app_integration_guide.md)** — contract + host-app guide (cross-linked).
 - **Example app** — [`HealthSyncCoordinator`](example/lib/health_sync_coordinator.dart) pattern (`Selector`, shared managers, HRV subscription fix).
 
 ---
