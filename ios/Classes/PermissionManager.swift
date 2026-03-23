@@ -149,6 +149,23 @@ public class PermissionManager {
         }
         return .discreteAverage
     }
+
+    /// HealthKit "no samples in range" is not a read denial, but the NSError is sometimes wrapped
+    /// so `domain == com.apple.healthkit && code == 5` fails while the message still says
+    /// "No data available for the specified predicate."
+    /// True for HKErrorNoData (empty query result). The old check used code `5`, but that is
+    /// `HKError.Code.authorizationNotDetermined`, not "no data".
+    private func isHealthKitNoDataError(_ error: Error) -> Bool {
+        var current: NSError? = error as NSError
+        while let err = current {
+            if err.domain == HKError.errorDomain,
+               err.code == HKError.Code.errorNoData.rawValue {
+                return true
+            }
+            current = err.userInfo[NSUnderlyingErrorKey] as? NSError
+        }
+        return false
+    }
     
     // MARK: - Public API
     
@@ -360,12 +377,7 @@ public class PermissionManager {
                     }
                     
                     if let error = error {
-                        let nsError = error as NSError
-                        // HKErrorDomain code 5 = "No data available for the specified predicate"
-                        // This is NOT a permission denial — it means no samples exist.
-                        let isNoDataError = nsError.domain == "com.apple.healthkit" && nsError.code == 5
-                        
-                        if isNoDataError {
+                        if isHealthKitNoDataError(error) {
                             let prev = previousSnapshot[item.key] ?? "(none)"
                             print("[PermissionManager] ⚪ \(item.key): HK 'no data' error, previousSnapshot=\(prev)")
                             if previousSnapshot[item.key] == "authorized" {
@@ -418,9 +430,7 @@ public class PermissionManager {
                 }
                 
                 if let error = error {
-                    let nsError = error as NSError
-                    let isNoDataError = nsError.domain == "com.apple.healthkit" && nsError.code == 5
-                    if isNoDataError {
+                    if isHealthKitNoDataError(error) {
                         let prev = previousSnapshot[item.key] ?? "(none)"
                         print("[PermissionManager] ⚪ \(item.key): sample 'no data' error, previousSnapshot=\(prev)")
                         if previousSnapshot[item.key] == "authorized" {
