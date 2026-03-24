@@ -1,9 +1,11 @@
 # Permission Handling Subsystem - Requirements & Design
 
-**Document Version:** 1.0  
-**Date:** February 24, 2026  
-**Plugin:** humango_workouts  
+**Document Version:** 1.1  
+**Date:** March 24, 2026  
+**Plugin:** `humango_health`  
 **Subsystem:** Permission Management
+
+**Runtime channels:** `healthkit/method` (MethodChannel), `healthkit/event` (EventChannel). Dart API: `PermissionManager.verifyAuthorization()`, `requestAuthorization()`, `permissionStream`.
 
 ---
 
@@ -68,9 +70,9 @@ This separation is required by HealthKit's permission model.
 │         Flutter (Dart Layer)            │
 ├─────────────────────────────────────────┤
 │  PermissionManager                      │
-│  ├─ verify() → Future<PermissionResponse>
-│  ├─ request() → Future<void>            │
-│  └─ listen() → Stream<PermissionResponse>
+│  ├─ verifyAuthorization() → Future<HealthKitAuthorizationResult>
+│  ├─ requestAuthorization() → Future<void>
+│  └─ permissionStream → Stream<HealthKitAuthorizationResult>
 └────────────┬────────────────────────────┘
              │
          ┌───┴────┐
@@ -532,4 +534,4 @@ Must add privacy usage descriptions:
 1. Review and approve this design
 2. Begin implementation Phase 1 (Core Models)
 3. Set up iOS project with HealthKit capability
-4. Create example app structure
+4. ✅ Permission UX reference: bundled [`example/`](../example/) — see [example/README.md](../example/README.md); extend as needed

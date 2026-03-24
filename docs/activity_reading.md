@@ -1,9 +1,11 @@
 # Read Workouts Subsystem - Requirements & Design
 
-**Document Version:** 1.0  
-**Date:** February 24, 2026  
-**Plugin:** humango_workouts  
+**Document Version:** 1.2  
+**Date:** March 24, 2026  
+**Plugin:** `humango_health`  
 **Subsystem:** Workout Reading & Monitoring
+
+> **Current API (0.0.12+):** Background workout delivery is **stream + `UserDefaults` pending queue** only. There is **no** Dart `getLocalWorkouts()` and **no** native HTTP POST for completed workouts. Use `WorkoutReadManager.configureBackgroundDelivery(const BackgroundDeliveryConfig())`, subscribe to `workoutStream`, call `readWorkouts` for catch-up, and drain pending JSON from **native** `BackgroundWorkouts.pending` in your Runner if you cannot keep a stream listener alive while suspended (see README and `READ_WORKOUTS_SUBSYSTEM.md`).
 
 ---
 
@@ -18,17 +20,22 @@
 - **MUST** return clear error if permission not granted
 - Guide user to request permission if not available
 
-#### 2. Three Reading Methods with DateRange
+#### 2. Reading APIs (Dart)
 
-Provide three distinct methods for reading completed workouts:
+| Method / member | Description | Use Case |
+|-----------------|-------------|----------|
+| `readWorkouts(startDate, {endDate, options})` | One-shot fetch (respects `WorkoutRecordStore` dedup) | Initial sync, manual refresh |
+| `fetchAllWorkouts(startDate, {endDate})` | One-shot unfiltered snapshot | Audit / full re-sync |
+| `startMonitoring(startDate, {options})` | Continuous monitoring | Real-time tracking |
+| `stopMonitoring()` | Stops observers / clears cached event stream | Teardown |
+| `configureBackgroundDelivery(BackgroundDeliveryConfig())` | Arms stream + pending queue | After login (with `UserSessionManager`) |
+| `workoutStream` | `Stream<String>` — each event is a workout JSON string | Live updates when a listener is attached |
+| `markWorkoutsAsPushed(deviceActivityIds)` | Marks IDs as uploaded to **your** backend | After successful POST from your app |
+| `setImportPreferences(running, cycling, swimming)` | Filters which activity types are imported | Before read/monitor |
+| `getWorkoutStoreRecords()` | Debug: native store rows | Diagnostics |
+| `enterForegroundMode` / `enterBackgroundMode` | Manual lifecycle override | Rare; iOS uses `AppLifecycleManager` by default |
 
-| Method | Description | Use Case |
-|--------|-------------|----------|
-| `readWorkouts(startDate, endDate)` | One-shot fetch of historical workouts | Initial sync, manual refresh |
-| `startMonitoring(startDate, endDate)` | Continuous monitoring for new/updated workouts | Real-time tracking |
-| `getLocalWorkouts()` | Retrieve workouts stored locally from background | App startup, offline access |
-
-All methods accept **DateRange** with `startDate` and `endDate` parameters.
+Pending workouts while **no** stream listener exists are stored by native `WorkoutStreamDelivery` under `BackgroundWorkouts.pending`. There is **no** `getLocalWorkouts` on the MethodChannel — drain from Swift/Runner or avoid backlog by subscribing to `workoutStream` when the app runs.
 
 #### 3. Dual-Mode Monitoring Strategy
 
@@ -44,44 +51,20 @@ All methods accept **DateRange** with `startDate` and `endDate` parameters.
 - Two-hour window for "recent" workouts that need route tracking
 - Minimal battery impact
 
-#### 4. User Opt-In Delivery System
+#### 4. Background delivery (stream / pending only)
 
-Users configure how background workouts are delivered:
+`BackgroundDeliveryConfig` supports **`localStorage`** only (default). The native layer either delivers JSON on `workoutStream` (sink attached) or appends to the `UserDefaults` pending array. The plugin **never** POSTs workout JSON to your backend.
 
-```dart
-enum BackgroundDeliveryMode {
-  api,          // Push to API endpoint
-  localStorage, // Store in UserDefaults
-}
-```
+#### 5. Deduplication logic
 
-**API Option:**
-- User provides: `apiURL`, `headers` (including auth token)
-- Native iOS makes direct HTTP POST to API
-- Retries on failure with exponential backoff
-- Marks as pushed in `WorkoutRecordStore`
+**Read pipeline (`WorkoutRecordStore`):**
+- SHA-256 hash + byte size of the serialized payload per `deviceActivityId`
+- `shouldPush` / upsert pending before emitting to stream or pending queue
+- `pushed == true` after your app calls **`markWorkoutsAsPushed`** (successful upload to **your** API). The plugin does **not** HTTP POST completed workouts.
 
-**Local Storage Option:**
-- Store workout JSON in UserDefaults
-- Retrieve on app open via `getLocalWorkouts()`
-- Return to Flutter and clear from storage
-- Useful for offline scenarios or custom processing
+**Scheduling (WorkoutKit) vs reading:** Seeing whether a completed HK workout corresponded to an Apple Watch **scheduled** plan is a separate product concern; the shipped `WorkoutData` model does not include `wasScheduled` fields.
 
-#### 5. Deduplication Logic
-
-**Prevent duplicate pushes:**
-- Hash workout payload (SHA256) + track size in bytes
-- Store in `WorkoutRecordStore` (actor-based, UserDefaults-backed)
-- Compare before pushing: skip if hash + size unchanged
-- Works across app restarts (persisted)
-
-**Match with pushed workouts:**
-- When workout completes, check if it was previously pushed via PUSH subsystem
-- Match using `workoutId` (UUID) and `hashValue`
-- If match found: skip API push (already scheduled)
-- If no match or hash changed: push as completed workout
-
-#### 6. Workout Data Contents
+#### 6. Workout data contents
 
 Each workout includes:
 - **Core metadata:** distance, duration, activity type, start/end times
@@ -91,14 +74,9 @@ Each workout includes:
 - **Events:** workout segments, laps, pauses
 - **Metadata:** device source, iOS version, custom fields
 
-#### 7. Selective Import Preferences
+#### 7. Selective import preferences
 
-Users opt-in/out of specific workout types:
-- `importRunning` → Running workouts
-- `importCycling` → Cycling workouts  
-- `importSwimming` → Swimming workouts
-
-Stored in UserDefaults, respected during fetch/monitoring.
+Dart: `setImportPreferences(running: bool, cycling: bool, swimming: bool)` — stored natively (`UserDefaults`) and applied during fetch/monitor.
 
 ---
 
@@ -113,12 +91,11 @@ Stored in UserDefaults, respected during fetch/monitoring.
                       │
 ┌─────────────────────┴────────────────────────────────────┐
 │          Workout Read Manager (Dart)                     │
-│  ├─ readWorkouts(startDate, endDate)                     │
-│  ├─ startMonitoring(startDate, endDate)                  │
-│  ├─ stopMonitoring()                                     │
-│  ├─ getLocalWorkouts()                                   │
-│  ├─ configureBackgroundDelivery(mode, apiURL, headers)   │
-│  └─ Stream<WorkoutData> workoutStream                    │
+│  ├─ readWorkouts / fetchAllWorkouts                      │
+│  ├─ startMonitoring / stopMonitoring                     │
+│  ├─ configureBackgroundDelivery                         │
+│  ├─ markWorkoutsAsPushed / setImportPreferences           │
+│  └─ workoutStream → Stream<String> (JSON)              │
 └─────────────────────┬────────────────────────────────────┘
                       │
           ┌───────────┴───────────┐
@@ -137,9 +114,11 @@ Stored in UserDefaults, respected during fetch/monitoring.
 │  │                                                        │
 │  ┌─ RouteService (per-workout route tracking)            │
 │  │   ├─ Foreground: live route streaming                 │
-│  │   ├─ Background: route observer + delivery            │
+│  │   ├─ Background: route observer                       │
 │  │   ├─ Quantity series fetching (20+ types)             │
-│  │   └─ API push with deduplication                      │
+│  │   └─ Completes payload → WorkoutStreamDelivery        │
+│  ┌─ WorkoutStreamDelivery                                │
+│  │   └─ EventSink or UserDefaults pending (no HTTP)      │
 │  │                                                        │
 │  ┌─ WorkoutRecordStore (actor-based storage)             │
 │  │   ├─ SHA256 hashing for change detection              │
@@ -165,9 +144,11 @@ Stored in UserDefaults, respected during fetch/monitoring.
 
 ---
 
-## Data Models
+## Data models
 
-### 1. WorkoutData (Dart)
+The MethodChannel and `workoutStream` carry **`List<String>` / `String` JSON** payloads. Parsing into the optional Dart model is done in your app, e.g. `WorkoutData.fromJson(jsonDecode(s))` when shapes match.
+
+### 1. WorkoutData (Dart — optional parser)
 
 ```dart
 class WorkoutData {
@@ -229,22 +210,15 @@ class WorkoutEvent {
 
 ```dart
 class BackgroundDeliveryConfig {
-  final BackgroundDeliveryMode mode;
-  final String? apiURL;             // Required if mode includes API
-  final Map<String, String>? headers; // Auth token, custom headers
-  
-  BackgroundDeliveryConfig({
-    required this.mode,
-    this.apiURL,
-    this.headers,
-  });
-  
+  final BackgroundDeliveryMode mode; // localStorage only
+
+  const BackgroundDeliveryConfig({this.mode = BackgroundDeliveryMode.localStorage});
+
   Map<String, dynamic> toJson();
   factory BackgroundDeliveryConfig.fromJson(Map<String, dynamic> json);
 }
 
 enum BackgroundDeliveryMode {
-  api,
   localStorage,
 }
 ```
@@ -303,7 +277,7 @@ struct WorkoutRecord: Codable {
     var deviceActivityId: String      // workout UUID
     var dataHash: String              // SHA256 hex
     var dataSize: Int                 // bytes
-    var pushed: Bool                  // API push status
+    var pushed: Bool                  // true after markWorkoutsAsPushed / backend ack
     var firstSeenISO: String?         // ISO8601 timestamp
     var lastUpdatedISO: String        // ISO8601 timestamp
 }
@@ -311,498 +285,47 @@ struct WorkoutRecord: Codable {
 
 ---
 
-## Implementation Strategy
+## Implementation reference (0.0.12)
 
-### Phase 1: Dart API Design
+Older drafts of this document (Phases 1–8) described `BackgroundDeliveryManager`, native HTTP POST, `getLocalWorkouts`, and `HumangoWorkoutsPlugin`. **Those are removed / superseded.** The following matches the repo today.
 
-**Objective:** Create Flutter-side workout reading API
+### Dart (`lib/src/`)
 
-**Tasks:**
-1. Create `WorkoutReadManager` class with three main methods:
-   ```dart
-   class WorkoutReadManager {
-     // One-shot historical fetch
-     Future<List<WorkoutData>> readWorkouts(
-       DateTime startDate,
-       DateTime endDate,
-       {WorkoutReadOptions? options}
-     );
-     
-     // Start continuous monitoring
-     Future<void> startMonitoring(
-       DateTime startDate,
-       DateTime endDate,
-       {WorkoutReadOptions? options}
-     );
-     
-     // Stop monitoring
-     Future<void> stopMonitoring();
-     
-     // Get locally stored workouts (from background)
-     Future<List<WorkoutData>> getLocalWorkouts();
-     
-     // Configure background delivery
-     Future<void> configureBackgroundDelivery(
-       BackgroundDeliveryConfig config
-     );
-     
-     // Stream for real-time workout updates
-     Stream<WorkoutData> get workoutStream;
-   }
-   ```
+| Symbol | Role |
+|--------|------|
+| `WorkoutReadManager` | `readWorkouts`, `fetchAllWorkouts`, `startMonitoring`, `stopMonitoring`, `configureBackgroundDelivery`, `markWorkoutsAsPushed`, `setImportPreferences`, `getWorkoutStoreRecords`, lifecycle overrides |
+| `workoutStream` | `Stream<String>` — workout JSON strings |
+| `BackgroundDeliveryConfig` | `localStorage` only |
+| `WorkoutReadOptions` | Optional filters for reads |
+| `WorkoutData`, `QuantitySeries`, etc. | Optional parsing of JSON maps |
 
-2. Create all Dart model classes listed above
-3. Add JSON serialization/deserialization
-4. Set up `MethodChannel` for commands
-5. Set up `EventChannel` for workout stream
+**Channels:** `com.humango.workouts/read` (method), `com.humango.workouts/read/stream` (events). **Registration:** `ios/Classes/HumangoHealthPlugin.swift`.
 
-**Files:**
-- `lib/src/managers/workout_read_manager.dart`
-- `lib/src/models/workout_data.dart`
-- `lib/src/models/background_delivery_config.dart`
-- `lib/src/models/workout_read_options.dart`
-- `lib/src/models/quantity_series.dart`
-- `lib/src/models/route_location.dart`
+### iOS (`ios/Classes/WorkoutReading/`)
 
-### Phase 2: iOS WorkoutService Integration
+| File | Role |
+|------|------|
+| `WorkoutServiceChannel.swift` | Method + stream handler; routes `configureBackgroundDelivery` to `WorkoutStreamDelivery.arm()` |
+| `WorkoutStreamDelivery.swift` | Delivers JSON to Flutter when `EventSink` attached; else appends to `UserDefaults` key `BackgroundWorkouts.pending`. **No URLSession to your API.** |
+| `WorkoutService.swift` | Anchored + observer queries, lifecycle via `AppLifecycleManager` |
+| `RouteService.swift` | Routes, quantity samples, final workout assembly |
+| `WorkoutRecordStore.swift` | Dedup + `pushed` flag (set when Dart calls `markWorkoutsAsPushed`) |
 
-**Objective:** Adapt existing WorkoutService for Flutter integration
+### Pending queue
 
-**Tasks:**
-1. **Existing code** (`WorkoutService.swift`) already handles:
-   - ✅ Date range initialization
-   - ✅ Authorization
-   - ✅ Foreground: `HKAnchoredObjectQueryDescriptor` with live streaming
-   - ✅ Background: `HKObserverQuery` + background delivery
-   - ✅ RouteService registry for recent workouts (2-hour window)
-   - ✅ Mode switching (enterBackgroundMode/enterForegroundMode)
-   - ✅ Selective import (running/cycling/swimming)
+`WorkoutStreamDelivery.retrieveLocalWorkouts()` exists **in Swift** for internal use / testing. There is **no** Dart MethodChannel to pull pending JSON — host Runner code may read `BackgroundWorkouts.pending`, or keep `workoutStream` subscribed while the app is foregrounded.
 
-2. **Enhancements needed:**
-   - Add Flutter event channel sink for pushing workouts
-   - Add method to retrieve locally stored workouts
-   - Add configuration for background delivery mode (API/local)
-   - Add foreground/background mode callbacks from Flutter
+### Optional: Flutter lifecycle overrides
 
-3. **Integrate with FlutterMethodChannel:**
-   ```swift
-   class WorkoutServiceChannel: NSObject, FlutterStreamHandler {
-       private var workoutService: WorkoutService?
-       private var eventSink: FlutterEventSink?
-       
-       func handle(_ call: FlutterMethodCall, result: @escaping FlutterResult) {
-           switch call.method {
-           case "readWorkouts":
-               handleReadWorkouts(call, result)
-           case "startMonitoring":
-               handleStartMonitoring(call, result)
-           case "stopMonitoring":
-               handleStopMonitoring(result)
-           case "getLocalWorkouts":
-               handleGetLocalWorkouts(result)
-           case "configureBackgroundDelivery":
-               handleConfigureBackground(call, result)
-           case "enterForeground":
-               workoutService?.enterForegroundMode()
-               result(nil)
-           case "enterBackground":
-               workoutService?.enterBackgroundMode()
-               result(nil)
-           default:
-               result(FlutterMethodNotImplemented)
-           }
-       }
-   }
-   ```
+`enterForegroundMode` / `enterBackgroundMode` on `WorkoutReadManager` are optional. **Native** `AppLifecycleManager` already switches workout monitoring modes; see [README.md](../README.md#native-ios-lifecycle-management).
 
-4. Modify `WorkoutService.handleWorkouts()` to:
-   - Send workout JSON to event channel if foreground
-   - Use background delivery config if background
-   - Call `pushToEventChannel()` or `handleBackgroundDelivery()`
+---
 
-**Files:**
-- `ios/Classes/WorkoutServiceChannel.swift` (new)
-- `ios/Classes/WorkoutService.swift` (modify)
+### Phase 9 (optional product design — not in shipped API)
 
-### Phase 3: iOS RouteService Integration
+**Objective:** Link completed workouts with scheduled workouts from the WorkoutKit **push** subsystem.
 
-**Objective:** Adapt existing RouteService for Flutter event streaming
-
-**Tasks:**
-1. **Existing code** (`RouteService.swift`) already handles:
-   - ✅ Route fetching with `HKAnchoredObjectQueryDescriptor`
-   - ✅ Live streaming in foreground
-   - ✅ Background monitoring with `HKObserverQuery`
-   - ✅ Quantity series fetching (20+ types)
-   - ✅ Mode switching
-   - ✅ API push with deduplication via `WorkoutRecordStore`
-
-2. **Enhancements needed:**
-   - Add event channel sink reference (passed from WorkoutService)
-   - Push completed workouts to event channel in foreground
-   - Respect background delivery config
-   - Match with pushed workout hash values
-
-3. Modify `RouteService.pushWorkout()` to:
-   ```swift
-   func pushWorkout(finalWorkout: HuWorkout) async {
-       let deviceId = finalWorkout.deviceActivityId
-       
-       // Check if this matches a pushed workout from PUSH subsystem
-       if let pushedHash = UserDefaults.standard.string(forKey: deviceId) {
-           // This was a scheduled workout - verify completion
-           debugPrint("Workout \(deviceId) matches pushed workout hash: \(pushedHash)")
-       }
-       
-       // Standard deduplication
-       guard let dict = finalWorkout.toDict() else { return }
-       let data = try JSONSerialization.data(withJSONObject: [dict])
-       let shouldPush = await WorkoutRecordStore.shared.shouldPush(
-           deviceActivityId: deviceId,
-           payload: data
-       )
-       
-       if !shouldPush {
-           debugPrint("Skipping - already pushed")
-           return
-       }
-       
-       await WorkoutRecordStore.shared.upsertRecordPending(
-           deviceActivityId: deviceId,
-           payload: data
-       )
-       
-       // Route to appropriate delivery method
-       if appIsActive, let eventLink = eventSink {
-           // Foreground: push to event channel
-           pushToEventChannel(workout: finalWorkout, eventSink: eventLink)
-       } else {
-           // Background: use configured delivery mode
-           await handleBackgroundDelivery(workout: finalWorkout)
-       }
-   }
-   ```
-
-**Files:**
-- `ios/Classes/RouteService.swift` (modify)
-
-### Phase 4: Background Delivery System
-
-**Objective:** Implement user-configurable background delivery
-
-**Tasks:**
-1. Create `BackgroundDeliveryManager.swift`:
-   ```swift
-   actor BackgroundDeliveryManager {
-       static let shared = BackgroundDeliveryManager()
-       
-       private var mode: BackgroundDeliveryMode = .localStorage
-       private var apiURL: URL?
-       private var headers: [String: String] = [:]
-       
-       func configure(mode: BackgroundDeliveryMode, 
-                      apiURL: URL?, 
-                      headers: [String: String]) {
-           self.mode = mode
-           self.apiURL = apiURL
-           self.headers = headers
-           saveConfig()
-       }
-       
-       func deliverWorkout(_ workout: HuWorkout) async {
-           switch mode {
-           case .api:
-               await pushToAPI(workout)
-           case .localStorage:
-               await storeLocally(workout)
-           }
-       }
-       
-       private func pushToAPI(_ workout: HuWorkout) async {
-           guard let url = apiURL else { return }
-           guard let data = workout.toJson() else { return }
-           
-           var request = URLRequest(url: url)
-           request.httpMethod = "POST"
-           request.httpBody = data
-           
-           for (key, value) in headers {
-               request.setValue(value, forHTTPHeaderField: key)
-           }
-           
-           do {
-               let (_, response) = try await URLSession.shared.data(for: request)
-               if let http = response as? HTTPURLResponse, http.statusCode == 200 {
-                   await WorkoutRecordStore.shared.markPushed(
-                       deviceActivityId: workout.deviceActivityId
-                   )
-               }
-           } catch {
-               debugPrint("API push failed: \(error)")
-           }
-       }
-       
-       private func storeLocally(_ workout: HuWorkout) async {
-           guard let json = workout.toJson(),
-                 let jsonString = String(data: json, encoding: .utf8) else {
-               return
-           }
-           
-           // Append to array in UserDefaults
-           let key = "BackgroundWorkouts.pending"
-           var existing = UserDefaults.standard.stringArray(forKey: key) ?? []
-           existing.append(jsonString)
-           UserDefaults.standard.set(existing, forKey: key)
-           UserDefaults.standard.synchronize()
-       }
-       
-       func retrieveLocalWorkouts() async -> [String] {
-           let key = "BackgroundWorkouts.pending"
-           let workouts = UserDefaults.standard.stringArray(forKey: key) ?? []
-           // Clear after retrieval
-           UserDefaults.standard.removeObject(forKey: key)
-           UserDefaults.standard.synchronize()
-           return workouts
-       }
-   }
-   
-   enum BackgroundDeliveryMode: String, Codable {
-       case api, localStorage
-   }
-   ```
-
-2. Integrate with RouteService:
-   ```swift
-   func handleBackgroundDelivery(workout: HuWorkout) async {
-       await BackgroundDeliveryManager.shared.deliverWorkout(workout)
-   }
-   ```
-
-3. Add configuration method in WorkoutServiceChannel:
-   ```swift
-   func handleConfigureBackground(_ call: FlutterMethodCall, 
-                                   _ result: FlutterResult) {
-       guard let args = call.arguments as? [String: Any],
-             let modeStr = args["mode"] as? String,
-             let mode = BackgroundDeliveryMode(rawValue: modeStr) else {
-           result(FlutterError(code: "INVALID_ARGS", ...))
-           return
-       }
-       
-       let apiURL = (args["apiURL"] as? String).flatMap(URL.init)
-       let headers = args["headers"] as? [String: String] ?? [:]
-       
-       Task {
-           await BackgroundDeliveryManager.shared.configure(
-               mode: mode,
-               apiURL: apiURL,
-               headers: headers
-           )
-           result(nil)
-       }
-   }
-   ```
-
-**Files:**
-- `ios/Classes/BackgroundDeliveryManager.swift` (new)
-
-### Phase 5: WorkoutRecordStore Enhancements
-
-**Objective:** Your existing `WorkoutRecordStore.swift` is excellent! Minor enhancements only.
-
-**Tasks:**
-1. **Existing code** already provides:
-   - ✅ Actor-based thread safety
-   - ✅ SHA256 hashing
-   - ✅ UserDefaults persistence
-   - ✅ Deduplication via hash + size comparison
-   - ✅ Push status tracking
-   - ✅ Cleanup for old records
-
-2. **Optional enhancements:**
-   - Add method to match with pushed workout hashes:
-     ```swift
-     func matchesPushedWorkout(deviceActivityId: String) async -> String? {
-         // Check if this workout was pushed via PUSH subsystem
-         return UserDefaults.standard.string(forKey: deviceActivityId)
-     }
-     ```
-   
-   - Add batch operations for efficiency:
-     ```swift
-     func shouldPushBatch(workouts: [(id: String, payload: Data)]) async -> [Bool] {
-         return workouts.map { shouldPush(deviceActivityId: $0.id, payload: $0.payload) }
-     }
-     ```
-
-**Files:**
-- `ios/Classes/WorkoutRecordStore.swift` (minor modifications)
-
-### Phase 6: WorkoutFetcher Integration
-
-**Objective:** Your existing `WorkoutFetcher.swift` handles one-shot fetches perfectly
-
-**Tasks:**
-1. **Existing code** already provides:
-   - ✅ Date range bounded fetches
-   - ✅ Selective import (running/cycling/swimming)
-   - ✅ Deduplication via WorkoutRecordStore
-   - ✅ Returns JSON strings
-
-2. **Integrate with method channel:**
-   ```swift
-   func handleReadWorkouts(_ call: FlutterMethodCall, _ result: @escaping FlutterResult) {
-       guard let args = call.arguments as? [String: Any],
-             let startISO = args["startDate"] as? String,
-             let endISO = args["endDate"] as? String,
-             let startDate = ISO8601DateFormatter().date(from: startISO),
-             let endDate = ISO8601DateFormatter().date(from: endISO) else {
-           result(FlutterError(code: "INVALID_ARGS", ...))
-           return
-       }
-       
-       Task {
-           do {
-               let workoutsJson = try await WorkoutFetcher.shared.fetchWorkouts(
-                   startDate: startDate,
-                   effectiveEnd: endDate
-               )
-               result(workoutsJson)
-           } catch {
-               result(FlutterError(code: "FETCH_ERROR", message: error.localizedDescription, details: nil))
-           }
-       }
-   }
-   ```
-
-**Files:**
-- `ios/Classes/WorkoutServiceChannel.swift` (use existing WorkoutFetcher)
-
-### Phase 7: Method Channel & Event Channel Setup
-
-**Objective:** Wire up Flutter ↔ iOS communication
-
-**Tasks:**
-1. Register channels in `HumangoWorkoutsPlugin.swift`:
-   ```swift
-   public static func register(with registrar: FlutterPluginRegistrar) {
-       // Method channel for commands
-       let methodChannel = FlutterMethodChannel(
-           name: "com.humango.workouts/read",
-           binaryMessenger: registrar.messenger()
-       )
-       
-       // Event channel for workout stream
-       let eventChannel = FlutterEventChannel(
-           name: "com.humango.workouts/read/stream",
-           binaryMessenger: registrar.messenger()
-       )
-       
-       let instance = WorkoutServiceChannel()
-       registrar.addMethodCallDelegate(instance, channel: methodChannel)
-       eventChannel.setStreamHandler(instance)
-   }
-   ```
-
-2. Implement `FlutterStreamHandler` in WorkoutServiceChannel:
-   ```swift
-   func onListen(withArguments arguments: Any?, 
-                 eventSink events: @escaping FlutterEventSink) -> FlutterError? {
-       self.eventSink = events
-       return nil
-   }
-   
-   func onCancel(withArguments arguments: Any?) -> FlutterError? {
-       self.eventSink = nil
-       return nil
-   }
-   ```
-
-3. Push workouts to event channel:
-   ```swift
-   func pushToEventChannel(workout: HuWorkout, eventSink: FlutterEventSink) {
-       guard let jsonData = workout.toJson(),
-             let jsonString = String(data: jsonData, encoding: .utf8) else {
-           return
-       }
-       eventSink(jsonString)
-   }
-   ```
-
-**Files:**
-- `ios/Classes/HumangoWorkoutsPlugin.swift` (modify)
-- `ios/Classes/WorkoutServiceChannel.swift` (modify)
-
-### Phase 8: App Lifecycle Integration
-
-**Objective:** Handle foreground/background transitions
-
-**Tasks:**
-1. In Flutter app, listen to app lifecycle:
-   ```dart
-   class WorkoutMonitoringApp extends StatefulWidget {
-     @override
-     _WorkoutMonitoringAppState createState() => _WorkoutMonitoringAppState();
-   }
-   
-   class _WorkoutMonitoringAppState extends State<WorkoutMonitoringApp> 
-       with WidgetsBindingObserver {
-     
-     final workoutManager = WorkoutReadManager();
-     
-     @override
-     void initState() {
-       super.initState();
-       WidgetsBinding.instance.addObserver(this);
-     }
-     
-     @override
-     void dispose() {
-       WidgetsBinding.instance.removeObserver(this);
-       super.dispose();
-     }
-     
-     @override
-     void didChangeAppLifecycleState(AppLifecycleState state) {
-       if (state == AppLifecycleState.paused) {
-         // App going to background
-         workoutManager.enterBackgroundMode();
-       } else if (state == AppLifecycleState.resumed) {
-         // App returning to foreground
-         workoutManager.enterForegroundMode();
-         // Retrieve any workouts captured in background
-         _fetchLocalWorkouts();
-       }
-     }
-     
-     Future<void> _fetchLocalWorkouts() async {
-       final localWorkouts = await workoutManager.getLocalWorkouts();
-       if (localWorkouts.isNotEmpty) {
-         print('Retrieved ${localWorkouts.length} workouts from background');
-         // Process workouts...
-       }
-     }
-   }
-   ```
-
-2. Add lifecycle methods to WorkoutReadManager:
-   ```dart
-   Future<void> enterForegroundMode() async {
-     await _methodChannel.invokeMethod('enterForeground');
-   }
-   
-   Future<void> enterBackgroundMode() async {
-     await _methodChannel.invokeMethod('enterBackground');
-   }
-   ```
-
-**Files:**
-- `lib/src/managers/workout_read_manager.dart` (add lifecycle methods)
-- `example/lib/main.dart` (demonstrate lifecycle handling)
-
-### Phase 9: Matching with Pushed Workouts
-
-**Objective:** Link completed workouts with scheduled workouts from PUSH subsystem
+The current `WorkoutData` model and JSON pipeline **do not** expose `wasScheduled` / `scheduledHash`. Treat this section as a **future** design note if you need adherence analytics.
 
 **Tasks:**
 1. When workout completes, check UserDefaults for matching hash:
@@ -876,7 +399,7 @@ struct WorkoutRecord: Codable {
 1. Test WorkoutService foreground/background switching
 2. Test RouteService live streaming
 3. Test WorkoutRecordStore deduplication
-4. Test background delivery (API + localStorage)
+4. Test `WorkoutStreamDelivery` (stream vs pending queue)
 5. Test app lifecycle transitions
 6. Test matching with pushed workouts
 7. Test on iOS 18+ device with actual workouts
@@ -888,31 +411,11 @@ struct WorkoutRecord: Codable {
 - `ios/Tests/RouteServiceTests.swift`
 - `ios/Tests/WorkoutRecordStoreTests.swift`
 
-### Phase 11: Example Implementation
+### Phase 11: Host app integration
 
-**Objective:** Demonstrate complete workout reading workflow
+**Objective:** Demonstrate workout reading in your Flutter host app.
 
-**Tasks:**
-1. Create example screen showing:
-   - Permission request
-   - Date range selector
-   - "Read Workouts" button (one-shot)
-   - "Start Monitoring" button (continuous)
-   - "Stop Monitoring" button
-   - Real-time workout list (from stream)
-   - Local workouts display (from background)
-   - Background delivery configuration
-   - Scheduled vs spontaneous workout indicator
-
-2. Show foreground/background behavior:
-   - Display workouts arriving in real-time
-   - Simulate app backgrounding
-   - Show local workouts on app resume
-
-**Files:**
-- `example/lib/read_workout_screen.dart`
-- `example/lib/widgets/workout_list_item.dart`
-- `example/lib/widgets/delivery_config_dialog.dart`
+The bundled [`example/`](../example/) project demonstrates workout reading; see [example/README.md](../example/README.md), [README.md](../README.md), and [docs/client_app_integration_guide.md](client_app_integration_guide.md).
 
 ### Phase 12: Documentation
 
@@ -1294,15 +797,9 @@ func handleSetImportPreferences(_ call: FlutterMethodCall, _ result: FlutterResu
 
 ## Error Handling
 
-### Dart-Side Errors
+### Dart-side errors
 
-| Error | When | User Action |
-|-------|------|-------------|
-| `PermissionDeniedException` | No read permission | Request workout permission |
-| `InvalidDateRangeException` | Start date after end date | Fix date range |
-| `MonitoringAlreadyActiveException` | startMonitoring() called twice | Stop existing monitoring first |
-| `PlatformException` | Native iOS error | Check logs, retry |
-| `DeserializationException` | Invalid JSON from iOS | Report bug |
+`WorkoutReadManager` surfaces failures as **`PlatformException`** from the method channel unless the call completes successfully. There are no exported Dart exception types (e.g. `MonitoringAlreadyActiveException`) in the package today — use `try/catch` on `PlatformException` and inspect `code` / `message`. JSON parsing errors arise in **your** code when decoding stream / `readWorkouts` strings.
 
 ### iOS-Side Errors
 
@@ -1330,10 +827,7 @@ func handleSetImportPreferences(_ call: FlutterMethodCall, _ result: FlutterResu
 - Call periodically (e.g., on app launch)
 - Removes records older than 15 days
 
-```dart
-// In app initialization
-await WorkoutRecordStore.shared.cleanupOlderThan(days: 15);
-```
+Native `WorkoutRecordStore` may expose cleanup (e.g. `cleanupOlderThan`) from Swift if you extend the channel; there is no Dart singleton named `WorkoutRecordStore.shared`.
 
 ### Battery Impact
 
@@ -1358,10 +852,8 @@ await WorkoutRecordStore.shared.cleanupOlderThan(days: 15);
 - Size check catches route additions without full comparison
 - Saves bandwidth and API costs
 
-**Batching (Future Enhancement):**
-- Consider batching multiple workouts in single API call
-- Reduces HTTP overhead
-- Implement in `BackgroundDeliveryManager`
+**Batching (host app):**
+- When uploading to your backend, batch multiple workout JSON payloads in one request if your API supports it. The plugin does not perform that HTTP.
 
 ---
 
@@ -1384,22 +876,20 @@ await WorkoutRecordStore.shared.cleanupOlderThan(days: 15);
 - Contains health metrics (medical privacy)
 - Must handle per HealthKit and GDPR guidelines
 
-**API Transmission:**
-- Always use HTTPS for API endpoints
-- Include authentication token in headers
-- Consider end-to-end encryption for sensitive data
+**API transmission (your app):**
+- Workout JSON leaves the device when **your** Flutter or native code POSTs it. The read plugin does not call your API.
+- Use HTTPS, auth headers, and retention policies appropriate to health data.
 
 **Local Storage:**
 - UserDefaults is NOT encrypted by default
 - Consider using Keychain for sensitive config
 - WorkoutRecordStore stores only hashes (not full workout data)
 
-### User Control
+### User control
 
-- Users can disable background delivery
-- Users can exclude specific workout types
-- Users control API endpoint (can use localhost for testing)
-- Clear separation between scheduled and spontaneous workouts
+- Users can stop monitoring / logout (`UserSessionManager`) to tear down observers
+- Users can exclude workout types via `setImportPreferences`
+- Your app chooses where workout JSON is uploaded (no plugin-configured workout URL)
 
 ---
 
@@ -1409,24 +899,19 @@ await WorkoutRecordStore.shared.cleanupOlderThan(days: 15);
 
 ```dart
 group('WorkoutReadManager', () {
-  test('readWorkouts returns workouts in date range', () async {
-    // Mock method channel
+  test('readWorkouts returns JSON strings in date range', () async {
     final manager = WorkoutReadManager();
     final workouts = await manager.readWorkouts(
       DateTime(2026, 1, 1),
-      DateTime(2026, 2, 1),
+      endDate: DateTime(2026, 2, 1),
     );
-    expect(workouts, isNotEmpty);
+    expect(workouts, isA<List<String>>());
   });
-  
-  test('startMonitoring throws if already monitoring', () async {
+
+  test('startMonitoring accepts start date only', () async {
     final manager = WorkoutReadManager();
-    await manager.startMonitoring(DateTime.now(), DateTime.now());
-    
-    expect(
-      () => manager.startMonitoring(DateTime.now(), DateTime.now()),
-      throwsA(isA<MonitoringAlreadyActiveException>()),
-    );
+    await manager.startMonitoring(DateTime(2026, 1, 1));
+    await manager.stopMonitoring();
   });
 });
 ```
@@ -1644,6 +1129,6 @@ manager.workoutStream.listen((workout) {
 5. Test foreground/background mode switching
 6. Implement background delivery configuration
 7. Test deduplication and matching logic
-8. Create comprehensive example app
+8. ✅ Bundled reference app: [`example/`](../example/) — see [example/README.md](../example/README.md); extend as new flows land
 
 **Your existing Swift code is excellent and production-ready!** The main work is integrating it with Flutter's platform channels and adding the background delivery configuration layer.

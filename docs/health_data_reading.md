@@ -2,7 +2,7 @@
 
 **Document Version:** 1.0  
 **Date:** February 24, 2026  
-**Plugin:** humango_workouts  
+**Plugin:** `humango_health`  
 **Subsystem:** Health Data Reading & Monitoring
 
 ---
@@ -667,7 +667,7 @@ struct HKSampleData: Codable {
 
 **Files:**
 - `lib/src/managers/health_data_manager.dart` (add lifecycle methods)
-- `example/lib/main.dart` (demonstrate lifecycle handling)
+- Consumer lifecycle: handled natively via `AppLifecycleManager`; see [README.md](../README.md)
 
 ### Phase 7: Type Conversion Utilities
 
@@ -767,29 +767,11 @@ struct HKSampleData: Codable {
 - `ios/Tests/HealthDataServiceTests.swift`
 - `ios/Tests/HealthDataStoreTests.swift`
 
-### Phase 9: Example Implementation
+### Phase 9: Host app integration
 
-**Objective:** Demonstrate complete health data workflow
+**Objective:** Wire health metrics / sleep / workouts in a real app.
 
-**Tasks:**
-1. Create example screen showing:
-   - Permission request for multiple types
-   - "Read Health Data" button (one-shot)
-   - "Start Monitoring" button (continuous)
-   - "Stop Monitoring" button
-   - Real-time sample list (from stream)
-   - Local samples display (from background)
-   - Type selector (sleep, HRV, heart rate, etc.)
-
-2. Show all three reading patterns:
-   - Historical fetch with date range
-   - Real-time monitoring in foreground
-   - Background storage retrieval
-
-**Files:**
-- `example/lib/health_data_screen.dart`
-- `example/lib/widgets/health_sample_list_item.dart`
-- `example/lib/widgets/type_selector_dialog.dart`
+The bundled [`example/`](../example/) app includes health metrics, sleep, and activity tabs ([example/README.md](../example/README.md)). Also use [README.md](../README.md) — **Health Metrics Reading**, **Sleep Data**, **Workout Reading** — and [docs/client_app_integration_guide.md](client_app_integration_guide.md).
 
 ### Phase 10: Documentation
 
@@ -1042,15 +1024,9 @@ For apps requiring more robust storage:
 
 ## Error Handling
 
-### Dart-Side Errors
+### Dart-side errors
 
-| Error | When | User Action |
-|-------|------|-------------|
-| `PermissionDeniedException` | No read permission | Request health data permission |
-| `InvalidDateRangeException` | Start date after end date | Fix date range |
-| `MonitoringAlreadyActiveException` | startMonitoring() called twice | Stop existing monitoring first |
-| `UnsupportedTypeException` | Invalid health data type | Use supported type |
-| `PlatformException` | Native iOS error | Check logs, retry |
+Treat **`PlatformException`** as the primary failure path from health-related method channels. The named exception classes in earlier drafts (`MonitoringAlreadyActiveException`, etc.) are **not** part of the shipped `humango_health` public API — validate against the actual managers you use (`HealthMetricsManager`, `SleepDataManager`, …).
 
 ### iOS-Side Errors
 
@@ -1288,7 +1264,7 @@ class _HealthDashboardState extends State<HealthDashboard>
 4. Set up method and event channels
 5. Test foreground/background mode switching
 6. Test local storage with multiple data types
-7. Create comprehensive example app
+7. ✅ Bundled reference app: [`example/`](../example/) — see [example/README.md](../example/README.md); extend as new flows land
 
 **This completes the planning for all four subsystems:**
 1. ✅ Permission Management

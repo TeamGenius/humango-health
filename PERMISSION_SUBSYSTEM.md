@@ -1,9 +1,11 @@
 # Permission Handling Subsystem - Requirements & Design
 
-**Document Version:** 1.0  
-**Date:** February 24, 2026  
-**Plugin:** humango_workouts  
+**Document Version:** 1.1  
+**Date:** March 24, 2026  
+**Plugin:** `humango_health`  
 **Subsystem:** Permission Management
+
+**Channels:** `healthkit/method`, `healthkit/event`. **Dart:** `verifyAuthorization()`, `requestAuthorization()`, `permissionStream` → `HealthKitAuthorizationResult`.
 
 ---
 
@@ -11,42 +13,19 @@
 
 ### Functional Requirements
 
-#### 1. Three-Method Permission API
+#### 1. Permission API (Dart)
 
-The permission manager must provide exactly three public methods:
+1. **`verifyAuthorization()`** — Returns current mapped status per tracked `HealthDataType` (no modal).
+2. **`requestAuthorization()`** — Triggers the fixed HealthKit type set (read/write) defined by the plugin; iOS shows the system sheet once per install when applicable.
+3. **`permissionStream`** — Emits fresh results when the app becomes active (and on other native triggers) so toggles in Settings are observed.
 
-1. **`verify()`** - Returns current permission status
-   - Synchronously checks authorization status
-   - Returns response with current state
-   - Does NOT show permission dialog
-   - Must handle both read and write permissions separately
+#### 2. Health data types
 
-2. **`request()`** - Requests permissions from user
-   - Shows iOS native permission dialog
-   - Fire-and-forget: returns immediately without waiting for user decision
-   - NO response expected from native to Flutter
-   - Must request all specified types in single dialog
+The plugin tracks a **fixed** set of types (see README → Tracked Health Types). Callers do not pass per-type read/write arrays on each request.
 
-3. **`listen()`** - Monitors permission changes
-   - Returns event channel stream
-   - Emits updates when permission status changes
-   - Triggers when app resumes from background/settings
-   - Supports multiple concurrent listeners
+#### 3. Native HealthKit model
 
-#### 2. Health Data Type Specification
-
-Users must specify health data types including:
-- **Core metrics:** Sleep, HRV (Heart Rate Variability), Resting Heart Rate
-- **Workouts:** Workout data access
-- **Extensible:** Support for additional types (heart rate, active calories, steps, body measurements, etc.)
-
-#### 3. Read/Write Permission Arrays
-
-Users provide TWO separate arrays:
-- **Read array:** Data types for reading/querying
-- **Write array:** Data types for writing/saving
-
-This separation is required by HealthKit's permission model.
+Internally, native code still separates read vs write when calling `requestAuthorization(toShare:read:)`.
 
 ### Non-Functional Requirements
 
@@ -68,9 +47,9 @@ This separation is required by HealthKit's permission model.
 │         Flutter (Dart Layer)            │
 ├─────────────────────────────────────────┤
 │  PermissionManager                      │
-│  ├─ verify() → Future<PermissionResponse>
-│  ├─ request() → Future<void>            │
-│  └─ listen() → Stream<PermissionResponse>
+│  ├─ verifyAuthorization() → Future<HealthKitAuthorizationResult>
+│  ├─ requestAuthorization() → Future<void>
+│  └─ permissionStream → Stream<HealthKitAuthorizationResult>
 └────────────┬────────────────────────────┘
              │
          ┌───┴────┐
@@ -532,4 +511,4 @@ Must add privacy usage descriptions:
 1. Review and approve this design
 2. Begin implementation Phase 1 (Core Models)
 3. Set up iOS project with HealthKit capability
-4. Create example app structure
+4. ✅ Permission UX reference: bundled [`example/`](example/) — see [example/README.md](example/README.md); extend as needed

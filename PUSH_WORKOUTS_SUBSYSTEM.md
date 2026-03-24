@@ -2,7 +2,7 @@
 
 **Document Version:** 1.0  
 **Date:** February 24, 2026  
-**Plugin:** humango_workouts  
+**Plugin:** `humango_health`  
 **Subsystem:** Workout Pushing (WorkoutKit Integration)
 
 ---
@@ -879,30 +879,11 @@ enum WorkoutPushStatus {
 - `test/managers/workout_push_manager_test.dart`
 - `ios/Tests/WorkoutKitManagerTests.swift`
 
-### Phase 9: Example Implementation
+### Phase 9: Host app integration
 
-**Objective:** Demonstrate push workout functionality
+**Objective:** Exercise push workout flows in a real consumer app.
 
-**Tasks:**
-1. Create example screen: `example/lib/push_workout_screen.dart`
-2. Show workflow:
-   - Request permission if needed
-   - Create sample workouts (swimming, running, triathlon)
-   - Display workout list with details
-   - Push workouts button
-   - Show results (success, skipped, failed)
-   - Display stored records
-3. Add deduplication demo:
-   - Push same workout twice → second shows skipped
-   - Modify workout → push again → shows success
-4. Add validation error examples:
-   - Date beyond 7 days → validation error
-   - Empty interval block → validation error
-
-**Files:**
-- `example/lib/push_workout_screen.dart`
-- `example/lib/widgets/workout_card.dart`
-- `example/lib/utils/sample_workouts.dart`
+The bundled [`example/`](example/) app includes a **Workout Push** tab (`example/lib/workout_push_screen.dart`); see [example/README.md](example/README.md). For your own app, implement screens using [README.md](README.md) (push workouts) and [docs/client_app_integration_guide.md](docs/client_app_integration_guide.md).
 
 ### Phase 10: Documentation
 

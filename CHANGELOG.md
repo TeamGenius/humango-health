@@ -41,12 +41,9 @@ All five inline `ISO8601DateFormatter().date(from:)` calls in `SleepDataManager.
 
 **Changed in:** `ios/Classes/SleepData/SleepDataManager.swift`
 
-### Example App
+### Example app
 
-- Sleep duration values throughout the sleep screen are now displayed as `Xh Ym` (e.g. `6h 27m`) instead of `6.3 hours` / `83 min`.
-- Added a **Calculate Payload** test card (teal) that calls `calculateSleepPayload` for a selected date range and shows the grouped result.
-
-**Changed in:** `example/lib/sleep_data_screen.dart`
+The bundled Flutter [`example/`](example/) app demonstrates coordinator + tab flows (including sleep screens that call `calculateSleepPayload` and format durations as `Xh Ym`). See [example/README.md](example/README.md). Production integration patterns also live in [README.md](README.md) and [docs/client_app_integration_guide.md](docs/client_app_integration_guide.md).
 
 ---
 
@@ -90,7 +87,7 @@ All five inline `ISO8601DateFormatter().date(from:)` calls in `SleepDataManager.
 
 - **[README.md](README.md)** — consumer integration (guide + contract links, docs index).
 - **[docs/client_integration_contract.md](docs/client_integration_contract.md)** & **[docs/client_app_integration_guide.md](docs/client_app_integration_guide.md)** — contract + host-app guide (cross-linked).
-- **Example app** — [`HealthSyncCoordinator`](example/lib/health_sync_coordinator.dart) pattern (`Selector`, shared managers, HRV subscription fix).
+- **Host app integration** — describe a coordinator module (session + idempotent `configure*`, single stream subscriptions); see [docs/client_app_integration_guide.md](docs/client_app_integration_guide.md). *(Runnable reference: bundled [`example/`](example/) — [example/README.md](example/README.md).)*
 
 ---
 
@@ -425,7 +422,7 @@ A new **"Date Format Tests"** section has been added to the Push Workouts screen
 ### Breaking Changes
 
 #### Workout Reading — `getLocalWorkouts()` removed
-`getLocalWorkouts()` has been removed from both the Dart API and native iOS layer. Background workout delivery via `localStorage` mode was redundant — when background monitoring is enabled, all workouts are POSTed directly to the configured API endpoint. There is no offline/local retrieval path needed.
+`getLocalWorkouts()` has been removed from both the Dart API and native iOS layer. Completed workouts are delivered on `workoutStream` when a listener exists, or queued under `BackgroundWorkouts.pending` for your app to consume — the plugin does not POST to your API.
 
 **Removed from Dart (`WorkoutReadManager`):**
 - `getLocalWorkouts()` method
@@ -444,7 +441,7 @@ A new **"Date Format Tests"** section has been added to the Push Workouts screen
 ### Improvements
 
 #### Workout Route Debounce Reduced (3 min → 1 min)
-The `RouteService` debounce window — the time iOS waits after the last GPS route update before finalising and pushing the workout — has been reduced from **3 minutes** to **1 minute**. This means completed workouts are delivered to the API approximately 2 minutes faster after the final route point arrives.
+The `RouteService` debounce window — the time iOS waits after the last GPS route update before finalising and emitting the workout — has been reduced from **3 minutes** to **1 minute**. Completed workouts reach `workoutStream` / pending storage sooner after the final route point arrives.
 
 **Changed in:** `ios/Classes/WorkoutReading/RouteService.swift` — `routeUpdateWaitSeconds`
 

@@ -10,11 +10,11 @@
 ## Overview
 
 This subsystem provides access to Apple HealthKit's sleep analysis data (`HKCategoryTypeIdentifier.sleepAnalysis`). It supports:
-- **One-shot fetch**: Query sleep data for a configurable time range
-- **Live streaming (Foreground)**: Real-time updates via EventChannel using `HKAnchoredObjectQueryDescriptor`
-- **Background monitoring**: Detect changes via `HKObserverQuery` and store in UserDefaults
-- **Sleep session detection**: Freeze-window-aware algorithm detects when a sleep session ends using multi-factor scoring
-- **Background API delivery**: Configurable delivery mode that POSTs finalized sleep sessions directly to a remote API (works in both foreground and background)
+- **One-shot fetch**: Query sleep data for a configurable time range (`getSleepData`)
+- **Foreground monitoring**: `HKAnchoredObjectQueryDescriptor` accumulates samples into on-device session state
+- **Background monitoring**: `HKObserverQuery` + `enableBackgroundDelivery`; same accumulation path when the app is suspended
+- **Session finalization**: In-bed-first pipeline + grouping-based `calculateSleepPayload` where applicable; finalized **flat JSON** is appended to a **local pending queue** only — the plugin does **not** POST session payloads to your API
+- **No EventChannel** for sleep payloads: use `getLocalSleepSessions()` (and optional native KVO in the host Runner) to upload from your app
 
 ---
 
@@ -30,52 +30,25 @@ This subsystem provides access to Apple HealthKit's sleep analysis data (`HKCate
 - **MUST** include device and source information when available
 - **MUST** return raw JSON for each sample for user inspection
 
-#### 2. Live Streaming (Foreground)
+#### 2. Foreground accumulation
 
-- **MUST** use `HKAnchoredObjectQueryDescriptor` for real-time updates (iOS 15+)
-- **MUST** push each new sleep sample to Flutter via EventChannel
-- **MUST** support sample deletion events
-- **MUST** maintain anchor for incremental updates
+- **MUST** use `HKAnchoredObjectQueryDescriptor` for incremental updates while the app is active (iOS 15+)
+- **MUST** accumulate samples into session state (no per-sample EventChannel to Dart)
 
-#### 3. Background Monitoring
+#### 3. Background monitoring
 
 - **MUST** use `HKObserverQuery` for background change detection
-- **MUST** enable `HKHealthStore.enableBackgroundDelivery()` for immediate updates
-- **MUST** store fetched data in UserDefaults for later retrieval
-- **MUST** provide `fetchStoredSleepData()` method to retrieve background data
+- **MUST** enable `HKHealthStore.enableBackgroundDelivery()` for wake-ups
+- **MUST** use the same accumulation path as foreground; on finalize, store **one** flat JSON per night in `com.humango.health.sleepPendingLocal`
 
-#### 4. Foreground/Background Mode Switching
+#### 4. Foreground/background mode switching
 
-- **MUST** support `enterForeground()` to switch to live streaming mode
-- **MUST** support `enterBackground()` to switch to observer mode
+- **MUST** support `enterForeground()` / `enterBackground()` overrides (normally unused — native `AppLifecycleManager` switches modes)
 - **MUST** automatically switch modes based on app lifecycle
-- **MUST** use same foreground/background query strategy for both delivery modes
-- **MUST** in API mode, accumulate live samples into session state (not push to EventChannel)
 
-#### 5. Sleep Session Detection (Freeze Window)
+#### 5. Sleep session detection (native automatic pipeline)
 
-Intelligent detection of when a sleep session has ended, using a **freeze window** approach:
-
-| Parameter | Default | Description |
-|-----------|---------|-------------|
-| `freezeWindowStartHour` | 0 (midnight) | Local hour at which the freeze window opens |
-| `freezeWindowEndHour` | 12 (noon) | Local hour at which the freeze window closes |
-| `minimumSleepMinutes` | 240 (4 hrs) | Minimum accumulated sleep before session can end |
-| `stalenessThresholdMinutes` | 60 | Minutes of no new data before declaring stale |
-| `deepSleepAbsenceWindowMinutes` | 90 | If no deep sleep in this window, user is in late sleep |
-
-**Session end detection (during freeze window) requires ALL conditions:**
-1. Minimum 4 hours of accumulated sleep
-2. No deep sleep in the last 90 minutes of segments
-3. No new segments for >= 60 minutes (staleness)
-4. Current time is within the freeze window (12 AM – 12 PM)
-
-**After freeze window ends (12 PM):** any accumulated session is auto-finalized.
-
-**Session lifecycle:**
-- `configureSleepSession()` — set freeze window and detection parameters
-- `getSleepSessionStatus()` — query current session state
-- `resetSleepSession()` — clear state for next night
+Session boundaries, in-bed checks, optional 15‑minute re-check timer, grouping-based `calculateSleepPayload` in the background path, and finalization are implemented in Swift — **not** configurable from Dart (legacy `configureSleepSession` / `getSleepSessionStatus` / `resetSleepSession` APIs were removed in v0.0.8). See `SleepDataManager.swift` and README for behavioral detail.
 
 #### 6. Background delivery (local queue only)
 
@@ -91,7 +64,7 @@ enum SleepBackgroundDeliveryMode {
 
 **Key difference from workouts:** workout delivery emits per completed workout (stream or pending). Sleep accumulates overnight, then stores **one** finalized JSON per session.
 
-#### 7. Sleep Stage Classification
+#### 7. Sleep stage classification
 
 Support all iOS sleep stages (iOS 16+):
 
@@ -104,7 +77,7 @@ Support all iOS sleep stages (iOS 16+):
 | 4 | `asleepDeep` | Deep sleep |
 | 5 | `asleepREM` | REM sleep |
 
-#### 8. Aggregated Statistics
+#### 8. Aggregated statistics
 
 Return computed totals:
 - Total sleep time (excluding `inBed` and `awake`)
@@ -127,13 +100,12 @@ Return computed totals:
 │  ├─ getSleepData({startDate?, endDate?}) → Response      │
 │  ├─ startMonitoring() / stopMonitoring()                 │
 │  ├─ fetchStoredSleepData() → Response                    │
-│  ├─ configureSleepSession() → configure freeze window    │
-│  ├─ getSleepSessionStatus() / resetSleepSession()        │
-│  ├─ configureSleepBackgroundDelivery(config) → API/local │
-│  ├─ getLocalSleepSessions() → [String] (locally stored)  │
-│  └─ enterForeground() / enterBackground()                │
+│  ├─ configureSleepBackgroundDelivery() → local queue     │
+│  ├─ getLocalSleepSessions() → [String] (pending JSON)   │
+│  ├─ calculateSleepPayload({startDate?, endDate?})        │
+│  └─ enterForeground() / enterBackground() (optional)      │
 └─────────────────────┬────────────────────────────────────┘
-                      │ Method Channel + Event Channel
+                      │ Method Channel only
 ┌─────────────────────┴────────────────────────────────────┐
 │           Sleep Data Manager (iOS/Swift)                 │
 │  ├─ fetchSleepData() → one-shot query                    │
@@ -141,8 +113,8 @@ Return computed totals:
 │  │   └─ accumulate samples → session state               │
 │  ├─ startBackgroundMonitoring() → HKObserverQuery        │
 │  │   └─ accumulate → session state                       │
-│  ├─ SleepSessionDetector → freeze window + multi-factor  │
-│  ├─ SleepBackgroundDeliveryManager → local queue only   │
+│  ├─ Session / inBed pipeline + grouping (native)        │
+│  ├─ SleepBackgroundDeliveryManager → local queue only    │
 │  └─ UserDefaults storage for background data             │
 └─────────────────────┬────────────────────────────────────┘
                       │
@@ -167,29 +139,15 @@ Return computed totals:
 | `stopSleepMonitoring` | Dart → iOS | None | `{status}` |
 | `fetchStoredSleepData` | Dart → iOS | None | `SleepDataResponse` |
 | `clearStoredSleepData` | Dart → iOS | None | `{status}` |
-| `configureSleepSession` | Dart → iOS | `freezeWindowStartHour?, freezeWindowEndHour?, minimumSleepMinutes?, stalenessThresholdMinutes?, deepSleepAbsenceWindowMinutes?` | `{status, ...config}` |
-| `getSleepSessionStatus` | Dart → iOS | None | `{status, reason, isInFreezeWindow, segmentCount, ...}` |
-| `resetSleepSession` | Dart → iOS | None | `{status}` |
-| `configureSleepBackgroundDelivery` | Dart → iOS | `mode: String, apiURL?: String, headers?: Map` | `{status, mode, apiURL, headersCount}` |
+| `configureSleepBackgroundDelivery` | Dart → iOS | `mode: "localStorage"` only | `{status, mode}` |
 | `getLocalSleepSessions` | Dart → iOS | None | `[String]` (JSON array) |
+| `calculateSleepPayload` | Dart → iOS | `startDate?, endDate?` (ISO8601) | flat payload map |
 | `enterSleepForeground` | Dart → iOS | None | `null` |
 | `enterSleepBackground` | Dart → iOS | None | `null` |
 
-### Event Channel Events
+### Real-time streaming
 
-> **Note:** The sleep EventChannel has been removed. Sleep data is no longer streamed to Flutter in real-time. Finalized sessions are delivered via API POST or stored locally.
-
----
-
-class SleepStageTotals {
-  final double inBedSeconds;
-  final double asleepUnspecifiedSeconds;
-  final double awakeSeconds;
-  final double asleepCoreSeconds;
-  final double asleepDeepSeconds;
-  final double asleepREMSeconds;
-}
-```
+There is **no** EventChannel for sleep sample payloads. Finalized nights are retrieved with `getLocalSleepSessions()` (or host Runner code that reads `UserDefaults`).
 
 ---
 
@@ -248,7 +206,7 @@ class SleepStageTotals {
 | `LIVE_UPDATE_ERROR` | Error during live streaming |
 | `UNSUPPORTED` | iOS version below 14.0 |
 | `INVALID_ARGS` | Missing or invalid method arguments |
-| `INVALID_MODE` | Invalid delivery mode (must be `api` or `localStorage`) |
+| `INVALID_MODE` | Invalid delivery mode (must be `localStorage`) |
 
 **Authorization Errors (embedded in SLEEP_FETCH_ERROR):**
 - HealthKit not available on device
@@ -285,9 +243,9 @@ void fetchSleepData() async {
 }
 ```
 
-### Live Streaming (Foreground)
+### Foreground monitoring
 
-In foreground, the iOS side uses `HKAnchoredObjectQueryDescriptor` to accumulate samples into session state. No individual samples are streamed to Flutter.
+In the foreground, the iOS side uses `HKAnchoredObjectQueryDescriptor` to accumulate samples into session state. No per-sample stream is sent to Dart; when the session ends, JSON is appended to the local pending queue for `getLocalSleepSessions()`.
 
 ```dart
 import 'package:humango_health/humango_health.dart';
@@ -298,8 +256,6 @@ void startForegroundMonitoring() async {
   await sleepManager.startMonitoring(
     startDate: DateTime.now().subtract(const Duration(hours: 24)),
   );
-  // Samples accumulate on-device; finalized session is delivered
-  // via API or stored locally when the session ends.
 }
 
 void stopForegroundMonitoring() async {
@@ -336,33 +292,9 @@ void clearBackgroundData() async {
 // from Flutter, though they remain available for manual override if needed.
 ```
 
-### Sleep Session Detection
+### Session detection
 
-```dart
-import 'package:humango_health/humango_health.dart';
-
-final sleepManager = SleepDataManager();
-
-// Configure the freeze window and detection parameters (optional — defaults are sensible)
-void configureSleepDetection() async {
-  await sleepManager.configureSleepSession(
-    freezeWindowStartHour: 0,   // midnight
-    freezeWindowEndHour: 12,    // noon
-    minimumSleepMinutes: 240,   // 4 hours
-    stalenessThresholdMinutes: 60,
-    deepSleepAbsenceWindowMinutes: 90,
-  );
-}
-
-
-// Check session status on demand
-void checkSessionStatus() async {
-  final status = await sleepManager.getSleepSessionStatus();
-  print('Session status: ${status['status']}');
-  print('In freeze window: ${status['isInFreezeWindow']}');
-  print('Total sleep: ${status['totalSleepMinutes']}m');
-}
-```
+Implemented natively only (in-bed checks, timers, grouping). There is **no** Dart API to configure or query internal session state.
 
 ### Background delivery — configure and drain
 
@@ -445,6 +377,6 @@ Legacy `com.humango.health.sleepDeliveryMode` / `sleepDeliveryURL` / `sleepDeliv
 |-------------|---------|
 | iOS Minimum | 14.0 |
 | iOS Sleep Stages | 16.0+ (for asleepCore, asleepDeep, asleepREM) |
-| iOS Live Streaming | 15.0+ (HKAnchoredObjectQueryDescriptor) |
+| iOS anchored queries | 15.0+ (`HKAnchoredObjectQueryDescriptor` for monitoring) |
 | Flutter | 3.0+ |
 | Dart | 2.17+ |

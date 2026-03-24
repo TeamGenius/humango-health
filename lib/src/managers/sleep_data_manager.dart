@@ -16,8 +16,8 @@ import '../models/sleep_background_delivery_config.dart';
 /// (inBed, awake, asleepCore, asleepDeep, asleepREM) with support for:
 /// - One-shot data fetch for a configurable time range
 /// - Background monitoring: foreground uses [HKAnchoredObjectQueryDescriptor],
-///   background uses [HKObserverQuery]. Data is accumulated into session state
-///   and delivered via API (POST) or local storage on session end.
+///   background uses [HKObserverQuery]. Data is accumulated into session state;
+///   finalized session JSON is stored locally for [getLocalSleepSessions] (no HTTP from the plugin).
 ///
 /// Example usage:
 /// ```dart
@@ -26,7 +26,7 @@ import '../models/sleep_background_delivery_config.dart';
 /// // One-shot fetch
 /// final response = await sleepManager.getSleepData();
 ///
-/// // Start monitoring (auto-starts on next launch if API is configured)
+/// // Start monitoring (with [UserSessionManager] + armed delivery, auto-starts on next launch)
 /// await sleepManager.startMonitoring();
 ///
 /// // Retrieve locally stored sessions (localStorage mode)
@@ -43,9 +43,8 @@ class SleepDataManager {
   // Note: there is intentionally no EventChannel / stream for sleep payload
   // updates. Background HKObserverQuery delivery fires while Flutter is
   // suspended, so an EventChannel event would be lost. Instead, the host-app
-  // Runner (HealthQueueObserver) watches UserDefaults via KVO and handles
-  // background payloads natively. Flutter drains getLocalSleepSessions() on
-  // AppLifecycleState.resumed (see SleepDataScreen).
+  // Host Runner code may watch UserDefaults via KVO. Flutter typically drains
+  // getLocalSleepSessions() when the app resumes.
 
   /// Fetches sleep data from HealthKit for the specified time range.
   ///

@@ -618,7 +618,7 @@ Keep a **single long-lived** `workoutStream` subscription (see `WorkoutReadManag
 
 **Files:**
 - `lib/src/managers/workout_read_manager.dart` (lifecycle + stream + configure)
-- `example/lib/` (see coordinator / workout tabs for lifecycle handling)
+- Consumer wiring: [README.md](README.md), [docs/client_app_integration_guide.md](docs/client_app_integration_guide.md)
 
 ### Phase 9: Matching with Pushed Workouts
 
@@ -708,31 +708,11 @@ Keep a **single long-lived** `workoutStream` subscription (see `WorkoutReadManag
 - `ios/Tests/RouteServiceTests.swift`
 - `ios/Tests/WorkoutRecordStoreTests.swift`
 
-### Phase 11: Example Implementation
+### Phase 11: Host app integration
 
-**Objective:** Demonstrate complete workout reading workflow
+**Objective:** Demonstrate workout reading in a real consumer app.
 
-**Tasks:**
-1. Create example screen showing:
-   - Permission request
-   - Date range selector
-   - "Read Workouts" button (one-shot)
-   - "Start Monitoring" button (continuous)
-   - "Stop Monitoring" button
-   - Real-time workout list (from stream)
-   - Local workouts display (from background)
-   - Background delivery configuration
-   - Scheduled vs spontaneous workout indicator
-
-2. Show foreground/background behavior:
-   - Display workouts arriving in real-time
-   - Simulate app backgrounding
-   - Show local workouts on app resume
-
-**Files:**
-- `example/lib/read_workout_screen.dart`
-- `example/lib/widgets/workout_list_item.dart`
-- `example/lib/widgets/delivery_config_dialog.dart`
+The bundled [`example/`](example/) project includes an Activity Read tab; see [example/README.md](example/README.md), [README.md](README.md) (workout reading, `workoutStream`, pending queue semantics), and [docs/client_app_integration_guide.md](docs/client_app_integration_guide.md).
 
 ### Phase 12: Documentation
 
@@ -1112,15 +1092,9 @@ func handleSetImportPreferences(_ call: FlutterMethodCall, _ result: FlutterResu
 
 ## Error Handling
 
-### Dart-Side Errors
+### Dart-side errors
 
-| Error | When | User Action |
-|-------|------|-------------|
-| `PermissionDeniedException` | No read permission | Request workout permission |
-| `InvalidDateRangeException` | Start date after end date | Fix date range |
-| `MonitoringAlreadyActiveException` | startMonitoring() called twice | Stop existing monitoring first |
-| `PlatformException` | Native iOS error | Check logs, retry |
-| `DeserializationException` | Invalid JSON from iOS | Report bug |
+Failures from `WorkoutReadManager` are typically **`PlatformException`** from the method channel. The package does not define typed Dart errors such as `MonitoringAlreadyActiveException` for workout read. Parse `readWorkouts` / stream strings in your app; invalid JSON is a client-side parse error.
 
 ### iOS-Side Errors
 
@@ -1445,7 +1419,7 @@ manager.workoutStream.listen((json) async {
 5. Test foreground/background mode switching
 6. Implement background delivery configuration
 7. Test deduplication and matching logic
-8. Create comprehensive example app
+8. ✅ Bundled reference app: [`example/`](example/) — see [example/README.md](example/README.md); extend as new flows land
 
 **Your existing Swift code is excellent and production-ready!** The main work is integrating it with Flutter's platform channels and adding the background delivery configuration layer.
 

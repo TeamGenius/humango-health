@@ -1,6 +1,6 @@
 # Client app integration guide (consolidated)
 
-Use this guide when wiring **any** Flutter host app to **`humango_health`** so it matches the same patterns as the plugin example app. It consolidates the [client integration contract](client_integration_contract.md) into actionable structure and steps.
+Use this guide when wiring **any** Flutter host app to **`humango_health`**. It consolidates the [client integration contract](client_integration_contract.md) into actionable structure and steps.
 
 | Document | Use when |
 |----------|----------|
@@ -8,7 +8,7 @@ Use this guide when wiring **any** Flutter host app to **`humango_health`** so i
 | [client_integration_contract.md](client_integration_contract.md) | Semantics, envelopes, ordering, success criteria, and library vs client responsibilities |
 | Subsystem docs (`activity_reading.md`, `sleep_data.md`, …) | Payloads and APIs **per domain** |
 
-**Reference implementation (canonical in this repo):** [`example/lib/health_sync_coordinator.dart`](../example/lib/health_sync_coordinator.dart) and tabs under [`example/lib/`](../example/lib/).
+**Reference patterns (this repo):** [User Session Management — Recommended Integration](../README.md#recommended-integration) in the README (login → `configureBackgroundDelivery` + `configureSleepBackgroundDelivery`; logout → `setUserLoggedIn(false)`). A runnable sample is bundled under **[`example/`](../example/)** ([`example/README.md`](../example/README.md), including `HealthSyncCoordinator`). In **your** app, implement the same coordinator idea using §2–§4 below.
 
 ---
 
@@ -50,13 +50,13 @@ flowchart TB
    Do **not** scatter these calls across unrelated widgets or routes.
 
 2. **Idempotent configure**  
-   Safe to call again after **token refresh** or app resume: native code skips no-op writes when the armed state is unchanged.
+   Safe to call again after **token refresh** or app resume: native code skips no-op writes when the armed state is unchanged. Workout and sleep background delivery are **stream / local queue only**—the plugin does not store API URLs or auth headers for session payloads.
 
 3. **One stable subscription per domain**  
    For each stream (`workoutStream`, `permissionStream`, `hrvUpdates`, …): one listener per manager instance, **cancel** in `dispose` / when turning monitoring off. Avoid multiple listeners that each fire the same side effects.
 
 4. **No timer‑based sync as primary path**  
-   Do not poll the library on an interval for data that observers already deliver. Use **explicit** one-shot APIs for catch-up (`readWorkouts`, `getSleepData`, `refreshSince`, etc.) on login, pull-to-refresh, or cold start—not a repeating background timer.
+   Do not poll the library on an interval for data that observers already deliver. Use **explicit** one-shot APIs for catch-up (`readWorkouts`, `getSleepData`, `getPendingHRVUpdates`, `getLocalSleepSessions`, etc.) on login, pull-to-refresh, or cold start—not a repeating background timer.
 
 5. **Foreground streams vs local queues**  
    **Workouts:** `workoutStream` + optional UserDefaults pending JSON. **Sleep:** finalized sessions in `UserDefaults`; drain with `getLocalSleepSessions()` and upload from your app.
@@ -103,15 +103,15 @@ The coordinator **orchestrates** (session, idempotent configure, shared managers
 ### Background delivery (one place)
 
 - [ ] **Workouts:** `configureBackgroundDelivery(const BackgroundDeliveryConfig())` — arms stream/pending; upload from your app.
-- [ ] **Sleep:** `configureSleepBackgroundDelivery(SleepBackgroundDeliveryConfig(...))` — mode `api` with `apiURL` and optional `headers`, or `localStorage` per product.
-- [ ] On **token refresh**, call the same configure methods again with **new headers**; rely on idempotent native behavior for unchanged fields.
+- [ ] **Sleep:** `configureSleepBackgroundDelivery(const SleepBackgroundDeliveryConfig())` — **local queue only** (`localStorage`). Call `getLocalSleepSessions()` and upload from your app.
+- [ ] On **token refresh** or resume, you may call the same configure methods again; native code treats identical config as a no-op.
 
 ### Per domain
 
 - [ ] **Permissions:** one `PermissionManager.permissionStream` subscription at app or shell level; expose to UI via provider.
 - [ ] **Workout read:** one `WorkoutReadManager` (from coordinator), `workoutStream` subscription only while monitoring; cancel on stop; use one-shot `readWorkouts` for catch-up.
 - [ ] **Sleep:** one `SleepDataManager`; foreground monitoring vs one-shot `getSleepData` per subsystem docs; no duplicate `configureSleepBackgroundDelivery` from feature widgets.
-- [ ] **HRV / metrics:** one `hrvUpdates` subscription when HRV monitoring is active; do not stack duplicate listeners in `initState` and toggle handlers (see [example `health_metrics_screen.dart`](../example/lib/health_metrics_screen.dart)).
+- [ ] **HRV / metrics:** one `hrvUpdates` subscription when HRV monitoring is active; do not stack duplicate listeners in `initState` and toggle handlers (see [README — HRV automatic updates](../README.md#hrv-automatic-updates-background--suspended)).
 
 ### UI performance
 
@@ -125,17 +125,17 @@ The coordinator **orchestrates** (session, idempotent configure, shared managers
 
 ---
 
-## 5. Porting from the plugin example
+## 5. Mapping concerns to docs (and the bundled example app)
 
-The example app is the **literal** template:
+This repo includes a Flutter **`example/`** project — see [`example/README.md`](../example/README.md) for `HealthSyncCoordinator` and feature tabs. Use the following as your **pattern checklist** when adapting patterns to your own app:
 
-| Concern | File |
-|---------|------|
-| Coordinator + shared managers + configure | [`example/lib/health_sync_coordinator.dart`](../example/lib/health_sync_coordinator.dart) |
-| Permissions + `Selector` | [`example/lib/main.dart`](../example/lib/main.dart) |
-| Read tab: stream only, no configure in screen | [`example/lib/workout_read_screen.dart`](../example/lib/workout_read_screen.dart) |
-| Sleep: session + config via coordinator | [`example/lib/sleep_data_screen.dart`](../example/lib/sleep_data_screen.dart) |
-| HRV: single subscription path | [`example/lib/health_metrics_screen.dart`](../example/lib/health_metrics_screen.dart) |
+| Concern | Where to read |
+|---------|----------------|
+| Coordinator: session + `configure*` once | [README — Recommended Integration](../README.md#recommended-integration), §2–§4 in this guide |
+| Permissions + one `permissionStream` | [README — Permission Handling](../README.md#permission-handling) |
+| Workout read: stream vs `readWorkouts` | [README — Workout Reading & Monitoring](../README.md#workout-reading--monitoring), [activity_reading.md](activity_reading.md) |
+| Sleep: monitor + `getLocalSleepSessions` | [README — Sleep Data Reading & Monitoring](../README.md#sleep-data-reading--monitoring), [sleep_data.md](sleep_data.md) |
+| HRV: `startHRVMonitoring` + single stream | [README — HRV automatic updates](../README.md#hrv-automatic-updates-background--suspended) |
 
 Copy the **pattern**, not necessarily the class names: use Riverpod, GetIt, or your DI as long as the rules in §2 hold.
 

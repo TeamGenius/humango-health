@@ -20,7 +20,7 @@ public class HumangoHealthPlugin: NSObject, FlutterPlugin {
     // Note: no EventChannel for sleep payload updates — Flutter is suspended during
     // background HKObserverQuery delivery. The host-app Runner (HealthQueueObserver)
     // watches UserDefaults via KVO and handles background payloads natively.
-    // Flutter drains getLocalSleepSessions() on AppLifecycleState.resumed instead.
+    // Host apps typically drain getLocalSleepSessions() when Dart resumes.
 
     // Phase 6: Health Metrics (HRV, Resting HR, Body Fat, Weight, Height)
     let healthMetricsMethodChannel = FlutterMethodChannel(name: "com.humango.health/metrics", binaryMessenger: registrar.messenger())

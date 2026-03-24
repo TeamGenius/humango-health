@@ -40,7 +40,7 @@ A comprehensive Flutter plugin for integrating iOS HealthKit and WorkoutKit func
 
 The plugin **reads HealthKit on the device** and **pushes** updates via streams and local queues. Session payloads for workouts and sleep are **not** POSTed by the plugin—your app uploads them. Host apps **subscribe** and **configure** session/background delivery—see **[Client app integration guide](docs/client_app_integration_guide.md)** for the coordinator pattern and **[Client integration contract](docs/client_integration_contract.md)** for semantics.
 
-Use **streams** and **one-shot** reads for catch-up after login—not a repeating poll for data the library already observes. Configure `configureBackgroundDelivery` / sleep delivery **once** after auth (idempotent; safe on token refresh). The [`example`](example/) app demonstrates this via [`HealthSyncCoordinator`](example/lib/health_sync_coordinator.dart).
+Use **streams** and **one-shot** reads for catch-up after login—not a repeating poll for data the library already observes. Configure `configureBackgroundDelivery` / sleep delivery **once** after auth (idempotent; safe to repeat after login). Follow the **[Client app integration guide](docs/client_app_integration_guide.md)** and the session snippet under [User Session Management](#user-session-management). A bundled Flutter reference app lives under **[example/](example/)** — see [`example/README.md`](example/README.md).
 
 ## Documentation
 
@@ -96,7 +96,7 @@ The library uses a **user session gate** to prevent background health observers 
 
 ### Why This Matters
 
-The plugin persists delivery configuration (workout armed flag; sleep URL/mode/headers where applicable) across app launches so HealthKit observers can auto-restart when iOS relaunches the app. Without a session gate:
+The plugin persists delivery configuration (workout stream/pending armed flag; sleep local-queue armed flag) across app launches so HealthKit observers can auto-restart when iOS relaunches the app. Without a session gate:
 
 - A freshly installed app (no user yet) would attempt to start background observers on every launch.
 - After logout, background observers could continue running with stale configuration.
@@ -365,7 +365,7 @@ void dispose() {
 }
 ```
 
-See the `example/` app directory for a complete working demonstration.
+Wire permissions the same way in your host app: one `PermissionManager`, `requestAuthorization()` where appropriate, and a single `permissionStream` subscription (see [Permission Handling](#permission-handling)).
 
 ---
 
@@ -1324,18 +1324,12 @@ Each `SleepSample` includes:
 
 ### Permission Requirements
 
-Ensure sleep data read permission is granted before fetching:
+Ensure sleep analysis is included when you request HealthKit authorization (the plugin requests its full fixed type set—see [Tracked Health Types](#tracked-health-types)):
 
 ```dart
 final permissionManager = PermissionManager();
-
-// Request sleep read permission
-await permissionManager.request(
-  [HealthDataType.sleepAnalysis],  // Read types
-  []  // Write types (none needed for reading)
-);
-
-// Then fetch sleep data
+await permissionManager.requestAuthorization();
+// After the user has granted access, fetch sleep:
 final sleepManager = SleepDataManager();
 final response = await sleepManager.getSleepData();
 ```
@@ -1575,7 +1569,7 @@ Each workout includes comprehensive data:
 | Mode | Technology | Data Delivery |
 |------|------------|---------------|
 | **Foreground** | `HKAnchoredObjectQueryDescriptor` | EventChannel stream (workout updates) |
-| **Background** | `HKObserverQuery` + `enableBackgroundDelivery()` | API POST or localStorage |
+| **Background** | `HKObserverQuery` + `enableBackgroundDelivery()` | Same as foreground: `workoutStream` when a listener is attached; otherwise JSON is queued in `UserDefaults` (`BackgroundWorkouts.pending`). The plugin does **not** POST workouts. |
 
 ### Deduplication
 
@@ -1834,9 +1828,8 @@ All communication between Flutter and iOS uses these channels:
 
 | Channel | Type | Purpose |
 |---------|------|---------|
-| `com.humango.health` | MethodChannel | Main health operations |
-| `com.humango.health/permissions` | MethodChannel | Permission handling |
-| `com.humango.health/permissions/stream` | EventChannel | Permission status changes |
+| `healthkit/method` | MethodChannel | Permission handling (`requestAuthorization`, `verifyAuthorization`) |
+| `healthkit/event` | EventChannel | Permission status stream (`permissionStream`) |
 | `com.humango.workouts/workoutplan` | MethodChannel | Workout scheduling (push/remove) |
 | `com.humango.workouts/read` | MethodChannel | Workout reading |
 | `com.humango.workouts/read/stream` | EventChannel | Real-time workout updates |

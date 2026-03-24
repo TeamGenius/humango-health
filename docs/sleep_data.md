@@ -37,8 +37,8 @@ The app lifecycle (foreground ↔ background) is detected **natively on iOS** vi
         │  ├─ fetchSleepData()      │
         │  ├─ startLiveUpdates()    │  HKAnchoredObjectQueryDescriptor
         │  ├─ startBackgroundMonitoring() │  HKObserverQuery
-        │  ├─ SleepSessionDetector  │  freeze-window algorithm
-        │  └─ SleepBackgroundDeliveryManager │  API or localStorage
+        │  ├─ Session / inBed pipeline  │  finalize nights → flat JSON
+        │  └─ SleepBackgroundDeliveryManager │  local pending queue only
         └─────────────┬─────────────┘
                       │
         ┌─────────────▼─────────────┐
@@ -46,7 +46,7 @@ The app lifecycle (foreground ↔ background) is detected **natively on iOS** vi
         └───────────────────────────┘
 ```
 
-There is **no EventChannel** for sleep. All data flows through the method channel — either as direct responses or via the background delivery pipeline (API POST or UserDefaults).
+There is **no EventChannel** for per-sample sleep streaming. All data flows through the method channel — one-shot `getSleepData`, monitoring APIs, or finalized sessions in the **local pending queue** (`getLocalSleepSessions`). The plugin does **not** POST sleep session JSON to your API.
 
 ---
 
@@ -58,7 +58,7 @@ There is **no EventChannel** for sleep. All data flows through the method channe
 |------|---------------|
 | `ios/Classes/SleepData/SleepDataManager.swift` | Entry point — handles all MethodChannel calls, orchestrates queries and mode switching |
 | `ios/Classes/SleepData/SleepSessionDetector.swift` | Freeze-window algorithm — accumulates segments and decides when a sleep session has ended |
-| `ios/Classes/SleepData/SleepBackgroundDeliveryManager.swift` | Delivery pipeline — HTTP POST to API or persist to UserDefaults |
+| `ios/Classes/SleepData/SleepBackgroundDeliveryManager.swift` | Appends finalized session JSON to `com.humango.health.sleepPendingLocal` (no HTTP for session payloads) |
 
 ### Dart (Flutter)
 
@@ -177,17 +177,9 @@ final status = await sleepManager.getSleepSessionStatus();
 await sleepManager.resetSleepSession(); // clear for next night
 ```
 
-### Configure Session Detection
+### Session detection
 
-```dart
-await sleepManager.configureSleepSession(
-  freezeWindowStartHour: 0,     // midnight
-  freezeWindowEndHour: 12,      // noon
-  minimumSleepMinutes: 240,     // 4 hours
-  stalenessThresholdMinutes: 60,
-  deepSleepAbsenceWindowMinutes: 90,
-);
-```
+Session start/end and the in-bed re-check pipeline are **automatic** in native code (see README and `SLEEP_DATA_SUBSYSTEM.md`). There is **no** Dart API to configure freeze windows (`configureSleepSession`, `getSleepSessionStatus`, and `resetSleepSession` were removed in v0.0.8).
 
 ---
 
@@ -303,11 +295,9 @@ UserDefaults key: com.humango.health.sleepSessionState
 | `stopSleepMonitoring` | — | `{status}` |
 | `fetchStoredSleepData` | — | `SleepDataResponse` JSON (from UserDefaults) |
 | `clearStoredSleepData` | — | `{status}` |
-| `configureSleepSession` | `freezeWindowStartHour?, freezeWindowEndHour?, minimumSleepMinutes?, stalenessThresholdMinutes?, deepSleepAbsenceWindowMinutes?` | `{status, ...config}` |
-| `getSleepSessionStatus` | — | `{status, reason, isInFreezeWindow, segmentCount, totalSleepMinutes, hasRecentDeepSleep, isFinalized, ...}` |
-| `resetSleepSession` | — | `{status}` |
 | `configureSleepBackgroundDelivery` | `mode: "localStorage"` only | `{status, mode}` |
 | `getLocalSleepSessions` | — | `[String]` — list of session JSON strings |
+| `calculateSleepPayload` | optional `startDate` / `endDate` (ISO8601) | flat aggregated payload map (group-based algorithm) |
 | `enterForeground` | — | `null` (manual override, rarely needed) |
 | `enterBackground` | — | `null` (manual override, rarely needed) |
 

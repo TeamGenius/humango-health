@@ -9,7 +9,7 @@
 
 **Git dependencies** do not see uncommitted changes in a clone. To exercise client code against local plugin edits:
 
-- Use a **`path:`** dependency (see the plugin [`example/pubspec.yaml`](../example/pubspec.yaml)) or a **`dependency_overrides`** entry pointing at your local `humango_health` checkout until changes are pushed and the app pins a new `ref:`.
+- Use a **`path:`** dependency on this plugin’s root directory (same directory as its [`pubspec.yaml`](../pubspec.yaml)) or a **`dependency_overrides`** entry pointing at your local `humango_health` checkout until changes are pushed and the app pins a new `ref:`.
 
 See also: **[Client app integration guide](client_app_integration_guide.md)** (implementation steps).
 
@@ -89,7 +89,7 @@ Until all channels use this envelope, document each existing stream’s payload 
 ### Cold start and catch-up
 
 - **On subscribe:** Document whether the library emits **only future changes** or also a **snapshot / catch-up** for known state.
-- **After process death:** Document the supported **reconciliation** path (`refreshSince`, `getLocalSleepSessions`, etc.). This is **not** “polling”; it is **event-driven recovery** or **user-triggered** refresh.
+- **After process death:** Document the supported **reconciliation** path (`readWorkouts`, `getLocalSleepSessions`, `getPendingHRVUpdates`, etc.). This is **not** “polling”; it is **event-driven recovery** or **user-triggered** refresh.
 
 ### Idempotency
 
@@ -156,7 +156,7 @@ If the client must react to background upload outcomes, provide a **small, docum
 ### 3. No polling as primary sync
 
 - Do not use a timer to re-fetch the same data the library already observes.
-- Use **explicit** user or lifecycle triggers (pull-to-refresh, post-login) if calling a one-shot library API such as `refreshSince(DateTime)`.
+- Use **explicit** user or lifecycle triggers (pull-to-refresh, post-login) if calling a one-shot library API such as `readWorkouts`, `getSleepData`, or `getLocalSleepSessions`.
 
 ### 4. Adapt to the envelope
 
