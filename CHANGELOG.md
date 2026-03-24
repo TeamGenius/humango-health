@@ -1,3 +1,22 @@
+## 0.0.13 — 2026-03-24
+
+### Bug Fixes
+
+#### Sleep — Stage durations now match Apple Health displayed values
+
+`buildAggregatedPayload` and `fetchSleepData` previously summed raw `Double` seconds, producing totals that could differ from Apple Health by 1–2 minutes due to floating-point accumulation and tie-rounding errors.
+
+**New algorithm (both accumulation loops):**
+1. Convert each sample's `startDate` / `endDate` to **integer epoch seconds** (`Int(date.timeIntervalSince1970)`) to eliminate sub-second floating-point noise.
+2. If the resulting integer duration is **< 60 s**, contribute **0 minutes** — these are Watch algorithm micro-artifacts that Apple Health also ignores.
+3. Otherwise apply `(intSec + 30) / 60 * 60` — standard integer round-half-up to nearest minute.
+
+This matches Apple Health's own per-segment rounding rule precisely (verified against real samples: 391 min = 6 h 31 m).
+
+**Changed in:** `ios/Classes/SleepData/SleepDataManager.swift`
+
+---
+
 ## 0.0.12 — 2026-03-23
 
 ### Improvements
