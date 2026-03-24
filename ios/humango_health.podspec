@@ -4,7 +4,7 @@
 #
 Pod::Spec.new do |s|
   s.name             = 'humango_health'
-  s.version          = '0.0.11'
+  s.version          = '0.0.13'
   s.summary          = 'Flutter plugin for iOS HealthKit & WorkoutKit — health metrics, workouts, sleep.'
   s.description      = <<-DESC
   Flutter plugin for integrating iOS HealthKit and WorkoutKit into other apps.
