@@ -24,20 +24,13 @@ export 'src/managers/workout_push_manager.dart';
 
 // Activity Reading Manager & Models
 export 'src/managers/workout_read_manager.dart';
-export 'src/models/background_delivery_config.dart';
 export 'src/models/workout_read_options.dart';
 export 'src/models/workout_data.dart';
 export 'src/models/quantity_series.dart';
-export 'src/models/workout_store_record.dart';
-
 // Sleep Data Manager & Models
 export 'src/managers/sleep_data_manager.dart';
 export 'src/models/sleep_sample.dart';
-export 'src/models/sleep_background_delivery_config.dart';
 
 // Health Metrics Manager & Models (HRV, Resting HR, Body Fat, Weight, Height)
 export 'src/managers/health_metrics_manager.dart';
 export 'src/models/health_metric_sample.dart';
-
-// User Session Manager (login/logout state gate for background observers)
-export 'src/managers/user_session_manager.dart';

@@ -5,9 +5,8 @@ import UIKit
 import CoreLocation
 import WorkoutKit
 
-class WorkoutServiceChannel: NSObject, FlutterStreamHandler {
+class WorkoutServiceChannel: NSObject {
     private var workoutService: WorkoutService?
-    private var eventSink: FlutterEventSink?
     /// Batched anchored workout reads; keep in sync with `limit` in fetch helpers.
     private let workoutAnchoredBatchLimit = 100
     private var healthStore: HKHealthStore { SharedHealthKitStore.shared }
@@ -41,16 +40,10 @@ class WorkoutServiceChannel: NSObject, FlutterStreamHandler {
             handleStartMonitoring(call, result)
         case "stopWorkoutMonitoring":
             handleStopMonitoring(result)
-        case "configureBackgroundDelivery":
-            handleConfigureBackground(call, result)
         case "setImportPreferences":
             handleSetImportPreferences(call, result)
-        case "markWorkoutsAsPushed":
-            handleMarkWorkoutsAsPushed(call, result)
         case "fetchAllWorkouts":
             handleFetchAllWorkouts(call, result)
-        case "getWorkoutStoreRecords":
-            handleGetWorkoutStoreRecords(result)
         case "enterForeground":
             workoutService?.enterForegroundMode()
             result(nil)
@@ -158,39 +151,15 @@ class WorkoutServiceChannel: NSObject, FlutterStreamHandler {
 
         debugPrint("Read Workouts: Total workouts processed: \(allWorkouts.count)")
         
-        // Convert to JSON strings, with WorkoutRecordStore byte-level dedup
-        // (same pattern as RouteService.pushWorkout — skip workouts already pushed via background API)
         var workoutsJson: [String] = []
-        var skippedCount = 0
         for workout in allWorkouts {
             if let jsonData = workout.toJson(),
                let jsonString = String(data: jsonData, encoding: .utf8) {
-                
-                let deviceId = workout.deviceActivityId
-                
-                // Check WorkoutRecordStore: SHA256 hash + byte size dedupe
-                let shouldPush = await WorkoutRecordStore.shared.shouldPush(
-                    deviceActivityId: deviceId,
-                    payload: jsonData
-                )
-                
-                if !shouldPush {
-                    debugPrint("Read Workouts: ⏭️ Skipping workout \(deviceId) — already pushed and unchanged (bytes match)")
-                    skippedCount += 1
-                    continue
-                }
-                
-                // Track in record store as pending (so future calls can dedupe)
-                await WorkoutRecordStore.shared.upsertRecordPending(
-                    deviceActivityId: deviceId,
-                    payload: jsonData
-                )
-                
                 workoutsJson.append(jsonString)
             }
         }
         
-        debugPrint("Read Workouts: Returning \(workoutsJson.count) workouts (\(skippedCount) skipped — already pushed via background API)")
+        debugPrint("Read Workouts: Returning \(workoutsJson.count) workouts")
         return workoutsJson
     }
     
@@ -374,9 +343,6 @@ class WorkoutServiceChannel: NSObject, FlutterStreamHandler {
         
         if workoutService == nil {
             workoutService = WorkoutService(startDate: startDate)
-            
-            // Pass the eventSink to the manager so RouteService can push to it.
-            WorkoutStreamDelivery.shared.attachEventSink(eventSink)
         }
         
         Task {
@@ -392,28 +358,6 @@ class WorkoutServiceChannel: NSObject, FlutterStreamHandler {
         workoutService?.stopBackgroundMonitoring()
         workoutService = nil
         result(nil)
-    }
-    
-    private func handleConfigureBackground(_ call: FlutterMethodCall, _ result: @escaping FlutterResult) {
-        guard let args = call.arguments as? [String: Any],
-              let modeStr = args["mode"] as? String else {
-            result(FlutterError(code: "INVALID_ARGS", message: "Missing or invalid mode", details: nil))
-            return
-        }
-
-        guard modeStr == "localStorage" else {
-            result(FlutterError(code: "INVALID_ARGS", message: "Unknown mode \"\(modeStr)\". Use localStorage.", details: nil))
-            return
-        }
-
-        WorkoutStreamDelivery.shared.arm()
-
-        DispatchQueue.main.async {
-            if self.workoutService == nil {
-                self.autoStartIfConfigured()
-            }
-            result(nil)
-        }
     }
     
     private func handleSetImportPreferences(_ call: FlutterMethodCall, _ result: @escaping FlutterResult) {
@@ -435,11 +379,11 @@ class WorkoutServiceChannel: NSObject, FlutterStreamHandler {
         result(nil)
     }
 
-    // MARK: - Fetch All Workouts (no dedup filter)
+    // MARK: - Fetch All Workouts (no preference filter)
 
     /// Returns every workout in the given date range as JSON strings.
-    /// Unlike readWorkouts, this does NOT check WorkoutRecordStore —
-    /// all matching workouts are returned regardless of pushed state.
+    /// Unlike readWorkouts, this does NOT apply the user's import preferences —
+    /// all workout types are returned.
     private func handleFetchAllWorkouts(_ call: FlutterMethodCall, _ result: @escaping FlutterResult) {
         guard let args = call.arguments as? [String: Any],
               let startISO = args["startDate"] as? String,
@@ -502,53 +446,17 @@ class WorkoutServiceChannel: NSObject, FlutterStreamHandler {
         return workoutsJson
     }
 
-    // MARK: - Get WorkoutRecordStore Records
-
-    /// Returns all records currently stored in WorkoutRecordStore as a list of maps.
-    private func handleGetWorkoutStoreRecords(_ result: @escaping FlutterResult) {
-        Task {
-            let records = await WorkoutRecordStore.shared.fetchAllRecords()
-            debugPrint("Read Workouts: getWorkoutStoreRecords returning \(records.count) record(s)")
-            DispatchQueue.main.async {
-                result(records)
-            }
-        }
-    }
-
-    // MARK: - Mark Workouts As Pushed
-
-    /// Called by Flutter after successfully sending workouts to the backend.
-    /// Marks each supplied deviceActivityId as pushed=true in WorkoutRecordStore
-    /// so they are excluded from future readWorkouts calls.
-    private func handleMarkWorkoutsAsPushed(_ call: FlutterMethodCall, _ result: @escaping FlutterResult) {
-        guard let ids = call.arguments as? [String], !ids.isEmpty else {
-            result(FlutterError(code: "INVALID_ARGS", message: "Expected a non-empty array of deviceActivityId strings", details: nil))
-            return
-        }
-
-        Task {
-            for id in ids {
-                await WorkoutRecordStore.shared.markPushed(deviceActivityId: id)
-            }
-            debugPrint("Read Workouts: ✅ Marked \(ids.count) workout(s) as pushed: \(ids)")
-            await WorkoutRecordStore.shared.printAllRecords(context: "after markWorkoutsAsPushed")
-            DispatchQueue.main.async {
-                result(["markedCount": ids.count, "deviceActivityIds": ids])
-            }
-        }
-    }
-    
     // MARK: - Auto-Start on App Launch
     
-    /// Auto-starts workout monitoring if `configureBackgroundDelivery` has armed stream delivery.
-    /// Called from HumangoHealthPlugin.register() on every app launch/background wake.
+    /// Auto-starts workout monitoring when the user is logged in and a delegate is configured.
+    /// Called from HumangoHealthPlugin.startAllBackgroundMonitoring().
     func autoStartIfConfigured() {
         guard UserAuthStateManager.shared.isLoggedIn else {
             debugPrint("Read Workouts: Auto-start skipped — user not logged in")
             return
         }
-        guard WorkoutStreamDelivery.shared.isArmedForAutoStart else {
-            debugPrint("Read Workouts: Auto-start skipped — workout stream delivery not armed (call configureBackgroundDelivery)")
+        guard HumangoHealthPlugin.delegate != nil else {
+            debugPrint("Read Workouts: Auto-start skipped — no delegate configured")
             return
         }
         guard workoutService == nil else {
@@ -558,37 +466,19 @@ class WorkoutServiceChannel: NSObject, FlutterStreamHandler {
         
         let startDate = Date().addingTimeInterval(-24 * 60 * 60) // 24h lookback
         workoutService = WorkoutService(startDate: startDate)
-        WorkoutStreamDelivery.shared.attachEventSink(eventSink)
 
         Task {
             await workoutService?.start()
-            debugPrint("Read Workouts: ✅ Auto-started workout monitoring (stream/pending) from \(startDate)")
+            debugPrint("Read Workouts: ✅ Auto-started workout monitoring from \(startDate)")
         }
     }
 
-    /// Stops all active monitoring and clears background delivery configuration.
+    /// Stops all active monitoring.
     /// Called on user logout to ensure no background activity continues.
     func stopAndClearAll() {
         workoutService?.stopLiveUpdates()
         workoutService?.stopBackgroundMonitoring()
         workoutService = nil
-        WorkoutStreamDelivery.shared.clearConfiguration()
-        WorkoutStreamDelivery.shared.attachEventSink(nil)
-        debugPrint("Read Workouts: ✅ Stopped monitoring and cleared all background config on logout")
-    }
-    
-    // MARK: - FlutterStreamHandler
-    
-    func onListen(withArguments arguments: Any?, eventSink events: @escaping FlutterEventSink) -> FlutterError? {
-        self.eventSink = events
-        // If startMonitoring was already called, attach it now
-        WorkoutStreamDelivery.shared.attachEventSink(events)
-        return nil
-    }
-    
-    func onCancel(withArguments arguments: Any?) -> FlutterError? {
-        self.eventSink = nil
-        WorkoutStreamDelivery.shared.attachEventSink(nil)
-        return nil
+        debugPrint("Read Workouts: ✅ Stopped monitoring on logout")
     }
 }

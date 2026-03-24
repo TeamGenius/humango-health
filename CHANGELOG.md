@@ -1,3 +1,129 @@
+## 0.0.16 — 2026-03-25
+
+### Improvements
+
+#### Sleep — inBed / 30-min timer logic removed from background pipeline
+
+The background observer pipeline no longer branches on an inBed check or arms a 15-minute re-check timer. Every `HKObserverQuery` fire now executes the same straight pipeline:
+
+```
+observer fires → guard: user logged in
+  → fetchSleepSamples(6PM window)
+  → calculateSleepPayload (grouping + source selection)
+  → delegate.onSleepSessionReady(json:sessionId:)
+```
+
+Dead code removed from `SleepDataManager.swift`: `pipelineStartTime`, `stageCounts`, `sourcesFound`, `windowStartStr`/`windowEndStr`, `[STEP 1/2/3]` debug prints, `logPayload()` method, and the old 5-parameter `deliverPayload(samples:queryStart:queryEnd:trigger:pipelineStartTime:)` signature.
+
+All stale comments referencing the old inBed/timer/UserDefaults/KVO pattern have been removed from `HumangoHealthPlugin.swift`, `sleep_data_manager.dart`, and `sleep_data_screen.dart`.
+
+**Changed in:** `ios/Classes/SleepData/SleepDataManager.swift`, `ios/Classes/HumangoHealthPlugin.swift`, `lib/src/managers/sleep_data_manager.dart`, `example/lib/sleep_data_screen.dart`
+
+#### Sleep — dead "Fetch stored data" button removed from example app
+
+The storage icon button in `SleepDataScreen` called `_fetchStoredData()` which was a no-op wrapper around `_fetchSleepData()`. Both are removed — there is no local queue to drain under the delegate delivery model.
+
+**Changed in:** `example/lib/sleep_data_screen.dart`
+
+#### Tests — Sleep background pipeline cross-tested with real dataset
+
+Two new XCTest classes added to `RunnerTests.swift`:
+
+- **`SleepDataManagerCalculateSleepPayloadTests`** (11 tests) — verifies `calculateSleepPayload` against the real 2026-03-23 Apple Watch dataset (391 min = 23 460 s), group filtering (nap suppression, ≥ 3 h requirement, exactly-3 h boundary), key presence, bed/wake times, and sort-order independence.
+
+- **`SleepDataManagerDeliverPayloadTests`** (10 tests) — verifies `deliverPayload` calls `HumangoHealthDataDelegate.onSleepSessionReady` exactly once with valid JSON, correct `TOTAL_SLEEP`, all 14 required keys, `sessionId == BED_TIME`, and that the delegate is correctly suppressed (not called) for short sessions, empty samples, or a nil delegate.
+
+All 21 new tests pass on iPhone 16 simulator (iOS 18.3.1).
+
+**Changed in:** `example/ios/RunnerTests/RunnerTests.swift`, `ios/Classes/SleepData/SleepDataManager.swift` (`deliverPayload` access level `private` → `internal`)
+
+---
+
+## 0.0.15 — 2026-03-24
+
+
+### Breaking Changes
+
+#### Sleep — Background delivery pipeline removed; delegate replaces local storage
+
+The `SleepBackgroundDeliveryManager` (local UserDefaults queue) and its companion `SleepPayloadObserver` (KVO watcher) have been deleted. The plugin no longer stores finalized sleep sessions in `UserDefaults`. HealthKit now delivers finalized sleep sessions directly to the host app via the **`HumangoHealthDataDelegate`** protocol.
+
+**Removed from iOS:**
+- `ios/Classes/SleepData/SleepBackgroundDeliveryManager.swift` — deleted
+- `ios/Classes/SleepData/SleepPayloadObserver.swift` — deleted
+- `SleepDataManager.swift`: removed `SleepDataKeys`, `deliveryManager` property, `handleFetchStoredSleepData`, `handleClearStoredSleepData`, `handleConfigureSleepBackgroundDelivery`, `handleGetLocalSleepSessions`, `buildRawSnapshot`, `storeSleepDataToUserDefaults`, `fetchStoredSleepDataFromUserDefaults`, `clearStoredSleepData`, all `SleepBackgroundDeliveryManager` references
+- `HumangoHealthPlugin.swift`: removed routing for `fetchStoredSleepData`, `clearStoredSleepData`, `enterSleepForeground`, `enterSleepBackground`, `configureSleepBackgroundDelivery`, `getLocalSleepSessions`
+
+**Removed from Dart:**
+- `fetchStoredSleepData()` — removed from `SleepDataManager`
+- `clearStoredSleepData()` — removed from `SleepDataManager`
+- `enterForeground()` — removed from `SleepDataManager`
+- `enterBackground()` — removed from `SleepDataManager`
+- `configureSleepBackgroundDelivery(SleepBackgroundDeliveryConfig)` — removed from `SleepDataManager`
+- `getLocalSleepSessions()` — removed from `SleepDataManager`
+- `SleepBackgroundDeliveryConfig` model — removed
+- Export removed from `lib/humango_health.dart`
+
+**`SleepDataManager` public API after this change:**
+
+| Method | Signature |
+|--------|-----------|
+| `getSleepData` | `Future<SleepDataResponse> getSleepData({DateTime? startDate, DateTime? endDate})` |
+| `startMonitoring` | `Future<void> startMonitoring({DateTime? startDate})` |
+| `stopMonitoring` | `Future<void> stopMonitoring()` |
+| `calculateSleepPayload` | `Future<Map<String,dynamic>> calculateSleepPayload({DateTime? startDate, DateTime? endDate})` |
+
+**Migration:** Implement `HumangoHealthDataDelegate.onSleepSessionReady(json:sessionId:)` in your iOS Runner. The native `SleepDataManager` calls this delegate directly after finalizing a session — no UserDefaults queue to drain. See [README — Delegate Delivery](#delegate-delivery) for the wiring.
+
+#### Workout Reading — `configureBackgroundDelivery` and `WorkoutStreamDelivery` removed; delegate replaces stream
+
+`WorkoutStreamDelivery.swift` and the `configureBackgroundDelivery` Dart method have been deleted. Completed workouts are delivered directly through `HumangoHealthDataDelegate.onWorkoutReady(json:deviceId:)` — no EventChannel stream, no UserDefaults pending queue, no `BackgroundDeliveryConfig`.
+
+**Removed from iOS:**
+- `ios/Classes/WorkoutReading/WorkoutStreamDelivery.swift` — deleted
+- `WorkoutServiceChannel.swift`: removed `FlutterStreamHandler` conformance, `eventSink`, `onListen`, `onCancel`, `handleConfigureBackground`
+
+**Removed from Dart:**
+- `configureBackgroundDelivery(BackgroundDeliveryConfig)` — removed from `WorkoutReadManager`
+- `workoutStream` EventChannel — removed from `WorkoutReadManager`
+- `BackgroundDeliveryConfig` model — removed
+- Export removed from `lib/humango_health.dart`
+
+**Migration:** Implement `HumangoHealthDataDelegate.onWorkoutReady(json:deviceId:)` in your iOS Runner. Remove all calls to `configureBackgroundDelivery` and any `workoutStream` subscriptions.
+
+#### Example app — `HealthSyncCoordinator` simplified
+
+`ensureBackgroundDeliveryConfigured()` and `backgroundDeliveryStatus` have been removed. `setUserLoggedIn` no longer accepts `configureBackground:`. The coordinator now simply gates `ExampleSessionManager` on login/logout.
+
+---
+
+## 0.0.14 — 2026-03-24
+
+### Breaking Changes
+
+#### Workout Reading — `WorkoutRecordStore` and deduplication removed
+
+The native `WorkoutRecordStore` actor and all associated client-facing Dart API have been removed. Deduplication tracking is the responsibility of the client Flutter app, which has full context on when workouts have been successfully uploaded.
+
+**Removed from iOS:**
+- `ios/Classes/WorkoutReading/WorkoutRecordStore.swift` — deleted
+- `WorkoutServiceChannel.swift`: removed `shouldPush` / `upsertRecordPending` block from `fetchWorkoutsBatched`, removed `handleMarkWorkoutsAsPushed` and `handleGetWorkoutStoreRecords` handlers
+- `RouteService.swift`: removed `shouldPush`, `upsertRecordPending`, and `printAllRecords` calls from `pushWorkout`
+- `WorkoutService.swift`: removed `hasRecord`, `updateLastSeen`, `recordFirstSeen` touches from `handleWorkouts`
+- `HumangoHealthPlugin.swift`: removed `WorkoutRecordStore.shared.clearAll()` from the logout cleanup path
+
+**Removed from Dart:**
+- `markWorkoutsAsPushed(List<String> deviceActivityIds)` — removed from `WorkoutReadManager`
+- `getWorkoutStoreRecords()` — removed from `WorkoutReadManager`
+- `lib/src/models/workout_store_record.dart` (`WorkoutStoreRecord`) — deleted
+- Export removed from `lib/humango_health.dart`
+
+**Migration:** `readWorkouts()` now returns every matching workout that passes the import-preference filter — no dedup gate at the library layer. Track which workouts you have uploaded in your own app state or backend.
+
+**Changed in:** `ios/Classes/WorkoutReading/WorkoutServiceChannel.swift`, `ios/Classes/WorkoutReading/RouteService.swift`, `ios/Classes/WorkoutReading/WorkoutService.swift`, `ios/Classes/HumangoHealthPlugin.swift`, `lib/src/managers/workout_read_manager.dart`, `lib/humango_health.dart`
+
+---
+
 ## 0.0.13 — 2026-03-24
 
 ### Bug Fixes

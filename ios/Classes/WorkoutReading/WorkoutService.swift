@@ -1,6 +1,6 @@
 //
 // WorkOutService.swift
-// Updated: integrated RouteService registry + endDate 2-hour rule + WorkoutRecordStore touches
+// Updated: integrated RouteService registry + endDate 2-hour rule
 // Uses native iOS lifecycle detection via AppLifecycleManager for automatic mode switching
 //
 
@@ -294,9 +294,6 @@ final class WorkoutService: AppLifecycleObserver {
 
         // Run async work in a single Task (keeps this method fast and non-blocking)
         Task {
-            // Check local record store presence
-            let existsLocally = await WorkoutRecordStore.shared.hasRecord(deviceActivityId: deviceId)
-
             // Create a RouteService for this workout (we'll either retain it or use it for one-shot)
             let routeService = RouteService(workout: workout)
 
@@ -320,14 +317,9 @@ final class WorkoutService: AppLifecycleObserver {
                     routeService.startBackgroundMonitoring()
                     debugPrint("Read Workouts: WorkoutService: started RouteService background monitoring for \(deviceId)")
                 }
-
-                // touch last-seen timestamp in the store so we know this workout is being tracked
-                await WorkoutRecordStore.shared.updateLastSeen(deviceActivityId: deviceId, date: Date())
             } else {
                 // One-shot fetch & push. No live/background listeners retained.
                 await routeService.fetchWorkoutRoute()
-                // Record first seen so future logic can decide to retain if needed
-                await WorkoutRecordStore.shared.recordFirstSeen(deviceActivityId: deviceId, date: Date())
                 debugPrint("Read Workouts: one-shot RouteService fetch complete for \(deviceId)")
             }
         }

@@ -9,7 +9,6 @@ final class WorkoutStreamDelivery {
     static let shared = WorkoutStreamDelivery()
 
     private static let pendingKey = "BackgroundWorkouts.pending"
-    private static let armedKey = "HumangoWorkoutStreamDeliveryArmed"
     private static let legacyModeKey = "HumangoDeliveryMode"
     private static let legacyUrlKey = "HumangoDeliveryURL"
     private static let legacyHeadersKey = "HumangoDeliveryHeaders"
@@ -27,30 +26,7 @@ final class WorkoutStreamDelivery {
         }
     }
 
-    /// Persisted when Flutter calls `configureBackgroundDelivery` so launch-time auto-start can resume monitoring.
-    private var isArmed: Bool {
-        get { UserDefaults.standard.bool(forKey: Self.armedKey) }
-        set { UserDefaults.standard.set(newValue, forKey: Self.armedKey) }
-    }
-
-    var isArmedForAutoStart: Bool {
-        isArmed
-    }
-
-    /// Clears legacy UserDefaults from removed API delivery; sets armed flag (no-op if already armed).
-    func arm() {
-        clearLegacyApiKeys()
-        if !isArmed {
-            isArmed = true
-            debugPrint("📦 WorkoutStreamDelivery: armed for stream / pending delivery")
-        } else {
-            debugPrint("📦 WorkoutStreamDelivery: configure — already armed, legacy keys cleared")
-        }
-        UserDefaults.standard.synchronize()
-    }
-
     func clearConfiguration() {
-        isArmed = false
         clearLegacyApiKeys()
         UserDefaults.standard.synchronize()
         eventSink = nil

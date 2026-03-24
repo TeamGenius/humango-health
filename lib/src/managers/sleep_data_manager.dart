@@ -8,31 +8,23 @@
 
 import 'package:flutter/services.dart';
 import '../models/sleep_sample.dart';
-import '../models/sleep_background_delivery_config.dart';
 
 /// Manager for fetching and monitoring sleep data from Apple HealthKit.
 ///
 /// Provides access to sleep analysis data including sleep stages
-/// (inBed, awake, asleepCore, asleepDeep, asleepREM) with support for:
-/// - One-shot data fetch for a configurable time range
-/// - Background monitoring: foreground uses [HKAnchoredObjectQueryDescriptor],
-///   background uses [HKObserverQuery]. Data is accumulated into session state;
-///   finalized session JSON is stored locally for [getLocalSleepSessions] (no HTTP from the plugin).
+/// (inBed, awake, asleepCore, asleepDeep, asleepREM).
 ///
 /// Example usage:
 /// ```dart
 /// final sleepManager = SleepDataManager();
 ///
 /// // One-shot fetch
-/// final response = await sleepManager.getSleepData();
+/// final response = await sleepManager.getSleepData(
+///   startDate: DateTime.now().subtract(const Duration(hours: 24)),
+/// );
 ///
-/// // Start monitoring (with [UserSessionManager] + armed delivery, auto-starts on next launch)
+/// // Start monitoring (sessions delivered to HumangoHealthDataDelegate)
 /// await sleepManager.startMonitoring();
-///
-/// // Retrieve locally stored sessions (localStorage mode)
-/// final sessions = await sleepManager.getLocalSleepSessions();
-///
-/// // Later, stop monitoring
 /// await sleepManager.stopMonitoring();
 /// ```
 class SleepDataManager {
@@ -42,9 +34,9 @@ class SleepDataManager {
 
   // Note: there is intentionally no EventChannel / stream for sleep payload
   // updates. Background HKObserverQuery delivery fires while Flutter is
-  // suspended, so an EventChannel event would be lost. Instead, the host-app
-  // Host Runner code may watch UserDefaults via KVO. Flutter typically drains
-  // getLocalSleepSessions() when the app resumes.
+  // suspended; finalized sessions are delivered directly to
+  // HumangoHealthDataDelegate.onSleepSessionReady(json:sessionId:) in the
+  // host-app iOS Runner.
 
   /// Fetches sleep data from HealthKit for the specified time range.
   ///
@@ -113,151 +105,13 @@ class SleepDataManager {
   }
 
   /// Stops monitoring sleep data changes.
-  Future<Map<String, dynamic>> stopMonitoring() async {
+  Future<void> stopMonitoring() async {
     try {
-      final result = await _channel.invokeMethod<Map<dynamic, dynamic>>(
-        'stopSleepMonitoring',
-      );
-      return Map<String, dynamic>.from(result ?? {});
+      await _channel.invokeMethod<Map<dynamic, dynamic>>('stopSleepMonitoring');
     } on PlatformException catch (e) {
       throw SleepDataException(
         code: e.code,
         message: e.message ?? 'Failed to stop sleep monitoring',
-        details: e.details,
-      );
-    }
-  }
-
-  /// Fetches sleep data that was stored in UserDefaults during background monitoring.
-  ///
-  /// Returns a [SleepDataResponse] with data collected while the app was in background.
-  /// The response includes `storedAt` timestamp indicating when data was last updated.
-  Future<SleepDataResponse> fetchStoredSleepData() async {
-    try {
-      final result = await _channel.invokeMethod<Map<dynamic, dynamic>>(
-        'fetchStoredSleepData',
-      );
-
-      if (result != null) {
-        final map = Map<String, dynamic>.from(result);
-        if (map['hasData'] == true) {
-          return SleepDataResponse.fromMap(map);
-        }
-      }
-
-      return _emptyResponse(
-        DateTime.now().subtract(const Duration(hours: 24)),
-        DateTime.now(),
-      );
-    } on PlatformException catch (e) {
-      throw SleepDataException(
-        code: e.code,
-        message: e.message ?? 'Failed to fetch stored sleep data',
-        details: e.details,
-      );
-    }
-  }
-
-  /// Clears sleep data stored in UserDefaults.
-  Future<void> clearStoredSleepData() async {
-    try {
-      await _channel.invokeMethod('clearStoredSleepData');
-    } on PlatformException catch (e) {
-      throw SleepDataException(
-        code: e.code,
-        message: e.message ?? 'Failed to clear stored sleep data',
-        details: e.details,
-      );
-    }
-  }
-
-  /// Notifies iOS that the app has entered foreground (manual override).
-  ///
-  /// **Note:** This is typically NOT needed as native iOS handles lifecycle
-  /// automatically via `AppLifecycleManager`. Use this only for manual override.
-  ///
-  /// Switches from background observer to live streaming if monitoring is active.
-  Future<void> enterForeground() async {
-    try {
-      await _channel.invokeMethod('enterSleepForeground');
-    } on PlatformException catch (e) {
-      throw SleepDataException(
-        code: e.code,
-        message: e.message ?? 'Failed to enter foreground mode',
-        details: e.details,
-      );
-    }
-  }
-
-  /// Notifies iOS that the app has entered background (manual override).
-  ///
-  /// **Note:** This is typically NOT needed as native iOS handles lifecycle
-  /// automatically via `AppLifecycleManager`. Use this only for manual override.
-  ///
-  /// Switches from live streaming to background observer if monitoring is active.
-  Future<void> enterBackground() async {
-    try {
-      await _channel.invokeMethod('enterSleepBackground');
-    } on PlatformException catch (e) {
-      throw SleepDataException(
-        code: e.code,
-        message: e.message ?? 'Failed to enter background mode',
-        details: e.details,
-      );
-    }
-  }
-
-  /// Arms native sleep session delivery: finalized sessions are stored in
-  /// UserDefaults for [getLocalSleepSessions]. The plugin does not HTTP POST.
-  ///
-  /// Call after login (with [UserSessionManager]) so auto-start can resume.
-  ///
-  /// ```dart
-  /// await sleepManager.configureSleepBackgroundDelivery(
-  ///   const SleepBackgroundDeliveryConfig(),
-  /// );
-  /// ```
-  Future<Map<String, dynamic>> configureSleepBackgroundDelivery(
-    SleepBackgroundDeliveryConfig config,
-  ) async {
-    try {
-      final result = await _channel.invokeMethod<Map<dynamic, dynamic>>(
-        'configureSleepBackgroundDelivery',
-        config.toJson(),
-      );
-      return Map<String, dynamic>.from(result ?? {});
-    } on PlatformException catch (e) {
-      throw SleepDataException(
-        code: e.code,
-        message: e.message ?? 'Failed to configure sleep background delivery',
-        details: e.details,
-      );
-    }
-  }
-
-  /// Retrieves and clears locally stored sleep sessions.
-  ///
-  /// Returns and clears locally-stored pending sessions
-  /// (`com.humango.health.sleepPendingLocal`) — sessions that have NOT yet been
-  /// uploaded to the backend by the native layer.
-  ///
-  /// When in `localStorage` mode and the app was in background,
-  /// finalized sleep sessions are stored locally. Call this method
-  /// after the app becomes active to retrieve them.
-  ///
-  /// Returns a list of JSON strings, each representing a finalized sleep session.
-  /// The local storage is cleared after retrieval.
-  Future<List<String>> getLocalSleepSessions() async {
-    try {
-      final result = await _channel.invokeMethod('getLocalSleepSessions');
-      if (result is List) {
-        return result.cast<String>();
-      }
-      return [];
-    } on PlatformException catch (e) {
-      throw SleepDataException(
-        code: e.code,
-        message: e.message ?? 'Failed to get local sleep sessions',
         details: e.details,
       );
     }

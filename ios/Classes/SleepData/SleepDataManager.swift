@@ -4,12 +4,10 @@
 //
 //  Fetches and monitors sleep data from Apple HealthKit.
 //
-//  Background flow (new):
+//  Background flow:
 //  HKObserverQuery fires
 //  └─ guard: user must be logged in
-//  └─ isUserCurrentlyInBed()?
-//       YES → fetch 6PM-yesterday→now → store local cache (user still sleeping)
-//       NO  → fetch 6PM-yesterday→now → build flat aggregated payload → POST to API
+//  └─ compute 6PM window → fetch samples → calculateSleepPayload → delegate.onSleepSessionReady
 //
 //  Query window: 6:00 PM previous day → now  (same as old humango-mobile app)
 //  Source selection: pick source with highest TOTAL_SLEEP (Core+Deep+REM)
@@ -21,14 +19,6 @@
 import Flutter
 import HealthKit
 import Foundation
-
-// MARK: - UserDefaults Keys for Sleep Data
-
-private struct SleepDataKeys {
-    static let storedSleepData = "com.humango.health.storedSleepData"
-    static let lastFetchDate = "com.humango.health.lastSleepFetchDate"
-    static let sleepSessionConfig = "com.humango.health.sleepSessionConfig"
-}
 
 // MARK: - SleepDataManager
 
@@ -52,8 +42,6 @@ public class SleepDataManager: NSObject, AppLifecycleObserver {
     private var observerQuery: HKObserverQuery?
     private var isBackgroundMonitoring = false
 
-    private let deliveryManager = SleepBackgroundDeliveryManager.shared
-
     // Configuration
     private var monitorStartDate: Date?
     
@@ -71,14 +59,13 @@ public class SleepDataManager: NSObject, AppLifecycleObserver {
     
     // MARK: - Auto-Start on App Launch
     
-    /// Auto-starts sleep monitoring if `configureSleepBackgroundDelivery` has armed delivery.
     func autoStartIfConfigured() {
         guard UserAuthStateManager.shared.isLoggedIn else {
-            debugPrint("🛏️ [SleepDataManager] autoStart skipped — user not logged in")
+            debugPrint("🛍️ [SleepDataManager] autoStart skipped — user not logged in")
             return
         }
-        guard deliveryManager.isArmedForAutoStart else {
-            debugPrint("🛏️ [SleepDataManager] autoStart skipped — sleep delivery not armed")
+        guard HumangoHealthPlugin.delegate != nil else {
+            debugPrint("🛍️ [SleepDataManager] autoStart skipped — no delegate configured")
             return
         }
         guard monitorStartDate == nil else {
@@ -104,9 +91,7 @@ public class SleepDataManager: NSObject, AppLifecycleObserver {
         stopLiveUpdates()
         stopBackgroundMonitoring()
         monitorStartDate = nil
-        clearStoredSleepData()
-        deliveryManager.clearConfiguration()
-        debugPrint("🛏️ [SleepDataManager] ✅ stopped all monitoring and cleared data (logout)")
+        debugPrint("🛍️ [SleepDataManager] ✅ stopped all monitoring (logout)")
     }
     
     // MARK: - AppLifecycleObserver (Native iOS lifecycle)
@@ -125,14 +110,14 @@ public class SleepDataManager: NSObject, AppLifecycleObserver {
         guard monitorStartDate != nil else { return }
         stopBackgroundMonitoring()
         startLiveUpdates()
-        debugPrint("🛏️ [SleepDataManager] → foreground mode (delivery=\(SleepBackgroundDeliveryManager.deliveryModeLogLabel))")
+        debugPrint("🛍️ [SleepDataManager] → foreground mode")
     }
 
     private func switchToBackgroundMode() {
         guard monitorStartDate != nil else { return }
         stopLiveUpdates()
         startBackgroundMonitoring()
-        debugPrint("🛏️ [SleepDataManager] → background mode (delivery=\(SleepBackgroundDeliveryManager.deliveryModeLogLabel))")
+        debugPrint("🛍️ [SleepDataManager] → background mode")
     }
     
     // MARK: - Method Channel Handler
@@ -140,8 +125,7 @@ public class SleepDataManager: NSObject, AppLifecycleObserver {
     public func handle(_ call: FlutterMethodCall, result: @escaping FlutterResult) {
         let method = call.method
         let requiresLogin = [
-            "getSleepData", "startSleepMonitoring", "fetchStoredSleepData",
-            "configureSleepBackgroundDelivery", "getLocalSleepSessions", "calculateSleepPayload",
+            "getSleepData", "startSleepMonitoring", "calculateSleepPayload",
         ].contains(method)
         if requiresLogin {
             guard UserAuthStateManager.shared.guardLoggedInForHealthData(result: result) else { return }
@@ -155,31 +139,9 @@ public class SleepDataManager: NSObject, AppLifecycleObserver {
             
         case "stopSleepMonitoring":
             handleStopMonitoring(result: result)
-            
-        case "fetchStoredSleepData":
-            handleFetchStoredSleepData(result: result)
-            
-        case "clearStoredSleepData":
-            handleClearStoredSleepData(result: result)
-            
-        case "configureSleepBackgroundDelivery":
-            handleConfigureSleepBackgroundDelivery(call, result: result)
-            
-        case "getLocalSleepSessions":
-            handleGetLocalSleepSessions(result: result)
 
         case "calculateSleepPayload":
             handleCalculateSleepPayload(call, result: result)
-            
-        case "enterForeground":
-            // Keep for backward compatibility, but native lifecycle is preferred
-            switchToForegroundMode()
-            result(nil)
-            
-        case "enterBackground":
-            // Keep for backward compatibility, but native lifecycle is preferred
-            switchToBackgroundMode()
-            result(nil)
             
         default:
             result(FlutterMethodNotImplemented)
@@ -242,8 +204,8 @@ public class SleepDataManager: NSObject, AppLifecycleObserver {
             startBackgroundMonitoring()
         }
         
-        debugPrint("🛏️ [SleepDataManager] started monitoring (delivery=\(SleepBackgroundDeliveryManager.deliveryModeLogLabel)) from \(isoFormatter.string(from: startDate))")
-        result(["status": "started", "startDate": isoFormatter.string(from: startDate), "deliveryMode": SleepBackgroundDeliveryManager.deliveryModeLogLabel])
+        debugPrint("🛍️ [SleepDataManager] started monitoring from \(isoFormatter.string(from: startDate))")
+        result(["status": "started", "startDate": isoFormatter.string(from: startDate)])
     }
 
     private func handleStopMonitoring(result: @escaping FlutterResult) {
@@ -254,49 +216,6 @@ public class SleepDataManager: NSObject, AppLifecycleObserver {
         result(["status": "stopped"])
     }
     
-    private func handleFetchStoredSleepData(result: @escaping FlutterResult) {
-        let storedData = fetchStoredSleepDataFromUserDefaults()
-        result(storedData)
-    }
-
-    private func handleClearStoredSleepData(result: @escaping FlutterResult) {
-        clearStoredSleepData()
-        result(["status": "cleared"])
-    }
-
-    private func handleConfigureSleepBackgroundDelivery(_ call: FlutterMethodCall, result: @escaping FlutterResult) {
-        guard let args = call.arguments as? [String: Any],
-              let modeStr = args["mode"] as? String else {
-            result(FlutterError(code: "INVALID_ARGS", message: "Missing 'mode' argument", details: nil))
-            return
-        }
-
-        guard modeStr == "localStorage" else {
-            result(FlutterError(code: "INVALID_MODE", message: "Unknown mode \"\(modeStr)\". Use localStorage.", details: nil))
-            return
-        }
-
-        deliveryManager.arm()
-
-        if monitorStartDate == nil {
-            autoStartIfConfigured()
-        } else if isLiveStreaming {
-            stopLiveUpdates()
-            startLiveUpdates()
-        }
-
-        debugPrint("🛏️ [SleepDataManager] sleep delivery armed (localStorage)")
-        result([
-            "status": "configured",
-            "mode": SleepBackgroundDeliveryManager.deliveryModeLogLabel,
-        ])
-    }
-    
-    private func handleGetLocalSleepSessions(result: @escaping FlutterResult) {
-        let sessions = deliveryManager.retrieveLocalSleepSessions()
-        result(sessions)
-    }
-
     /// Exposes `calculateSleepPayload(from:)` over the Flutter method channel.
     /// Accepts optional `startDate`/`endDate` ISO8601 strings; defaults to the
     /// current 6 PM window when omitted.
@@ -486,13 +405,7 @@ public class SleepDataManager: NSObject, AppLifecycleObserver {
                     for try await update in stream {
                         self.anchor = update.newAnchor
                         if !update.addedSamples.isEmpty {
-                            debugPrint("🛏️ [SleepDataManager] foreground: \(update.addedSamples.count) new samples — refreshing cache")
-                            Task {
-                                let (queryStart, queryEnd) = self.sixPMWindow()
-                                if let rawData = try? await self.fetchSleepData(startDate: queryStart, endDate: queryEnd) {
-                                    self.storeSleepDataToUserDefaults(rawData)
-                                }
-                            }
+                            debugPrint("🛍️ [SleepDataManager] foreground: \(update.addedSamples.count) new samples")
                         }
                         for deleted in update.deletedObjects {
                             debugPrint("🛏️ [SleepDataManager] foreground: sample deleted \(deleted.uuid.uuidString)")
@@ -502,7 +415,7 @@ public class SleepDataManager: NSObject, AppLifecycleObserver {
                     debugPrint("🛏️ [SleepDataManager] foreground monitoring error: \(error)")
                 }
             }
-            debugPrint("🛏️ [SleepDataManager] started foreground monitoring (delivery=\(SleepBackgroundDeliveryManager.deliveryModeLogLabel))")
+            debugPrint("🛍️ [SleepDataManager] started foreground monitoring")
         } else {
             debugPrint("🛏️ [SleepDataManager] foreground monitoring requires iOS 15.0+")
         }
@@ -518,12 +431,7 @@ public class SleepDataManager: NSObject, AppLifecycleObserver {
     // MARK: - Background Monitoring
 
     /// Starts background monitoring using HKObserverQuery.
-    ///
-    /// Flow when observer fires:
-    /// 1. Guard: user must be logged in
-    /// 2. isUserCurrentlyInBed()?
-    ///    YES → fetch 6PM window → store local cache (still sleeping, do not POST)
-    ///    NO  → fetch 6PM window → build flat aggregated payload → POST to API (or cache in localStorage mode)
+    /// On every fire: compute 6PM window → fetch samples → calculateSleepPayload → delegate.onSleepSessionReady.
     private func startBackgroundMonitoring() {
         guard !isBackgroundMonitoring else { return }
 
@@ -551,43 +459,19 @@ public class SleepDataManager: NSObject, AppLifecycleObserver {
 
             if let error = error {
                 debugPrint("🛏️ [SleepDataManager] observer error at \(fireTime): \(error)")
-                Task {
-                    await SleepRemoteLogger.shared.log(
-                        level: .error,
-                        message: "HKObserverQuery error",
-                        context: [
-                            "step": "observer_fired",
-                            "error": error.localizedDescription,
-                            "fireTime": fireTime
-                        ]
-                    )
-                }
+                SleepRemoteLogger.log(.error, step: "observer", message: "observer error", context: ["error": "\(error)"])
                 return
             }
 
             guard UserAuthStateManager.shared.isLoggedIn else {
                 debugPrint("🛏️ [SleepDataManager] observer fired at \(fireTime) — skipped (user not logged in)")
-                Task {
-                    await SleepRemoteLogger.shared.log(
-                        level: .warn,
-                        message: "HKObserver fired but user not logged in — skipped",
-                        context: ["step": "observer_auth_guard", "fireTime": fireTime]
-                    )
-                }
+                SleepRemoteLogger.log(.warn, step: "observer", message: "skipped — user not logged in")
                 return
             }
 
             debugPrint("🛏️ [SleepDataManager] observer fired at \(fireTime) — processing (userId=\(UserAuthStateManager.shared.userId ?? "?"))")
+            SleepRemoteLogger.log(.info, step: "observer_fired", message: "processing", context: ["fireTime": fireTime])
             Task {
-                await SleepRemoteLogger.shared.log(
-                    level: .info,
-                    message: "HKObserverQuery fired — starting background sleep pipeline",
-                    context: [
-                        "step": "observer_fired",
-                        "fireTime": fireTime,
-                        "isBackgroundMonitoring": self.isBackgroundMonitoring
-                    ]
-                )
                 await self.handleBackgroundObserverFired()
             }
         }
@@ -612,190 +496,68 @@ public class SleepDataManager: NSObject, AppLifecycleObserver {
 
     // MARK: - Background Observer Logic
 
-    /// Core logic executed on every HKObserverQuery fire.
-    ///
-    /// Simplified pipeline (Issues 3 & 4):
-    ///   Every observer fire → compute 6PM window → fetch samples
-    ///   → calculateSleepPayload → store payload in UserDefaults.
-    /// No inBed check, no 15-min timer, no raw-sample cache.
-    /// Deduplication is the responsibility of the client app.
     private func handleBackgroundObserverFired() async {
-        let pipelineStartTime = isoFormatter.string(from: Date())
-
-        // ── STEP 1: Compute 6PM query window ──────────────────────────────────
         let (queryStart, queryEnd) = sixPMWindow()
-        let windowStartStr = isoFormatter.string(from: queryStart)
-        let windowEndStr   = isoFormatter.string(from: queryEnd)
-        debugPrint("🛏️ [SleepDataManager] [STEP 1] 6PM window: \(windowStartStr) → \(windowEndStr)")
-        await SleepRemoteLogger.shared.log(
-            level: .info,
-            message: "[STEP 1] 6PM query window computed",
-            context: ["step": "window_computed", "windowStart": windowStartStr, "windowEnd": windowEndStr]
-        )
 
-        // ── STEP 2: Fetch sleep samples from HealthKit ────────────────────────
+        SleepRemoteLogger.log(.info, step: "fetch", message: "fetching 6PM window", context: [
+            "windowStart": isoFormatter.string(from: queryStart),
+            "windowEnd": isoFormatter.string(from: queryEnd),
+        ])
+
         let rawSamples: [HKCategorySample]
         do {
             rawSamples = try await fetchSleepSamples(from: queryStart, to: queryEnd)
         } catch {
-            debugPrint("🛏️ [SleepDataManager] [STEP 2] HealthKit fetch failed: \(error)")
-            await SleepRemoteLogger.shared.log(
-                level: .error,
-                message: "[STEP 2] HealthKit fetchSleepSamples threw an error",
-                context: ["step": "hk_fetch_failed", "error": error.localizedDescription]
-            )
+            debugPrint("🛏️ [SleepDataManager] background fetch failed: \(error)")
+            SleepRemoteLogger.log(.error, step: "fetch", message: "HealthKit fetch failed", context: ["error": "\(error)"])
             return
         }
-
-        debugPrint("🛏️ [SleepDataManager] [STEP 2] HealthKit returned \(rawSamples.count) samples")
-
-        var stageCounts: [String: Int] = [:]
-        var sourcesFound: Set<String> = []
-        for s in rawSamples {
-            let stage = sleepStageString(from: s.value)
-            stageCounts[stage, default: 0] += 1
-            sourcesFound.insert(s.sourceRevision.source.name)
-        }
-
-        await SleepRemoteLogger.shared.log(
-            level: rawSamples.isEmpty ? .warn : .info,
-            message: rawSamples.isEmpty
-                ? "[STEP 2] No sleep samples found in 6PM window"
-                : "[STEP 2] HealthKit samples fetched successfully",
-            context: [
-                "step": "hk_fetch_complete",
-                "sampleCount": rawSamples.count,
-                "stageCounts": stageCounts,
-                "sources": Array(sourcesFound).sorted()
-            ]
-        )
 
         guard !rawSamples.isEmpty else {
-            debugPrint("🛏️ [SleepDataManager] [STEP 2] no samples in window — nothing to do")
+            SleepRemoteLogger.log(.info, step: "fetch", message: "no samples in window")
             return
         }
 
-        // ── STEP 3: Calculate payload and store ───────────────────────────────
-        await deliverPayload(samples: rawSamples,
-                             queryStart: queryStart,
-                             queryEnd: queryEnd,
-                             sourcesFound: sourcesFound,
-                             stageCounts: stageCounts,
-                             trigger: "observer",
-                             pipelineStartTime: pipelineStartTime)
+        SleepRemoteLogger.log(.info, step: "fetch", message: "fetched \(rawSamples.count) samples")
+        await deliverPayload(samples: rawSamples, queryStart: queryStart, queryEnd: queryEnd)
     }
 
-    // MARK: - Shared Payload Delivery (used by both observer NO path and timer wake path)
+    // MARK: - Payload Delivery
 
-    /// Builds the aggregated payload from `samples` and delivers it.
-    /// `trigger` is either "observer" (direct wake) or "timer" (15-min re-check wake).
-    private func deliverPayload(
-        samples: [HKCategorySample],
-        queryStart: Date,
-        queryEnd: Date,
-        sourcesFound: Set<String>,
-        stageCounts: [String: Int],
-        trigger: String,
-        pipelineStartTime: String
-    ) async {
-        let windowStartStr = isoFormatter.string(from: queryStart)
-        let windowEndStr   = isoFormatter.string(from: queryEnd)
-
-        // Build flat aggregated payload using the group-based session detection algorithm:
-        // sorts by startDate → groups by ≤2h gap → discards sessions <3h span →
-        // picks winning source (highest Core+Deep+REM) → ceiling-rounds all durations.
+    func deliverPayload(samples: [HKCategorySample], queryStart: Date, queryEnd: Date) async {
         guard let payload = calculateSleepPayload(from: samples) else {
-            debugPrint("🛏️ [SleepDataManager] [\(trigger.uppercased())] calculateSleepPayload=nil (no valid sleep groups ≥ 3h)")
-            await SleepRemoteLogger.shared.log(
-                level: .warn,
-                message: "[\(trigger.uppercased())] Could not build payload — no valid sleep groups (all < 3h span)",
-                context: [
-                    "step":        "payload_build_failed",
-                    "trigger":     trigger,
-                    "sampleCount": samples.count,
-                    "stageCounts": stageCounts,
-                    "sources":     Array(sourcesFound).sorted()
-                ]
-            )
+            SleepRemoteLogger.log(.info, step: "payload", message: "calculateSleepPayload returned nil (no valid groups)")
             return
         }
 
-        let totalMin  = (payload["TOTAL_SLEEP"]       as? Int ?? 0) / 60
-        let lightMin  = (payload["SLEEP_LIGHT"]       as? Int ?? 0) / 60
-        let deepMin   = (payload["SLEEP_DEEP"]        as? Int ?? 0) / 60
-        let remMin    = (payload["SLEEP_REM"]         as? Int ?? 0) / 60
-        let awakeMin  = (payload["SLEEP_AWAKE"]       as? Int ?? 0) / 60
-        let inBedMin  = (payload["SLEEP_IN_BED"]      as? Int ?? 0) / 60
-        let unspecMin = (payload["SLEEP_UNSPECIFIED"] as? Int ?? 0) / 60
+        let totalMin  = (payload["TOTAL_SLEEP"] as? Int ?? 0) / 60
+        let source    = payload["SOURCE"] as? String ?? ""
+        SleepRemoteLogger.log(.info, step: "payload", message: "built", context: [
+            "source":     source,
+            "totalMin":   totalMin,
+            "bedTime":    payload["BED_TIME"] ?? "",
+            "wakeTime":   payload["WAKE_TIME"] ?? "",
+        ])
 
-        debugPrint("🛏️ [SleepDataManager] [\(trigger.uppercased())] payload built — source=\(payload["SOURCE"] ?? ""), total=\(totalMin)m, L/D/R=\(lightMin)/\(deepMin)/\(remMin)m")
-        logPayload(payload)
-
-        await SleepRemoteLogger.shared.log(
-            level: .info,
-            message: "[\(trigger.uppercased())] Aggregated payload built — ready to deliver",
-            context: [
-                "step":                  "payload_built",
-                "trigger":               trigger,
-                "SOURCE":                payload["SOURCE"]       as? String ?? "",
-                "SOURCE_BUNDLE":         payload["SOURCE_BUNDLE"] as? String ?? "",
-                "TIMEZONE":              payload["TIMEZONE"]      as? String ?? "",
-                "TOTAL_SLEEP_min":       totalMin,
-                "SLEEP_LIGHT_min":       lightMin,
-                "SLEEP_DEEP_min":        deepMin,
-                "SLEEP_REM_min":         remMin,
-                "SLEEP_AWAKE_min":       awakeMin,
-                "SLEEP_IN_BED_min":      inBedMin,
-                "SLEEP_UNSPECIFIED_min": unspecMin,
-                "BED_TIME":              payload["BED_TIME"]   as? String ?? "",
-                "WAKE_TIME":             payload["WAKE_TIME"]  as? String ?? "",
-                "START_DATE":            payload["START_DATE"] as? String ?? "",
-                "END_DATE":              payload["END_DATE"]   as? String ?? "",
-                "droppedSources":        Array(sourcesFound.filter { $0 != (payload["SOURCE"] as? String) }).sorted()
-            ]
-        )
-
-        // Serialise
         guard let jsonData = try? JSONSerialization.data(withJSONObject: payload, options: []),
               let jsonString = String(data: jsonData, encoding: .utf8) else {
-            debugPrint("🛏️ [SleepDataManager] [\(trigger.uppercased())] payload serialization failed")
-            await SleepRemoteLogger.shared.log(
-                level: .error,
-                message: "[\(trigger.uppercased())] Payload JSON serialization failed",
-                context: ["step": "serialization_failed", "trigger": trigger]
-            )
+            debugPrint("🛏️ [SleepDataManager] deliverPayload: serialization failed")
+            SleepRemoteLogger.log(.error, step: "deliver", message: "JSON serialization failed")
             return
         }
 
         let sessionId = payload["BED_TIME"] as? String ?? isoFormatter.string(from: queryStart)
 
-        debugPrint("🛏️ [SleepDataManager] [\(trigger.uppercased())] delivering sessionId=\(sessionId) mode=\(SleepBackgroundDeliveryManager.deliveryModeLogLabel) size=\(jsonData.count)B")
-        await SleepRemoteLogger.shared.log(
-            level: .info,
-            message: "[\(trigger.uppercased())] Delivering sleep payload",
-            context: [
-                "step":         "delivering",
-                "trigger":      trigger,
-                "sessionId":    sessionId,
-                "deliveryMode": SleepBackgroundDeliveryManager.deliveryModeLogLabel,
-                "jsonBytes":    jsonData.count
-            ]
-        )
-
-        await deliveryManager.deliverSleepSession(jsonString, sessionId: sessionId)
-
-        debugPrint("🛏️ [SleepDataManager] [\(trigger.uppercased())] delivery complete for sessionId=\(sessionId)")
-        await SleepRemoteLogger.shared.log(
-            level: .info,
-            message: "[\(trigger.uppercased())] Background sleep pipeline complete",
-            context: [
-                "step":          "pipeline_complete",
-                "trigger":       trigger,
-                "sessionId":     sessionId,
-                "pipelineStart": pipelineStartTime,
-                "pipelineEnd":   isoFormatter.string(from: Date())
-            ]
-        )
+        if let delegate = HumangoHealthPlugin.delegate {
+            delegate.onSleepSessionReady(json: jsonString, sessionId: sessionId)
+            SleepRemoteLogger.log(.info, step: "deliver", message: "onSleepSessionReady delivered", context: [
+                "sessionId": sessionId,
+                "jsonBytes":  jsonData.count,
+            ])
+        } else {
+            debugPrint("⚠️ [SleepDataManager] delegate is nil — sleep session \(sessionId) not delivered")
+            SleepRemoteLogger.log(.warn, step: "deliver", message: "delegate is nil — not delivered", context: ["sessionId": sessionId])
+        }
     }
 
     // MARK: - 6PM Query Window
@@ -995,103 +757,6 @@ public class SleepDataManager: NSObject, AppLifecycleObserver {
         return buildAggregatedPayload(samples: validSamples, queryStart: queryStart, queryEnd: queryEnd)
     }
 
-    // MARK: - Raw snapshot (for local cache)
-
-    /// Builds the legacy raw snapshot format (used for fetchStoredSleepData compatibility).
-    private func buildRawSnapshot(samples: [HKCategorySample], queryStart: Date, queryEnd: Date) -> [String: Any] {
-        var sleepSamples: [[String: Any]] = []
-        var totalSleepSeconds: Double = 0
-        var stageTotals: [String: Double] = ["inBed": 0, "asleepUnspecified": 0, "awake": 0, "asleepCore": 0, "asleepDeep": 0, "asleepREM": 0]
-
-        for sample in samples {
-            let sampleDict = convertSampleToDict(sample)
-            sleepSamples.append(sampleDict)
-            let dur = sample.endDate.timeIntervalSince(sample.startDate)
-            let stage = sleepStageString(from: sample.value)
-            stageTotals[stage, default: 0] += dur
-            if stage != "inBed" && stage != "awake" { totalSleepSeconds += dur }
-        }
-        return [
-            "samples": sleepSamples,
-            "sampleCount": samples.count,
-            "totalSleepSeconds": totalSleepSeconds,
-            "totalSleepMinutes": totalSleepSeconds / 60.0,
-            "totalSleepHours": totalSleepSeconds / 3600.0,
-            "stageTotals": stageTotals.mapValues { ["seconds": $0, "minutes": $0 / 60.0] },
-            "fetchedFrom": isoFormatter.string(from: queryStart),
-            "fetchedTo": isoFormatter.string(from: queryEnd)
-        ]
-    }
-
-    private func logPayload(_ payload: [String: Any]) {
-        let totalMin = (payload["TOTAL_SLEEP"] as? Int ?? 0) / 60
-        let lightMin = (payload["SLEEP_LIGHT"] as? Int ?? 0) / 60
-        let deepMin  = (payload["SLEEP_DEEP"]  as? Int ?? 0) / 60
-        let remMin   = (payload["SLEEP_REM"]   as? Int ?? 0) / 60
-        let awakeMin = (payload["SLEEP_AWAKE"] as? Int ?? 0) / 60
-        let inBedMin = (payload["SLEEP_IN_BED"] as? Int ?? 0) / 60
-        debugPrint("🛏️ [SleepDataManager] ── PAYLOAD ──────────────────────────")
-        debugPrint("🛏️  SOURCE       : \(payload["SOURCE"] ?? "") (\(payload["SOURCE_BUNDLE"] ?? ""))")
-        debugPrint("🛏️  TIMEZONE     : \(payload["TIMEZONE"] ?? "")")
-        debugPrint("🛏️  TOTAL_SLEEP  : \(totalMin) min")
-        debugPrint("🛏️  Light/Deep/REM: \(lightMin)m / \(deepMin)m / \(remMin)m")
-        debugPrint("🛏️  AWAKE        : \(awakeMin) min")
-        debugPrint("🛏️  IN_BED       : \(inBedMin) min")
-        debugPrint("🛏️  BED_TIME     : \(payload["BED_TIME"] ?? "")")
-        debugPrint("🛏️  WAKE_TIME    : \(payload["WAKE_TIME"] ?? "")")
-        debugPrint("🛏️  START_DATE   : \(payload["START_DATE"] ?? "")")
-        debugPrint("🛏️  END_DATE     : \(payload["END_DATE"] ?? "")")
-        debugPrint("🛏️ ─────────────────────────────────────────────────")
-    }
-    
-    // MARK: - UserDefaults Storage
-
-    private func storeSleepDataToUserDefaults(_ sleepData: [String: Any]) {
-        do {
-            let jsonData = try JSONSerialization.data(withJSONObject: sleepData, options: [])
-            UserDefaults.standard.set(jsonData, forKey: SleepDataKeys.storedSleepData)
-            UserDefaults.standard.set(Date(), forKey: SleepDataKeys.lastFetchDate)
-            debugPrint("🛏️ [SleepDataManager] cache saved to UserDefaults")
-        } catch {
-            debugPrint("🛏️ [SleepDataManager] UserDefaults serialize error: \(error)")
-        }
-    }
-    
-    private func fetchStoredSleepDataFromUserDefaults() -> [String: Any] {
-        guard let jsonData = UserDefaults.standard.data(forKey: SleepDataKeys.storedSleepData) else {
-            return [
-                "samples": [],
-                "sampleCount": 0,
-                "totalSleepSeconds": 0,
-                "totalSleepMinutes": 0,
-                "totalSleepHours": 0,
-                "stageTotals": [:],
-                "storedAt": nil as Any?,
-                "hasData": false
-            ]
-        }
-        
-        do {
-            if var sleepData = try JSONSerialization.jsonObject(with: jsonData, options: []) as? [String: Any] {
-                if let storedDate = UserDefaults.standard.object(forKey: SleepDataKeys.lastFetchDate) as? Date {
-                    sleepData["storedAt"] = isoFormatter.string(from: storedDate)
-                }
-                sleepData["hasData"] = true
-                return sleepData
-            }
-        } catch {
-            debugPrint("🛏️ [SleepDataManager] UserDefaults deserialize error: \(error)")
-        }
-        
-        return ["samples": [], "sampleCount": 0, "hasData": false]
-    }
-    
-    private func clearStoredSleepData() {
-        UserDefaults.standard.removeObject(forKey: SleepDataKeys.storedSleepData)
-        UserDefaults.standard.removeObject(forKey: SleepDataKeys.lastFetchDate)
-        debugPrint("🛏️ [SleepDataManager] cleared UserDefaults cache")
-    }
-    
     // MARK: - Convert Sample to Dictionary
     
     private func convertSampleToDict(_ sample: HKCategorySample) -> [String: Any] {

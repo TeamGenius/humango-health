@@ -1,10 +1,6 @@
-import 'dart:convert';
-import 'dart:io';
 import 'package:flutter/material.dart';
-import 'package:flutter/services.dart';
-import 'package:provider/provider.dart';
 import 'package:humango_health/humango_health.dart';
-import 'health_sync_coordinator.dart';
+import 'example_session_manager.dart';
 
 class SleepDataScreen extends StatefulWidget {
   const SleepDataScreen({super.key});
@@ -13,10 +9,8 @@ class SleepDataScreen extends StatefulWidget {
   State<SleepDataScreen> createState() => _SleepDataScreenState();
 }
 
-class _SleepDataScreenState extends State<SleepDataScreen>
-    with WidgetsBindingObserver {
-  SleepDataManager get _sleepManager =>
-      context.read<HealthSyncCoordinator>().sleep;
+class _SleepDataScreenState extends State<SleepDataScreen> {
+  final SleepDataManager _sleepManager = SleepDataManager();
 
   SleepDataResponse? _sleepData;
   bool _isLoading = false;
@@ -30,15 +24,7 @@ class _SleepDataScreenState extends State<SleepDataScreen>
   // Live monitoring state
   bool _isMonitoring = false;
 
-  // ── Background payloads (drained from UserDefaults on app resume) ─────────
-  // Background HKObserverQuery fires while Flutter is suspended — EventChannel
-  // events are lost. Instead, HealthQueueObserver (Runner/iOS native) watches
-  // UserDefaults via KVO and posts a local notification. Flutter drains the
-  // queue via getLocalSleepSessions() when the app resumes (foreground).
-  final List<Map<String, dynamic>> _backgroundPayloads = [];
-  int _bgPayloadCount = 0;
-
-  // ── Calculate sleep payload state ─────────────────────────────────────────
+  // ── Calculate
   bool _isCalcLoading = false;
   Map<String, dynamic>? _calcPayload;
   String? _calcError;
@@ -46,169 +32,44 @@ class _SleepDataScreenState extends State<SleepDataScreen>
   // ── Test Setup ────────────────────────────────────────────────────────────
   final _userIdController = TextEditingController(text: 'test-user-001');
 
-  /// Athlete ID for POST /sleep/{athleteId}. Saved to UserDefaults key
-  /// 'flutter.athlete_id' so native SleepUploadService can also read it.
-  final _athleteIdController = TextEditingController();
-
-  /// Optional Bearer token written to UserDefaults key 'flutter.access_token'.
-  final _accessTokenController = TextEditingController();
+  // Session status shown in the test card
+  String? _sessionStatus;
 
   @override
   void initState() {
     super.initState();
-    WidgetsBinding.instance.addObserver(this);
     WidgetsBinding.instance.addPostFrameCallback((_) {
       if (mounted) _fetchSleepData();
     });
   }
 
-  /// Called by Flutter when the app returns to foreground.
-  /// This is the correct moment to drain UserDefaults — native HealthQueueObserver
-  /// has already handled the background notification; now Flutter reads the queue.
-  @override
-  void didChangeAppLifecycleState(AppLifecycleState state) {
-    if (state == AppLifecycleState.resumed) {
-      _drainBackgroundPayloads();
-    }
-  }
-
   @override
   void dispose() {
-    WidgetsBinding.instance.removeObserver(this);
     if (_isMonitoring) {
       _sleepManager.stopMonitoring();
     }
     _userIdController.dispose();
-    _athleteIdController.dispose();
-    _accessTokenController.dispose();
     super.dispose();
-  }
-
-  // ── Background payload drain + upload ───────────────────────────────────
-
-  static const _apiBase = 'humango-api-629346406456.us-central1.run.app';
-
-  /// Drains both UserDefaults queues written by the native layer:
-  ///
-  /// Drains `sleepPendingLocal` — sessions the native SleepUploadService
-  /// didn't yet upload (no credentials at fire time, network failure, etc.).
-  /// If the native layer already consumed them all, this returns empty and is
-  /// a no-op. Upload responsibility stays in the client app, not the plugin.
-  Future<void> _drainBackgroundPayloads() async {
-    try {
-      final pending = await _sleepManager.getLocalSleepSessions();
-      if (pending.isEmpty || !mounted) return;
-
-      setState(() {
-        _backgroundPayloads.insertAll(0, _decodeSessions(pending));
-        _bgPayloadCount += pending.length;
-      });
-
-      final athleteId = _athleteIdController.text.trim();
-      if (athleteId.isNotEmpty) {
-        await _saveCredentials();
-        await _uploadSleepSessions(pending, athleteId);
-      } else {
-        debugPrint(
-          '🛏️ [SleepScreen] pending sessions — set Athlete ID to upload',
-        );
-      }
-    } catch (e) {
-      debugPrint('🛏️ [SleepScreen] _drainBackgroundPayloads error: $e');
-    }
-  }
-
-  List<Map<String, dynamic>> _decodeSessions(List<String> sessions) {
-    return sessions.map((s) {
-      try {
-        final v = jsonDecode(s);
-        if (v is Map) return Map<String, dynamic>.from(v);
-      } catch (_) {}
-      return <String, dynamic>{'raw': s};
-    }).toList();
-  }
-
-  /// Writes athleteId + accessToken to UserDefaults via the session channel so
-  /// the native SleepUploadService can read them during background execution.
-  Future<void> _saveCredentials() async {
-    const channel = MethodChannel('com.humango.health/session');
-    try {
-      await channel.invokeMethod('saveCredentials', {
-        'athleteId': _athleteIdController.text.trim(),
-        'accessToken': _accessTokenController.text.trim(),
-      });
-    } catch (e) {
-      // Channel may not expose this method yet; the native SleepUploadService
-      // reads from UserDefaults directly once the keys are written by any means.
-      debugPrint(
-        '🛏️ [SleepScreen] saveCredentials channel error (non-fatal): $e',
-      );
-    }
-  }
-
-  Future<void> _uploadSleepSessions(
-    List<String> sessions,
-    String athleteId,
-  ) async {
-    final uri = Uri.https(_apiBase, '/sleep/$athleteId');
-    final token = _accessTokenController.text.trim();
-    int uploaded = 0;
-
-    for (final json in sessions) {
-      try {
-        final client = HttpClient();
-        final request = await client.postUrl(uri);
-        request.headers.set('Content-Type', 'application/json');
-        if (token.isNotEmpty) {
-          request.headers.set('Authorization', 'Bearer $token');
-        }
-        request.write(json);
-        final response = await request.close();
-        await response.drain<void>();
-        client.close();
-        if (response.statusCode >= 200 && response.statusCode < 300) {
-          uploaded++;
-          debugPrint(
-            '🛏️ [SleepScreen] ✅ session uploaded (HTTP ${response.statusCode})',
-          );
-        } else {
-          debugPrint(
-            '🛏️ [SleepScreen] ⚠️ server returned HTTP ${response.statusCode}',
-          );
-        }
-      } catch (e) {
-        debugPrint('🛏️ [SleepScreen] upload error: $e');
-      }
-    }
-
-    if (mounted && uploaded > 0) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(
-          content: Text('🛏️ $uploaded sleep session(s) uploaded to Humango'),
-          backgroundColor: Colors.teal,
-          duration: const Duration(seconds: 3),
-        ),
-      );
-    }
   }
 
   // ── Test helpers ─────────────────────────────────────────────────────────
 
   Future<void> _setUserLoggedIn(bool loggedIn) async {
-    final userId = _userIdController.text.trim();
-    final coordinator = context.read<HealthSyncCoordinator>();
-    await coordinator.setUserLoggedIn(
-      loggedIn: loggedIn,
-      userId: userId.isNotEmpty ? userId : null,
-      configureBackground: loggedIn,
-    );
-  }
-
-  /// Idempotent; same as after login.
-  Future<void> _configureBgDelivery() async {
-    await context
-        .read<HealthSyncCoordinator>()
-        .ensureBackgroundDeliveryConfigured();
+    if (loggedIn) {
+      try {
+        await ExampleSessionManager.setLoggedIn();
+        setState(() => _sessionStatus = 'Logged in — monitoring armed');
+      } catch (e) {
+        setState(() => _sessionStatus = 'Error: $e');
+      }
+    } else {
+      try {
+        await ExampleSessionManager.setLoggedOut();
+        setState(() => _sessionStatus = 'Logged out — session cleared');
+      } catch (e) {
+        setState(() => _sessionStatus = 'Error: $e');
+      }
+    }
   }
 
   /// Calls the group-based sleep payload calculation and updates local state.
@@ -380,29 +241,6 @@ class _SleepDataScreenState extends State<SleepDataScreen>
     }
   }
 
-  Future<void> _fetchStoredData() async {
-    try {
-      final storedData = await _sleepManager.fetchStoredSleepData();
-      setState(() {
-        _sleepData = storedData;
-      });
-      if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(
-            content: Text('Loaded ${storedData.sampleCount} stored samples'),
-          ),
-        );
-      }
-    } catch (e) {
-      print('🛏️ Error fetching stored data: $e');
-      if (mounted) {
-        ScaffoldMessenger.of(
-          context,
-        ).showSnackBar(SnackBar(content: Text('Error: $e')));
-      }
-    }
-  }
-
   @override
   Widget build(BuildContext context) {
     return Scaffold(
@@ -417,12 +255,6 @@ class _SleepDataScreenState extends State<SleepDataScreen>
             ),
             onPressed: _toggleMonitoring,
             tooltip: _isMonitoring ? 'Stop monitoring' : 'Start monitoring',
-          ),
-          // Fetch stored data (from background)
-          IconButton(
-            icon: const Icon(Icons.storage),
-            onPressed: _fetchStoredData,
-            tooltip: 'Fetch stored data',
           ),
           // Calculate group-based sleep payload
           IconButton(
@@ -455,7 +287,6 @@ class _SleepDataScreenState extends State<SleepDataScreen>
           _buildTestSetupCard(),
           _buildDateRangeSelector(),
           if (_isMonitoring) _buildMonitoringBanner(),
-          if (_backgroundPayloads.isNotEmpty) _buildBackgroundPayloadsCard(),
           _buildCalculatePayloadSection(),
           Expanded(child: _buildBody()),
         ],
@@ -475,7 +306,7 @@ class _SleepDataScreenState extends State<SleepDataScreen>
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
             const Text(
-              '🧪 Session + local sleep/workout delivery',
+              '🧪 Session & delegate delivery test',
               style: TextStyle(fontWeight: FontWeight.bold, fontSize: 13),
             ),
             const SizedBox(height: 8),
@@ -520,126 +351,13 @@ class _SleepDataScreenState extends State<SleepDataScreen>
                 ),
               ],
             ),
-            Consumer<HealthSyncCoordinator>(
-              builder: (context, coordinator, _) {
-                final session = coordinator.sessionStatus;
-                final bg = coordinator.backgroundDeliveryStatus;
-                final err = coordinator.lastError;
-                return Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    if (session != null) ...[
-                      const SizedBox(height: 4),
-                      Text(
-                        session,
-                        style: const TextStyle(
-                          fontSize: 11,
-                          color: Colors.indigo,
-                        ),
-                      ),
-                    ],
-                    const SizedBox(height: 8),
-                    SizedBox(
-                      width: double.infinity,
-                      child: FilledButton.icon(
-                        icon: const Icon(
-                          Icons.settings_backup_restore,
-                          size: 16,
-                        ),
-                        label: const Text('Re-apply delivery arm (idempotent)'),
-                        onPressed: _configureBgDelivery,
-                        style: FilledButton.styleFrom(
-                          backgroundColor: Colors.indigo,
-                          padding: const EdgeInsets.symmetric(vertical: 6),
-                        ),
-                      ),
-                    ),
-                    if (bg != null) ...[
-                      const SizedBox(height: 4),
-                      Text(
-                        bg,
-                        style: const TextStyle(
-                          fontSize: 11,
-                          color: Colors.indigo,
-                        ),
-                      ),
-                    ],
-                    if (err != null) ...[
-                      const SizedBox(height: 4),
-                      Text(
-                        err,
-                        style: const TextStyle(fontSize: 11, color: Colors.red),
-                      ),
-                    ],
-                    const SizedBox(height: 4),
-                    Text(
-                      'Plugin stores sleep sessions locally — upload from your app.',
-                      style: TextStyle(
-                        fontSize: 10,
-                        color: Colors.grey.shade600,
-                      ),
-                    ),
-                  ],
-                );
-              },
-            ),
-            const SizedBox(height: 12),
-            const Divider(height: 1),
-            const SizedBox(height: 10),
-            const Text(
-              '☁️ Upload credentials (POST /sleep/{athleteId})',
-              style: TextStyle(fontWeight: FontWeight.bold, fontSize: 13),
-            ),
-            const SizedBox(height: 8),
-            TextField(
-              controller: _athleteIdController,
-              decoration: const InputDecoration(
-                labelText: 'Athlete ID',
-                hintText: 'e.g. 12345',
-                border: OutlineInputBorder(),
-                isDense: true,
-                contentPadding: EdgeInsets.symmetric(
-                  horizontal: 10,
-                  vertical: 8,
-                ),
+            if (_sessionStatus != null) ...[
+              const SizedBox(height: 4),
+              Text(
+                _sessionStatus!,
+                style: const TextStyle(fontSize: 11, color: Colors.indigo),
               ),
-              style: const TextStyle(fontSize: 13),
-              keyboardType: TextInputType.text,
-            ),
-            const SizedBox(height: 8),
-            TextField(
-              controller: _accessTokenController,
-              decoration: const InputDecoration(
-                labelText: 'Access Token (optional)',
-                hintText: 'Bearer token',
-                border: OutlineInputBorder(),
-                isDense: true,
-                contentPadding: EdgeInsets.symmetric(
-                  horizontal: 10,
-                  vertical: 8,
-                ),
-              ),
-              style: const TextStyle(fontSize: 13),
-              obscureText: true,
-            ),
-            const SizedBox(height: 8),
-            SizedBox(
-              width: double.infinity,
-              child: FilledButton.icon(
-                icon: const Icon(Icons.cloud_upload, size: 16),
-                label: const Text('Save & sync credentials to native layer'),
-                onPressed: _saveCredentials,
-                style: FilledButton.styleFrom(
-                  backgroundColor: Colors.teal,
-                  padding: const EdgeInsets.symmetric(vertical: 6),
-                ),
-              ),
-            ),
-            const SizedBox(height: 4),
-            Text(
-              'Credentials are passed to native SleepUploadService via UserDefaults (flutter.athlete_id / flutter.access_token).',
-              style: TextStyle(fontSize: 10, color: Colors.grey.shade600),
-            ),
+            ],
           ],
         ),
       ),
@@ -1108,96 +826,6 @@ class _SleepDataScreenState extends State<SleepDataScreen>
     if (h > 0) return '${h}h';
     if (m > 0) return '${m}m';
     return '${s}s';
-  }
-
-  // ── Background Payloads Card ───────────────────────────────────────────────
-  // Populated on AppLifecycleState.resumed by draining getLocalSleepSessions().
-  // Runner’s HealthQueueObserver already posted a local notification while the
-  // app was suspended — this card is the in-app view of those payloads.
-
-  Widget _buildBackgroundPayloadsCard() {
-    return Card(
-      margin: const EdgeInsets.fromLTRB(8, 4, 8, 0),
-      color: Colors.indigo.shade50,
-      child: Padding(
-        padding: const EdgeInsets.all(12),
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            Row(
-              children: [
-                const Icon(Icons.notifications_active, color: Colors.indigo),
-                const SizedBox(width: 8),
-                Expanded(
-                  child: Text(
-                    'Background Payloads ($_bgPayloadCount received)',
-                    style: const TextStyle(
-                      fontWeight: FontWeight.bold,
-                      color: Colors.indigo,
-                    ),
-                  ),
-                ),
-                TextButton(
-                  onPressed: () => setState(() {
-                    _backgroundPayloads.clear();
-                    _bgPayloadCount = 0;
-                  }),
-                  child: const Text('Clear'),
-                ),
-              ],
-            ),
-            const SizedBox(height: 4),
-            Text(
-              'Stored by iOS background pipeline — drained on app resume. '
-              "Runner's HealthQueueObserver sent the local notification.",
-              style: TextStyle(fontSize: 11, color: Colors.indigo.shade700),
-            ),
-            const Divider(),
-            // Show last 3 payloads
-            ..._backgroundPayloads.take(3).map((payload) {
-              final source =
-                  payload['SOURCE'] as String? ??
-                  (payload['raw'] as String? ?? 'unknown');
-              final totalSec = payload['TOTAL_SLEEP'] as int?;
-              final bedTime = payload['BED_TIME'] as String? ?? '';
-              final wakeTime = payload['WAKE_TIME'] as String? ?? '';
-              return Padding(
-                padding: const EdgeInsets.symmetric(vertical: 3),
-                child: Row(
-                  children: [
-                    const Icon(Icons.bedtime, size: 14, color: Colors.indigo),
-                    const SizedBox(width: 6),
-                    Expanded(
-                      child: Text(
-                        totalSec != null
-                            ? '${_fmtMinutes(totalSec / 60)} · $source'
-                            : source,
-                        style: const TextStyle(fontSize: 12),
-                        overflow: TextOverflow.ellipsis,
-                      ),
-                    ),
-                    if (bedTime.isNotEmpty && wakeTime.isNotEmpty)
-                      Text(
-                        '${bedTime.length > 10 ? bedTime.substring(11, 16) : bedTime}'
-                        ' → ${wakeTime.length > 10 ? wakeTime.substring(11, 16) : wakeTime}',
-                        style: TextStyle(
-                          fontSize: 11,
-                          color: Colors.indigo.shade400,
-                        ),
-                      ),
-                  ],
-                ),
-              );
-            }),
-            if (_backgroundPayloads.length > 3)
-              Text(
-                '+ ${_backgroundPayloads.length - 3} more',
-                style: TextStyle(fontSize: 11, color: Colors.indigo.shade400),
-              ),
-          ],
-        ),
-      ),
-    );
   }
 
   // ── Calculate Payload Section ─────────────────────────────────────────────

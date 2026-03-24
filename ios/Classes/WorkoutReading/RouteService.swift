@@ -47,7 +47,7 @@ class RouteService {
         self.defaults = defaults
         self.healthStore = healthStore
         self.workout = workout
-        debugPrint("Read Workouts: RouteService init for workout : \(workout.uuid.uuidString)")
+
     }
     
     /// Expose endDate for external checks without exposing full workout
@@ -59,13 +59,11 @@ class RouteService {
     func enterBackgroundMode() {
         stopLiveUpdates()
         startBackgroundMonitoring()
-        debugPrint("Read Workouts: RouteService -> entered BACKGROUND mode")
     }
 
     func enterForegroundMode() {
         stopBackgroundMonitoring()
         startLiveUpdates()
-        debugPrint("Read Workouts: RouteService -> entered FOREGROUND mode")
     }
 
     // MARK: - Fetch all quantity series (ordered) for a workout
@@ -132,24 +130,18 @@ class RouteService {
 
     // MARK: - Descriptor-based fetch of today's / delta route samples (uses your HKAnchoredObjectQueryDescriptor)
     func fetchWorkoutRoute() async {
-        debugPrint("🔍 RouteService: fetchWorkoutRoute starting for \(workout.uuid.uuidString)")
         let pred = HKQuery.predicateForObjects(from: self.workout)
         let desc = HKAnchoredObjectQueryDescriptor(
             predicates: [.workoutRoute(pred)],
             anchor: routeAnchor,
             limit: HKObjectQueryNoLimit
         )
-        debugPrint("Read Workouts: RouteService: fetchWorkoutRoute :\(workout.uuid)")
         do {
             let result: HKAnchoredObjectQueryDescriptor<HKWorkoutRoute>.Result = try await desc.result(for: healthStore)
-            debugPrint("Read Workouts: RouteService: fetchWorkoutRoute : result:\(result.addedSamples.count)")
             routeAnchor = result.newAnchor
-            let routes = result.addedSamples
-            debugPrint("🔄 RouteService: About to call handleWorkoutRoutes with \(routes.count) route(s)")
-            await handleWorkoutRoutes(routes: routes)
-            debugPrint("✅ RouteService: handleWorkoutRoutes completed")
+            await handleWorkoutRoutes(routes: result.addedSamples)
         } catch {
-            print("Read Workouts: Fetch WorkoutRoute failed: \(error)")
+            print("[RouteService] fetchWorkoutRoute failed: \(error)")
         }
     }
 
@@ -165,7 +157,6 @@ class RouteService {
         updateTask?.cancel()
         updateTask = Task { [weak self] in
             guard let self = self else { return }
-            debugPrint("Read Workouts: RouteService: starting live route stream")
             do {
                 for try await update in stream {
                     self.routeAnchor = update.newAnchor
@@ -175,7 +166,7 @@ class RouteService {
                     }
                 }
             } catch {
-                debugPrint("Read Workouts: RouteService: RouteService live updates error: \(error)")
+                debugPrint("[RouteService] live updates error: \(error)")
             }
         }
     }
@@ -192,9 +183,8 @@ class RouteService {
         Task {
                 do {
                     try await healthStore.enableBackgroundDelivery(for: HKSeriesType.workoutRoute(), frequency: .immediate)
-                    debugPrint("Read Workouts: RouteService: enabled background delivery for workoutRoute (immediate)")
                 } catch {
-                    debugPrint("Read Workouts: RouteService: enableBackgroundDelivery(workoutRoute) failed: \(error)")
+                    debugPrint("[RouteService] enableBackgroundDelivery(workoutRoute) failed: \(error)")
                 }
             }
 
@@ -203,19 +193,17 @@ class RouteService {
                 defer { completion() }
 
                 if let error = error {
-                    debugPrint("Read Workouts: RouteService: workoutRoute observer error: \(error)")
+                    debugPrint("[RouteService] workoutRoute observer error: \(error)")
                     return
                 }
 
             Task {
-                debugPrint("Read Workouts: RouteService: workoutRoute observer fired (background) — fetching routes")
-                await self.fetchWorkoutRoute() // fetchWorkouts will create RouteService or one-shot as needed
+                await self.fetchWorkoutRoute()
             }
             }
 
             if let q = observer {
                 healthStore.execute(q)
-                debugPrint("Read Workouts: RouteService: installed workoutRoute observer")
             }
     }
 
@@ -223,13 +211,10 @@ class RouteService {
         if let q = observer {
             healthStore.stop(q)
             observer = nil
-            debugPrint("Read Workouts: RouteService: removed workoutRoute observer")
         }
-        healthStore.disableBackgroundDelivery(for: HKSeriesType.workoutRoute()) { ok, err in
+        healthStore.disableBackgroundDelivery(for: HKSeriesType.workoutRoute()) { _, err in
                 if let err {
-                    debugPrint("Read Workouts: RouteService: disableBackgroundDelivery(workoutRoute) error: \(err)")
-                } else {
-                    debugPrint("Read Workouts: RouteService: disableBackgroundDelivery(workoutRoute) ok: \(ok)")
+                    debugPrint("[RouteService] disableBackgroundDelivery(workoutRoute) error: \(err)")
                 }
             }
     }
@@ -239,9 +224,7 @@ class RouteService {
     /// If no new route data arrives within 3 minutes the workout is finalized and pushed.
     /// Any earlier pending push is discarded when new route data resets the timer.
     func handleWorkoutRoutes(routes: [HKWorkoutRoute]) async {
-        debugPrint("📥 RouteService: handleWorkoutRoutes called with \(routes.count) route(s), current workoutRoutes: \(workoutRoutes.count)")
-        
-        // upsert by UUID (or use sync identifier if you want to coalesce replacements)
+        // upsert by UUID
         var indexByUUID: [UUID: Int] = Dictionary(
             uniqueKeysWithValues: workoutRoutes.enumerated().map { ($1.uuid, $0) }
         )
@@ -254,49 +237,28 @@ class RouteService {
             }
         }
 
-        debugPrint("🗺️ RouteService: After upsert, workoutRoutes.count = \(workoutRoutes.count)")
-        
-        // no routes? complete with empty immediately (nothing to wait for)
         guard !workoutRoutes.isEmpty else {
-            debugPrint("⚠️ RouteService: No routes available, calling handleCompleteWorkout with empty location")
             routeDebounceTask?.cancel()
             routeDebounceTask = nil
             Task { self.handleCompleteWorkout(location: []) }
             return
         }
 
-        // Cancel any previously pending debounce — we received fresh route data,
-        // so the earlier workout object is discarded in favor of the updated one.
         routeDebounceTask?.cancel()
-        debugPrint("⏱️ RouteService: (Re)starting 3-minute route-update debounce timer for \(workout.uuid.uuidString)")
-
         let workoutUUID = workout.uuid.uuidString
 
         routeDebounceTask = Task { [weak self] in
             do {
-                // Wait 3 minutes for additional route updates
                 try await Task.sleep(nanoseconds: RouteService.routeUpdateWaitSeconds * 1_000_000_000)
-
-                // If we reach here the timer expired without cancellation → finalize
-                guard let self = self else { return }
-                guard !Task.isCancelled else { return }
-
-                debugPrint("✅ RouteService: 3-minute debounce timer expired for \(workoutUUID) — finalizing with \(self.workoutRoutes.count) route(s)")
-
+                guard let self = self, !Task.isCancelled else { return }
                 do {
-                    debugPrint("🏗️ RouteService: Building route data from \(self.workoutRoutes.count) route(s)")
                     let locationsData: [CLLocation] = try await self.buildRouteData(from: self.workoutRoutes)
-                    debugPrint("📍 RouteService: Built \(locationsData.count) location points")
-                    // touch lastSeen so record store knows about route updates
-                    await WorkoutRecordStore.shared.updateLastSeen(deviceActivityId: workoutUUID, date: Date())
                     self.handleCompleteWorkout(location: locationsData)
                 } catch {
-                    debugPrint("❌ RouteService: route build error after debounce: \(error)")
+                    debugPrint("[RouteService] route build error after debounce (\(workoutUUID)): \(error)")
                 }
             } catch {
-                // Task.sleep throws CancellationError when the task is cancelled
-                // (i.e. new route data arrived and reset the timer) — this is expected.
-                debugPrint("🔄 RouteService: Debounce timer cancelled for \(workoutUUID) — newer route data arrived, previous workout object discarded")
+                // CancellationError — new route data arrived and reset the timer; expected
             }
         }
     }
@@ -325,71 +287,28 @@ class RouteService {
     /// Checks if a workout was created from a scheduled WorkoutKit workout
     /// Returns the schedule_id if matched, nil otherwise
     private func getScheduledWorkoutId(_ workout: HKWorkout) async -> String? {
-        debugPrint("🔎 RouteService: getScheduledWorkoutId called for \(workout.uuid.uuidString)")
-        
-        // Use date/type matching to find scheduled workouts
-        debugPrint("📅 RouteService: Using date/type matching for scheduled workout detection...")
-        let scheduledWorkoutId = ScheduledWorkoutStore.shared.findMatchingScheduledWorkout(
+        return ScheduledWorkoutStore.shared.findMatchingScheduledWorkout(
             startDate: workout.startDate,
             activityType: workout.workoutActivityType
         )
-        
-        // Additional metadata checks
-        let bundleId = workout.sourceRevision.source.bundleIdentifier
-        let isWorkoutApp = bundleId == "com.apple.Workout"
-        
-        debugPrint("🔍 Scheduled workout check for \(workout.uuid.uuidString):")
-        debugPrint("   - Bundle ID: \(bundleId), isWorkoutApp: \(isWorkoutApp)")
-        debugPrint("   - Start date: \(workout.startDate)")
-        debugPrint("   - Activity type: \(workout.workoutActivityType.name)")
-        if let scheduleId = scheduledWorkoutId {
-            debugPrint("   - ✅ Matched to scheduled workout ID: \(scheduleId)")
-        } else {
-            debugPrint("   - ❌ No matching scheduled workout found")
-        }
-        
-        return scheduledWorkoutId
     }
 
     // MARK: - Build HuWorkout and push
     func handleCompleteWorkout(location: [CLLocation]) {
-        debugPrint("🏁 RouteService: handleCompleteWorkout called with \(location.count) locations for \(workout.uuid.uuidString)")
         Task {
             do {
-                debugPrint("📊 RouteService: Fetching quantity series...")
-                // fetch quantity time series in the same order as your UI/model expects
                 let series = try await fetchAllQuantitySeriesForWorkoutOrdered(workout)
-                let totalSamples = series.reduce(0) { $0 + $1.count }
-                debugPrint("✅ RouteService: Fetched \(totalSamples) quantity samples across \(series.count) types")
 
-                debugPrint("🔧 RouteService: Setting up metadata...")
                 var dictMetaData = workout.metadata ?? [String:Any]()
                 dictMetaData["dataSource"] = workout.sourceRevision.source.name
                 dictMetaData["iosVersion"] = ProcessInfo.processInfo.operatingSystemVersionString
-                debugPrint("✅ RouteService: Metadata initialized")
-                
-                // Check if this workout was scheduled via WorkoutKit and get its ID
-                debugPrint("🔍 RouteService: Checking if workout is scheduled...")
+
                 let scheduledWorkoutId = await getScheduledWorkoutId(workout)
-                debugPrint("✅ RouteService: Scheduled workout check complete, ID: \(scheduledWorkoutId ?? "nil")")
-                let isScheduledWorkout = scheduledWorkoutId != nil
-                
-                dictMetaData["isScheduledWorkout"] = isScheduledWorkout
+                dictMetaData["isScheduledWorkout"] = scheduledWorkoutId != nil
                 if let scheduleId = scheduledWorkoutId {
                     dictMetaData["scheduledWorkoutId"] = scheduleId
-                    debugPrint("🎯 RouteService: This is scheduled workout with ID: \(scheduleId)")
                 }
-                
-                debugPrint("📋 RouteService: Workout source: \(workout.sourceRevision.source.name)")
-                debugPrint("📋 RouteService: Workout bundleIdentifier: \(workout.sourceRevision.source.bundleIdentifier)")
-                debugPrint("🎯 RouteService: Is scheduled workout: \(isScheduledWorkout)")
 
-                debugPrint("🏗️ RouteService: Creating HuWorkout object...")
-                debugPrint("   - distance: \(workout.totalDistance?.doubleValue(for: .meter()) ?? 0)m")
-                debugPrint("   - duration: \(workout.duration)s")
-                debugPrint("   - locations: \(location.count)")
-                debugPrint("   - samples across \(series.count) types")
-                
                 let huWorkout = HuWorkout(
                     distance: workout.totalDistance,
                     duration: workout.duration,
@@ -402,93 +321,33 @@ class RouteService {
                     workoutActivities: workout.workoutActivities,
                     metadata: dictMetaData
                 )
-                debugPrint("✅ RouteService: HuWorkout created successfully")
-
-                debugPrint("📤 RouteService: Calling pushWorkout...")
                 await pushWorkout(finalWorkout: huWorkout)
-                debugPrint("✅ RouteService: pushWorkout completed")
             } catch {
-                debugPrint("❌ RouteService: Error in handleCompleteWorkout: \(error)")
-                debugPrint("   - Error type: \(type(of: error))")
-                debugPrint("   - Error description: \(error.localizedDescription)")
-                print("Read Workouts: fetch error:", error)
+                debugPrint("[RouteService] handleCompleteWorkout error: \(error)")
             }
         }
     }
 
-    // push workout payload (uses WorkoutRecordStore dedupe)
-    func pushWorkout(finalWorkout : HuWorkout) async {
-        debugPrint("📦 RouteService: pushWorkout called for \(finalWorkout.deviceActivityId)")
-        
-        debugPrint("   - Converting workout to dictionary...")
+    // push workout payload
+    func pushWorkout(finalWorkout: HuWorkout) async {
         guard let dict = finalWorkout.toDict() else {
-            debugPrint("   - ❌ Failed to convert workout to dictionary")
+            debugPrint("[RouteService] pushWorkout: toDict() returned nil for \(finalWorkout.deviceActivityId)")
             return
         }
-        debugPrint("   - ✅ Workout converted to dictionary")
-        
-        // We do not wrap it in an array here since we are returning a single workout representation
         do {
-            debugPrint("   - Serializing to JSON...")
             let data = try JSONSerialization.data(withJSONObject: dict, options: [])
-            debugPrint("   - ✅ JSON serialized, size: \(data.count) bytes")
             let deviceId = finalWorkout.deviceActivityId
-
-            // Check local store (dedupe)
-            debugPrint("   - Checking WorkoutRecordStore for dedupe...")
-            let shouldPush = await WorkoutRecordStore.shared.shouldPush(deviceActivityId: deviceId, payload: data)
-            debugPrint("   - shouldPush: \(shouldPush)")
-            if !shouldPush {
-                debugPrint("   - ⏭️ Skipping push — already pushed and unchanged for \(deviceId)")
-                return
-            }
-
-            // Mark pending
-            debugPrint("   - Marking workout as pending in store...")
-            await WorkoutRecordStore.shared.upsertRecordPending(deviceActivityId: deviceId, payload: data)
-            debugPrint("   - ✅ Marked as pending")
-
-            debugPrint("   - Converting to UTF8 string...")
             guard let jsonString = String(data: data, encoding: .utf8) else {
-                debugPrint("   - ❌ Failed to convert workout data to string")
+                debugPrint("[RouteService] pushWorkout: UTF-8 encoding failed for \(deviceId)")
                 return
             }
-            debugPrint("   - ✅ JSON string created")
-
-            // Log workout data recorded
-            debugPrint("🏋️ [WorkoutDelivery] ── WORKOUT DATA RECORDED ──────────────")
-            debugPrint("🏋️ [WorkoutDelivery] DeviceActivityId: \(deviceId)")
-            debugPrint("🏋️ [WorkoutDelivery] JSON payload size: \(data.count) bytes")
-            if let activityType = dict["activityType"] as? String {
-                debugPrint("🏋️ [WorkoutDelivery] Activity type: \(activityType)")
+            if let delegate = HumangoHealthPlugin.delegate {
+                delegate.onWorkoutReady(json: jsonString, deviceId: deviceId)
+            } else {
+                debugPrint("[RouteService] delegate is nil — workout \(deviceId) not delivered")
             }
-            if let startDate = dict["startDate"] as? String {
-                debugPrint("🏋️ [WorkoutDelivery] Start date: \(startDate)")
-            }
-            if let endDate = dict["endDate"] as? String {
-                debugPrint("🏋️ [WorkoutDelivery] End date: \(endDate)")
-            }
-            if let duration = dict["duration"] as? Double {
-                debugPrint("🏋️ [WorkoutDelivery] Duration: \(String(format: "%.1f", duration))s")
-            }
-            if let distance = dict["totalDistance"] as? Double {
-                debugPrint("🏋️ [WorkoutDelivery] Distance: \(String(format: "%.2f", distance))m")
-            }
-            if let calories = dict["totalEnergyBurned"] as? Double {
-                debugPrint("🏋️ [WorkoutDelivery] Calories: \(String(format: "%.1f", calories)) kcal")
-            }
-            debugPrint("🏋️ [WorkoutDelivery] JSON preview: \(String(jsonString.prefix(300)))...")
-            debugPrint("🏋️ [WorkoutDelivery] ─────────────────────────────────────────")
-
-            debugPrint("📤 RouteService: Calling WorkoutStreamDelivery.deliverWorkout for \(deviceId)")
-            await WorkoutStreamDelivery.shared.deliverWorkout(jsonString, deviceId: deviceId)
-            debugPrint("✅ RouteService: deliverWorkout completed for \(deviceId)")
-            await WorkoutRecordStore.shared.printAllRecords(context: "after RouteService push")
-            
         } catch {
-            debugPrint("❌ RouteService: pushWorkout JSON error: \(error)")
-            debugPrint("   - Error type: \(type(of: error))")
-            debugPrint("   - Error description: \(error.localizedDescription)")
+            debugPrint("[RouteService] pushWorkout JSON error for \(finalWorkout.deviceActivityId): \(error)")
         }
     }
 
