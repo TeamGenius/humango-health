@@ -7,6 +7,7 @@
 //
 
 import Foundation
+import Flutter
 
 // MARK: - Notifications
 
@@ -19,9 +20,9 @@ extension Notification.Name {
 
 /// Tracks the user's login state, persisted across app launches via UserDefaults.
 ///
-/// Background monitoring (workout, sleep, activities) only auto-starts on app launch
-/// when `isLoggedIn` is `true`. This prevents unintended monitoring before the user
-/// logs in and ensures all data is cleared cleanly on logout.
+/// HealthKit reads and background monitoring (workouts, sleep, HRV, quantity metrics)
+/// only run when `isLoggedIn` is `true`. This prevents reading or syncing health data
+/// before login and ensures cleanup on logout.
 public class UserAuthStateManager {
     public static let shared = UserAuthStateManager()
 
@@ -60,5 +61,20 @@ public class UserAuthStateManager {
             }
             UserDefaults.standard.synchronize()
         }
+    }
+
+    /// Completes `result` with `NOT_LOGGED_IN` when the user is not logged in.
+    /// Use before HealthKit reads or starting health observers.
+    @discardableResult
+    public func guardLoggedInForHealthData(result: @escaping FlutterResult) -> Bool {
+        guard isLoggedIn else {
+            result(FlutterError(
+                code: "NOT_LOGGED_IN",
+                message: "Health data is only available when the user is logged in",
+                details: nil
+            ))
+            return false
+        }
+        return true
     }
 }

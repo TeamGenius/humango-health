@@ -43,9 +43,7 @@ public class HumangoHealthPlugin: NSObject, FlutterPlugin {
     healthMetricsHRVEventChannel.setStreamHandler(HRVStreamHandler())
     
     // MARK: - Auto-Start Monitoring
-    // Workouts / Sleep: only when user is logged in and API was previously configured.
-    // HRV: always auto-start on launch — no user interaction required; HRV is read
-    //      automatically whenever HealthKit is updated (foreground, background, suspended).
+    // Workouts / Sleep / HRV: only when user is logged in and the subsystem was armed / enabled.
     instance.workoutReadChannel.autoStartIfConfigured()
     if #available(iOS 14.0, *) {
         SleepDataManager.shared.autoStartIfConfigured()
@@ -95,15 +93,24 @@ public class HumangoHealthPlugin: NSObject, FlutterPlugin {
   private func handleHRVMonitoring(_ call: FlutterMethodCall, result: @escaping FlutterResult) {
       switch call.method {
       case "startHRVMonitoring":
+          guard UserAuthStateManager.shared.guardLoggedInForHealthData(result: result) else { return }
           HRVObserverManager.shared.startMonitoring()
           result(nil)
       case "stopHRVMonitoring":
           HRVObserverManager.shared.stopMonitoring()
           result(nil)
       case "getPendingHRVUpdates":
+          guard UserAuthStateManager.shared.isLoggedIn else {
+              result([])
+              return
+          }
           let pending = HRVObserverManager.shared.retrievePendingHRVUpdates()
           result(pending)
       case "isHRVMonitoringActive":
+          guard UserAuthStateManager.shared.isLoggedIn else {
+              result(false)
+              return
+          }
           result(HRVObserverManager.shared.isMonitoringEnabled)
       default:
           result(FlutterMethodNotImplemented)
@@ -158,7 +165,7 @@ public class HumangoHealthPlugin: NSObject, FlutterPlugin {
           if #available(iOS 14.0, *) {
               SleepDataManager.shared.autoStartIfConfigured()
           }
-          // HRV auto-start is not gated on login, but re-running is harmless.
+          HRVObserverManager.shared.autoStartIfConfigured()
       } else {
           clearAllDataOnLogout()
       }

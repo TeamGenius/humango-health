@@ -61,6 +61,10 @@ public class HRVObserverManager: NSObject, AppLifecycleObserver {
 
     /// Start observing HRV. Registers HKObserverQuery and enables background delivery.
     func startMonitoring() {
+        guard UserAuthStateManager.shared.isLoggedIn else {
+            print("📊 [HRV Observer] startMonitoring ignored — user not logged in")
+            return
+        }
         guard HKHealthStore.isHealthDataAvailable() else {
             print("📊 [HRV Observer] HealthKit not available")
             return
@@ -159,16 +163,23 @@ public class HRVObserverManager: NSObject, AppLifecycleObserver {
         return array
     }
 
-    /// Auto-start HRV monitoring on app launch. No user interaction required —
-    /// HRV is read automatically whenever HealthKit is updated (foreground, background, suspended).
-    /// Call from plugin register().
+    /// Auto-start HRV monitoring on app launch when the user is logged in and monitoring was left enabled.
+    /// Call from plugin register() and after login.
     func autoStartIfConfigured() {
+        guard UserAuthStateManager.shared.isLoggedIn else {
+            print("📊 [HRV Observer] Auto-start skipped — user not logged in")
+            return
+        }
         guard !isMonitoring else {
             print("📊 [HRV Observer] Auto-start skipped — already monitoring")
             return
         }
+        guard isMonitoringEnabled else {
+            print("📊 [HRV Observer] Auto-start skipped — HRV monitoring not enabled")
+            return
+        }
         startMonitoring()
-        print("📊 [HRV Observer] Auto-started HRV monitoring (no user interaction required)")
+        print("📊 [HRV Observer] Auto-started HRV monitoring from persisted preference")
     }
 
     // MARK: - AppLifecycleObserver

@@ -62,6 +62,7 @@ public class HealthMetricsManager: NSObject {
     // MARK: - Method Channel Handler
     
     public func handle(_ call: FlutterMethodCall, result: @escaping FlutterResult) {
+        guard UserAuthStateManager.shared.guardLoggedInForHealthData(result: result) else { return }
         switch call.method {
         case "getHealthMetric":
             handleGetHealthMetric(call, result: result)

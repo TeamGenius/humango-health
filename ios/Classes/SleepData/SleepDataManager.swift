@@ -138,7 +138,15 @@ public class SleepDataManager: NSObject, AppLifecycleObserver {
     // MARK: - Method Channel Handler
     
     public func handle(_ call: FlutterMethodCall, result: @escaping FlutterResult) {
-        switch call.method {
+        let method = call.method
+        let requiresLogin = [
+            "getSleepData", "startSleepMonitoring", "fetchStoredSleepData",
+            "configureSleepBackgroundDelivery", "getLocalSleepSessions", "calculateSleepPayload",
+        ].contains(method)
+        if requiresLogin {
+            guard UserAuthStateManager.shared.guardLoggedInForHealthData(result: result) else { return }
+        }
+        switch method {
         case "getSleepData":
             handleGetSleepData(call, result: result)
             

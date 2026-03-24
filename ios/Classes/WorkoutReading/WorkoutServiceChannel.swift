@@ -28,6 +28,12 @@ class WorkoutServiceChannel: NSObject, FlutterStreamHandler {
     }
     
     func handle(_ call: FlutterMethodCall, result: @escaping FlutterResult) {
+        let loginOptional = Set([
+            "stopWorkoutMonitoring", "enterForeground", "enterBackground",
+        ])
+        if !loginOptional.contains(call.method) {
+            guard UserAuthStateManager.shared.guardLoggedInForHealthData(result: result) else { return }
+        }
         switch call.method {
         case "readWorkouts":
             handleReadWorkouts(call, result)
