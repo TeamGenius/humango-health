@@ -13,7 +13,7 @@ import WorkoutKit
 
 @available(iOS 17.0, *)
 class RouteService {
-    private let store : HKHealthStore
+    private let healthStore: HKHealthStore
     private let workout : HKWorkout
     private var routeAnchor: HKQueryAnchor?
     private var updateTask: Task<Void, Never>?
@@ -39,9 +39,13 @@ class RouteService {
         defaults.string(forKey: UserDefaultsKeys.token)
     }
 
-    init(store : HKHealthStore, workout: HKWorkout, defaults: UserDefaults = .standard){
+    init(
+        workout: HKWorkout,
+        defaults: UserDefaults = .standard,
+        healthStore: HKHealthStore = SharedHealthKitStore.shared
+    ) {
         self.defaults = defaults
-        self.store = store
+        self.healthStore = healthStore
         self.workout = workout
         debugPrint("Read Workouts: RouteService init for workout : \(workout.uuid.uuidString)")
     }
@@ -67,10 +71,7 @@ class RouteService {
     // MARK: - Fetch all quantity series (ordered) for a workout
     // Restored from your repository: collects many quantity series in parallel and returns in the original order.
     @available(iOS 17.0, *)
-    func fetchAllQuantitySeriesForWorkoutOrdered(
-        _ workout: HKWorkout,
-        store: HKHealthStore
-    ) async throws -> [[HKQuantitySample]] {
+    func fetchAllQuantitySeriesForWorkoutOrdered(_ workout: HKWorkout) async throws -> [[HKQuantitySample]] {
         let ids: [HKQuantityTypeIdentifier] = [
             HKQuantityTypeIdentifier.heartRate,
             HKQuantityTypeIdentifier.stepCount,
@@ -96,6 +97,7 @@ class RouteService {
             HKQuantityTypeIdentifier.cyclingPower,
         ]
 
+        let hk = healthStore
         return try await withThrowingTaskGroup(of: (Int, [HKQuantitySample]).self) { group in
             for (idx, id) in ids.enumerated() {
                 group.addTask {
@@ -113,7 +115,7 @@ class RouteService {
                         limit: HKObjectQueryNoLimit
                     )
 
-                    let results = try await descriptor.result(for: store)
+                    let results = try await descriptor.result(for: hk)
                     // filter/cast to HKQuantitySample
                     let samples = results.compactMap { $0 as? HKQuantitySample }
                     return (idx, samples)
@@ -139,7 +141,7 @@ class RouteService {
         )
         debugPrint("Read Workouts: RouteService: fetchWorkoutRoute :\(workout.uuid)")
         do {
-            let result: HKAnchoredObjectQueryDescriptor<HKWorkoutRoute>.Result = try await desc.result(for: store)
+            let result: HKAnchoredObjectQueryDescriptor<HKWorkoutRoute>.Result = try await desc.result(for: healthStore)
             debugPrint("Read Workouts: RouteService: fetchWorkoutRoute : result:\(result.addedSamples.count)")
             routeAnchor = result.newAnchor
             let routes = result.addedSamples
@@ -158,7 +160,7 @@ class RouteService {
             predicates: [.workoutRoute(livePred)],
             anchor: routeAnchor
         )
-        let stream = desc.results(for: store)
+        let stream = desc.results(for: healthStore)
 
         updateTask?.cancel()
         updateTask = Task { [weak self] in
@@ -189,7 +191,7 @@ class RouteService {
         
         Task {
                 do {
-                    try await store.enableBackgroundDelivery(for: HKSeriesType.workoutRoute(), frequency: .immediate)
+                    try await healthStore.enableBackgroundDelivery(for: HKSeriesType.workoutRoute(), frequency: .immediate)
                     debugPrint("Read Workouts: RouteService: enabled background delivery for workoutRoute (immediate)")
                 } catch {
                     debugPrint("Read Workouts: RouteService: enableBackgroundDelivery(workoutRoute) failed: \(error)")
@@ -212,18 +214,18 @@ class RouteService {
             }
 
             if let q = observer {
-                store.execute(q)
+                healthStore.execute(q)
                 debugPrint("Read Workouts: RouteService: installed workoutRoute observer")
             }
     }
 
     func stopBackgroundMonitoring() {
         if let q = observer {
-            store.stop(q)
+            healthStore.stop(q)
             observer = nil
             debugPrint("Read Workouts: RouteService: removed workoutRoute observer")
         }
-        store.disableBackgroundDelivery(for: HKSeriesType.workoutRoute()) { ok, err in
+        healthStore.disableBackgroundDelivery(for: HKSeriesType.workoutRoute()) { ok, err in
                 if let err {
                     debugPrint("Read Workouts: RouteService: disableBackgroundDelivery(workoutRoute) error: \(err)")
                 } else {
@@ -305,7 +307,7 @@ class RouteService {
 
         // sequential is simplest; you can parallelize with TaskGroup later if needed
         for route in routes {
-            let seq = HKWorkoutRouteQueryDescriptor(route).results(for: store)
+            let seq = HKWorkoutRouteQueryDescriptor(route).results(for: healthStore)
             for try await loc in seq {
                 allPoints.append(loc)
             }
@@ -356,7 +358,7 @@ class RouteService {
             do {
                 debugPrint("📊 RouteService: Fetching quantity series...")
                 // fetch quantity time series in the same order as your UI/model expects
-                let series = try await fetchAllQuantitySeriesForWorkoutOrdered(workout, store: store)
+                let series = try await fetchAllQuantitySeriesForWorkoutOrdered(workout)
                 let totalSamples = series.reduce(0) { $0 + $1.count }
                 debugPrint("✅ RouteService: Fetched \(totalSamples) quantity samples across \(series.count) types")
 

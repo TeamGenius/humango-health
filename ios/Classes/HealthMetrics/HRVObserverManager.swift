@@ -26,7 +26,7 @@ private struct HRVObserverKeys {
 public class HRVObserverManager: NSObject, AppLifecycleObserver {
     static let shared = HRVObserverManager()
 
-    private let healthStore = HKHealthStore()
+    private var healthStore: HKHealthStore { SharedHealthKitStore.shared }
     private let isoFormatter: ISO8601DateFormatter = {
         let f = ISO8601DateFormatter()
         f.formatOptions = [.withInternetDateTime, .withFractionalSeconds]

@@ -8,7 +8,9 @@ import WorkoutKit
 class WorkoutServiceChannel: NSObject, FlutterStreamHandler {
     private var workoutService: WorkoutService?
     private var eventSink: FlutterEventSink?
-    private let store = HKHealthStore()
+    /// Batched anchored workout reads; keep in sync with `limit` in fetch helpers.
+    private let workoutAnchoredBatchLimit = 100
+    private var healthStore: HKHealthStore { SharedHealthKitStore.shared }
     
     // User preferences for workout filtering
     private var unImportWorkout: [String] {
@@ -53,9 +55,7 @@ class WorkoutServiceChannel: NSObject, FlutterStreamHandler {
             result(FlutterMethodNotImplemented)
         }
     }
-    
- 
-    
+
     private func handleReadWorkouts(_ call: FlutterMethodCall, _ result: @escaping FlutterResult) {
         guard let args = call.arguments as? [String: Any],
               let startISO = args["startDate"] as? String,
@@ -110,14 +110,14 @@ class WorkoutServiceChannel: NSObject, FlutterStreamHandler {
         debugPrint("Read Workouts: Excluded workout types: \(excludedTypes)")
         
         repeat {
-            // Create a query descriptor that reads a batch of 100 matching samples
+            // Create a query descriptor that reads a batch of matching samples
             let anchorDescriptor = HKAnchoredObjectQueryDescriptor(
                 predicates: [.workout(predicate)],
                 anchor: anchor,
-                limit: 100
+                limit: workoutAnchoredBatchLimit
             )
             
-            results = try await anchorDescriptor.result(for: store)
+            results = try await anchorDescriptor.result(for: healthStore)
             anchor = results.newAnchor
             
             debugPrint("Read Workouts: Fetched batch of \(results.addedSamples.count) workouts")
@@ -148,8 +148,8 @@ class WorkoutServiceChannel: NSObject, FlutterStreamHandler {
                 }
             }
             
-        } while !results.addedSamples.isEmpty && !results.deletedObjects.isEmpty
-        
+        } while results.addedSamples.count == workoutAnchoredBatchLimit
+
         debugPrint("Read Workouts: Total workouts processed: \(allWorkouts.count)")
         
         // Convert to JSON strings, with WorkoutRecordStore byte-level dedup
@@ -251,7 +251,7 @@ class WorkoutServiceChannel: NSObject, FlutterStreamHandler {
     private func fetchWorkoutRoutes(_ workout: HKWorkout) async throws -> [HKWorkoutRoute] {
         // Check authorization for workout routes
         let routeType = HKSeriesType.workoutRoute()
-        let authStatus = store.authorizationStatus(for: routeType)
+        let authStatus = healthStore.authorizationStatus(for: routeType)
         guard authStatus == .sharingAuthorized else {
             debugPrint("Read Workouts: Workout route not authorized")
             return []
@@ -265,7 +265,7 @@ class WorkoutServiceChannel: NSObject, FlutterStreamHandler {
             anchor: nil,
             limit: HKObjectQueryNoLimit
         )
-        let result: HKAnchoredObjectQueryDescriptor<HKWorkoutRoute>.Result = try await desc.result(for: store)
+        let result: HKAnchoredObjectQueryDescriptor<HKWorkoutRoute>.Result = try await desc.result(for: healthStore)
         
         debugPrint("Read Workouts: Found \(result.addedSamples.count) route(s) for workout \(workout.uuid.uuidString)")
         
@@ -276,7 +276,7 @@ class WorkoutServiceChannel: NSObject, FlutterStreamHandler {
         debugPrint("Read Workouts: Building route data from \(routes.count) route(s)")
         var allPoints: [CLLocation] = []
         for route in routes {
-            let seq = HKWorkoutRouteQueryDescriptor(route).results(for: store)
+            let seq = HKWorkoutRouteQueryDescriptor(route).results(for: healthStore)
             var routePointCount = 0
             for try await loc in seq {
                 allPoints.append(loc)
@@ -320,7 +320,7 @@ class WorkoutServiceChannel: NSObject, FlutterStreamHandler {
                     }
                     
                     // Check authorization status before querying
-                    let authStatus = self.store.authorizationStatus(for: qType)
+                    let authStatus = self.healthStore.authorizationStatus(for: qType)
                     guard authStatus == .sharingAuthorized else {
                         // Skip this type if not authorized
                         return (idx, [])
@@ -337,7 +337,7 @@ class WorkoutServiceChannel: NSObject, FlutterStreamHandler {
                             sortDescriptors: [SortDescriptor(\.startDate, order: .forward)],
                             limit: HKObjectQueryNoLimit
                         )
-                        let results = try await descriptor.result(for: self.store)
+                        let results = try await descriptor.result(for: self.healthStore)
                         let samples = results.compactMap { $0 as? HKQuantitySample }
                         return (idx, samples)
                     } catch {
@@ -477,9 +477,9 @@ class WorkoutServiceChannel: NSObject, FlutterStreamHandler {
             let anchorDescriptor = HKAnchoredObjectQueryDescriptor(
                 predicates: [.workout(predicate)],
                 anchor: anchor,
-                limit: 100
+                limit: workoutAnchoredBatchLimit
             )
-            results = try await anchorDescriptor.result(for: store)
+            results = try await anchorDescriptor.result(for: healthStore)
             anchor = results.newAnchor
 
             for workout in results.addedSamples {
@@ -490,7 +490,7 @@ class WorkoutServiceChannel: NSObject, FlutterStreamHandler {
                     workoutsJson.append(jsonString)
                 }
             }
-        } while !results.addedSamples.isEmpty && !results.deletedObjects.isEmpty
+        } while results.addedSamples.count == workoutAnchoredBatchLimit
 
         debugPrint("Read Workouts: fetchAllWorkoutsRaw returning \(workoutsJson.count) workout(s)")
         return workoutsJson

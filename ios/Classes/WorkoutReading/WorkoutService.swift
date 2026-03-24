@@ -18,7 +18,7 @@ final class WorkoutService: AppLifecycleObserver {
     private let running = "Running"
     private let swimminng = "Swimming"
     private let strength = "Strength"
-    private let store = HKHealthStore()
+    private var healthStore: HKHealthStore { SharedHealthKitStore.shared }
     private var anchor: HKQueryAnchor?
     private var updateTask: Task<Void, Never>?
     private var observer: HKObserverQuery?
@@ -140,7 +140,7 @@ final class WorkoutService: AppLifecycleObserver {
             predicates: [.workout(livePredicate)],
             anchor: anchor
         )
-        let stream = desc.results(for: store)
+        let stream = desc.results(for: healthStore)
 
         updateTask?.cancel()
         updateTask = Task { [weak self] in
@@ -199,7 +199,7 @@ final class WorkoutService: AppLifecycleObserver {
         )
         
         do {
-            let result = try await desc.result(for: store)
+            let result = try await desc.result(for: healthStore)
             self.anchor = result.newAnchor
             
             debugPrint("Read Workouts: WorkoutService: fetchWorkouts found \(result.addedSamples.count) workouts")
@@ -224,7 +224,7 @@ final class WorkoutService: AppLifecycleObserver {
         // 1) Enable background delivery for workouts and workout routes (async)
             Task {
                 do {
-                    try await store.enableBackgroundDelivery(for: .workoutType(), frequency: .immediate)
+                    try await healthStore.enableBackgroundDelivery(for: .workoutType(), frequency: .immediate)
                     debugPrint("Read Workouts: WorkoutService: enabled background delivery for workoutType (immediate)")
                 } catch {
                     debugPrint("Read Workouts: WorkoutService: enableBackgroundDelivery(workoutType) failed: \(error)")
@@ -253,20 +253,20 @@ final class WorkoutService: AppLifecycleObserver {
         }
 
         if let q = observer {
-            store.execute(q)
+            healthStore.execute(q)
             debugPrint("Read Workouts: WorkoutService: installed workout observer")
         }
     }
 
     func stopBackgroundMonitoring() {
         if let q = observer {
-                store.stop(q)
+                healthStore.stop(q)
             observer = nil
                 debugPrint("Read Workouts: WorkoutService: removed workout observer")
             }
       
         // Disable background delivery per-type (completion-based API)
-        store.disableBackgroundDelivery(for: .workoutType()) { ok, err in
+        healthStore.disableBackgroundDelivery(for: .workoutType()) { ok, err in
                 if let err {
                     debugPrint("Read Workouts: WorkoutService: disableBackgroundDelivery(workoutType) error: \(err)")
                 } else {
@@ -298,7 +298,7 @@ final class WorkoutService: AppLifecycleObserver {
             let existsLocally = await WorkoutRecordStore.shared.hasRecord(deviceActivityId: deviceId)
 
             // Create a RouteService for this workout (we'll either retain it or use it for one-shot)
-            let routeService = RouteService(store: store, workout: workout)
+            let routeService = RouteService(workout: workout)
 
             if ageSinceEnd <= twoHours  {
                 // Recent completion AND already tracked locally -> retain and start listening.

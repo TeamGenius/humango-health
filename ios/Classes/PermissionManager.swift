@@ -4,7 +4,7 @@ import UIKit
 
 public class PermissionManager {
     public static let shared = PermissionManager()
-    let healthStore = HKHealthStore()
+    var healthStore: HKHealthStore { SharedHealthKitStore.shared }
     
     // MARK: - EventChannel sink (holds the live stream connection to Flutter)
     var healthKitEventSink: FlutterEventSink?

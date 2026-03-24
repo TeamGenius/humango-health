@@ -52,7 +52,7 @@ private let metricDescriptors: [String: MetricDescriptor] = [
 public class HealthMetricsManager: NSObject {
     static let shared = HealthMetricsManager()
     
-    private let healthStore = HKHealthStore()
+    private var healthStore: HKHealthStore { SharedHealthKitStore.shared }
     private let isoFormatter: ISO8601DateFormatter = {
         let formatter = ISO8601DateFormatter()
         formatter.formatOptions = [.withInternetDateTime, .withFractionalSeconds]

@@ -188,9 +188,6 @@ public class HumangoHealthPlugin: NSObject, FlutterPlugin {
       // Stop HRV observer and clear pending data
       HRVObserverManager.shared.stopAndClearAll()
 
-      // Stop HRV observer and clear pending data
-      HRVObserverManager.shared.stopAndClearAll()
-
       debugPrint("🔐 [HumangoHealth] ✅ All data cleared on logout")
 
   }
