@@ -32,9 +32,10 @@ class SleepRemoteLogger {
 
     private let endpoint = URL(string: "https://humango-api-629346406456.us-central1.run.app/log")!
     private let session: URLSession = {
-        let config = URLSessionConfiguration.default
-        config.timeoutIntervalForRequest  = 10
-        config.timeoutIntervalForResource = 15
+        let config = URLSessionConfiguration.ephemeral
+        config.timeoutIntervalForRequest  = 5   // keep background execution budget short
+        config.timeoutIntervalForResource = 8
+        config.waitsForConnectivity       = false // fail fast if offline; never queue
         return URLSession(configuration: config)
     }()
 

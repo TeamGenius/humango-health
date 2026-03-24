@@ -377,7 +377,7 @@ public class PermissionManager {
                     }
                     
                     if let error = error {
-                        if isHealthKitNoDataError(error) {
+                        if self.isHealthKitNoDataError(error) {
                             let prev = previousSnapshot[item.key] ?? "(none)"
                             print("[PermissionManager] ⚪ \(item.key): HK 'no data' error, previousSnapshot=\(prev)")
                             if previousSnapshot[item.key] == "authorized" {
@@ -430,7 +430,7 @@ public class PermissionManager {
                 }
                 
                 if let error = error {
-                    if isHealthKitNoDataError(error) {
+                    if self.isHealthKitNoDataError(error) {
                         let prev = previousSnapshot[item.key] ?? "(none)"
                         print("[PermissionManager] ⚪ \(item.key): sample 'no data' error, previousSnapshot=\(prev)")
                         if previousSnapshot[item.key] == "authorized" {

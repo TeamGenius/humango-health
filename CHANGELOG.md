@@ -1,3 +1,55 @@
+## 0.0.12 — 2026-03-23
+
+### Improvements
+
+#### Sleep — New grouping-based `calculateSleepPayload` algorithm
+
+The background delivery pipeline now uses a grouping algorithm instead of calling `buildAggregatedPayload` directly.
+
+**Algorithm (`calculateSleepPayload(from:)` — `SleepDataManager.swift`):**
+1. **Sort** all fetched samples by `startDate`.
+2. **Group** consecutive samples where the gap between consecutive sample end→start is ≤ 2 hours. Groups whose total span (from first `startDate` to true max `endDate`) is < 3 hours are discarded as non-sleep noise.
+3. **Aggregate** all valid-group samples into the final payload via `buildAggregatedPayload`.
+
+The method is exposed on the Dart side as `SleepDataManager.calculateSleepPayload({DateTime? startDate, DateTime? endDate})`.
+
+**Changed in:** `ios/Classes/SleepData/SleepDataManager.swift`, `lib/src/managers/sleep_data_manager.dart`, `ios/Classes/HumangoHealthPlugin.swift`
+
+### Bug Fixes
+
+#### Sleep — Overlap predicate for HealthKit queries
+
+Previous `HKQueryAnchor`-predicate options used `.strictStartDate` and `.strictEndDate` respectively, which caused samples that *cross* the query-window boundary to be excluded. Both `fetchSleepData` and `fetchSleepSamples` now use `options: []` so overlapping sessions are correctly returned.
+
+**Changed in:** `ios/Classes/SleepData/SleepDataManager.swift`
+
+#### Sleep — Span end-anchor used `group.last.endDate` instead of true max
+
+Samples are sorted by `startDate`, so `group.last` has the latest start but not necessarily the latest end. The span filter and `queryEnd` computation now use `group.max(by: { $0.endDate < $1.endDate })!.endDate`.
+
+**Changed in:** `ios/Classes/SleepData/SleepDataManager.swift`
+
+#### Sleep — Date parsing replaced with `DateUtils.parseDate(from:)`
+
+All five inline `ISO8601DateFormatter().date(from:)` calls in `SleepDataManager.swift` have been replaced with `DateUtils.parseDate(from:)`. This fixes a silent 24-hour fallback that occurred when Flutter passed a local `DateTime.toIso8601String()` string without a timezone suffix (which the bare `ISO8601DateFormatter` cannot parse).
+
+**Changed in:** `ios/Classes/SleepData/SleepDataManager.swift`
+
+#### Sleep — Duration fields use ceiling rounding
+
+`buildAggregatedPayload` previously truncated fractional seconds using `Int(value)`. All duration fields now use `Int(value.rounded(.up))` so partial seconds are rounded up rather than floor-truncated.
+
+**Changed in:** `ios/Classes/SleepData/SleepDataManager.swift`
+
+### Example App
+
+- Sleep duration values throughout the sleep screen are now displayed as `Xh Ym` (e.g. `6h 27m`) instead of `6.3 hours` / `83 min`.
+- Added a **Calculate Payload** test card (teal) that calls `calculateSleepPayload` for a selected date range and shows the grouped result.
+
+**Changed in:** `example/lib/sleep_data_screen.dart`
+
+---
+
 ## 0.0.11 — 2026-03-19
 
 ### Breaking Changes

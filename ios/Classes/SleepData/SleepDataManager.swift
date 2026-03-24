@@ -51,10 +51,6 @@ public class SleepDataManager: NSObject, AppLifecycleObserver {
     // Background monitoring
     private var observerQuery: HKObserverQuery?
     private var isBackgroundMonitoring = false
-    // 15-min re-check timer: started when user is confirmed in bed on observer fire.
-    // When it fires, inBed is re-checked — if user woke up the payload is delivered;
-    // if still in bed the timer is not restarted and the next HK observer handles it.
-    private var inBedCheckTimer: Timer?
 
     private let deliveryManager = SleepBackgroundDeliveryManager.shared
 
@@ -163,6 +159,9 @@ public class SleepDataManager: NSObject, AppLifecycleObserver {
             
         case "getLocalSleepSessions":
             handleGetLocalSleepSessions(result: result)
+
+        case "calculateSleepPayload":
+            handleCalculateSleepPayload(call, result: result)
             
         case "enterForeground":
             // Keep for backward compatibility, but native lifecycle is preferred
@@ -187,10 +186,10 @@ public class SleepDataManager: NSObject, AppLifecycleObserver {
         
         if let args = call.arguments as? [String: Any] {
             if let startStr = args["startDate"] as? String {
-                startDate = ISO8601DateFormatter().date(from: startStr) ?? isoFormatter.date(from: startStr)
+                startDate = DateUtils.parseDate(from: startStr)
             }
             if let endStr = args["endDate"] as? String {
-                endDate = ISO8601DateFormatter().date(from: endStr) ?? isoFormatter.date(from: endStr)
+                endDate = DateUtils.parseDate(from: endStr)
             }
         }
         
@@ -218,7 +217,7 @@ public class SleepDataManager: NSObject, AppLifecycleObserver {
         
         if let args = call.arguments as? [String: Any],
            let startStr = args["startDate"] as? String {
-            if let parsed = ISO8601DateFormatter().date(from: startStr) ?? isoFormatter.date(from: startStr) {
+            if let parsed = DateUtils.parseDate(from: startStr) {
                 startDate = parsed
             }
         }
@@ -289,6 +288,55 @@ public class SleepDataManager: NSObject, AppLifecycleObserver {
         let sessions = deliveryManager.retrieveLocalSleepSessions()
         result(sessions)
     }
+
+    /// Exposes `calculateSleepPayload(from:)` over the Flutter method channel.
+    /// Accepts optional `startDate`/`endDate` ISO8601 strings; defaults to the
+    /// current 6 PM window when omitted.
+    private func handleCalculateSleepPayload(_ call: FlutterMethodCall, result: @escaping FlutterResult) {
+        var startDate: Date?
+        var endDate: Date?
+
+        if let args = call.arguments as? [String: Any] {
+            if let startStr = args["startDate"] as? String {
+                startDate = DateUtils.parseDate(from: startStr)
+            }
+            if let endStr = args["endDate"] as? String {
+                endDate = DateUtils.parseDate(from: endStr)
+            }
+        }
+
+        let (queryStart, queryEnd): (Date, Date)
+        if let s = startDate, let e = endDate {
+            (queryStart, queryEnd) = (s, e)
+        } else {
+            (queryStart, queryEnd) = sixPMWindow()
+        }
+
+        Task {
+            do {
+                let samples = try await fetchSleepSamples(from: queryStart, to: queryEnd)
+                if let payload = calculateSleepPayload(from: samples) {
+                    DispatchQueue.main.async { result(payload) }
+                } else {
+                    DispatchQueue.main.async {
+                        result(FlutterError(
+                            code: "NO_VALID_SLEEP",
+                            message: "No valid sleep groups found (all groups < 3h span)",
+                            details: nil
+                        ))
+                    }
+                }
+            } catch {
+                DispatchQueue.main.async {
+                    result(FlutterError(
+                        code: "FETCH_ERROR",
+                        message: error.localizedDescription,
+                        details: nil
+                    ))
+                }
+            }
+        }
+    }
     
     // MARK: - Fetch Sleep Data
     
@@ -317,10 +365,13 @@ public class SleepDataManager: NSObject, AppLifecycleObserver {
         let queryEndDate = endDate ?? Date()
         let queryStartDate = startDate ?? Calendar.current.date(byAdding: .hour, value: -24, to: queryEndDate)!
         
+        // Use [] (overlap) so any sample that overlaps the window is included.
+        // .strictStartDate would exclude sessions that started before the window
+        // (e.g. sleep beginning before midnight when querying from midnight).
         let predicate = HKQuery.predicateForSamples(
             withStart: queryStartDate,
             end: queryEndDate,
-            options: .strictStartDate
+            options: []
         )
         
         let sortDescriptor = NSSortDescriptor(
@@ -540,8 +591,6 @@ public class SleepDataManager: NSObject, AppLifecycleObserver {
         if let sleepType = HKObjectType.categoryType(forIdentifier: .sleepAnalysis) {
             healthStore.disableBackgroundDelivery(for: sleepType) { _, _ in }
         }
-        inBedCheckTimer?.invalidate()
-        inBedCheckTimer = nil
         isBackgroundMonitoring = false
         debugPrint("🛏️ [SleepDataManager] stopped background monitoring")
     }
@@ -549,70 +598,42 @@ public class SleepDataManager: NSObject, AppLifecycleObserver {
     // MARK: - Background Observer Logic
 
     /// Core logic executed on every HKObserverQuery fire.
-    /// Strictly follows the flow diagram:
-    ///  1. isUserCurrentlyInBed? (FIRST — before any HealthKit fetch)
-    ///     YES → fetch 6PM window → cache → start 15-min timer → timer re-checks inBed:
-    ///           timer-YES (still in bed) → wait for next HK observer (do nothing)
-    ///           timer-NO  (woke up)      → fetch fresh data → build payload → POST
-    ///     NO  → fetch 6PM window → build aggregated payload → POST
+    ///
+    /// Simplified pipeline (Issues 3 & 4):
+    ///   Every observer fire → compute 6PM window → fetch samples
+    ///   → calculateSleepPayload → store payload in UserDefaults.
+    /// No inBed check, no 15-min timer, no raw-sample cache.
+    /// Deduplication is the responsibility of the client app.
     private func handleBackgroundObserverFired() async {
         let pipelineStartTime = isoFormatter.string(from: Date())
 
-        // ── STEP 1: isUserCurrentlyInBed? — checked FIRST per flow diagram ─────
-        let inBedCheckTime = isoFormatter.string(from: Date())
-        let currentlyInBed = await isUserCurrentlyInBed()
-        let inBedResultTime = isoFormatter.string(from: Date())
-
-        debugPrint("🛏️ [SleepDataManager] [STEP 1] isUserCurrentlyInBed=\(currentlyInBed) (queried=\(inBedCheckTime), result=\(inBedResultTime))")
-        await SleepRemoteLogger.shared.log(
-            level: .info,
-            message: "[STEP 1] isUserCurrentlyInBed check complete",
-            context: [
-                "step":           "inbed_check",
-                "currentlyInBed": currentlyInBed,
-                "checkedAt":      inBedCheckTime,
-                "resultAt":       inBedResultTime,
-                "pipelineStart":  pipelineStartTime
-            ]
-        )
-
-        // ── STEP 2: Compute 6PM query window ──────────────────────────────────
+        // ── STEP 1: Compute 6PM query window ──────────────────────────────────
         let (queryStart, queryEnd) = sixPMWindow()
         let windowStartStr = isoFormatter.string(from: queryStart)
         let windowEndStr   = isoFormatter.string(from: queryEnd)
-        debugPrint("🛏️ [SleepDataManager] [STEP 2] 6PM window: \(windowStartStr) → \(windowEndStr)")
+        debugPrint("🛏️ [SleepDataManager] [STEP 1] 6PM window: \(windowStartStr) → \(windowEndStr)")
         await SleepRemoteLogger.shared.log(
             level: .info,
-            message: "[STEP 2] 6PM query window computed",
-            context: [
-                "step":        "window_computed",
-                "windowStart": windowStartStr,
-                "windowEnd":   windowEndStr
-            ]
+            message: "[STEP 1] 6PM query window computed",
+            context: ["step": "window_computed", "windowStart": windowStartStr, "windowEnd": windowEndStr]
         )
 
-        // ── STEP 3: Fetch sleep samples from HealthKit ────────────────────────
+        // ── STEP 2: Fetch sleep samples from HealthKit ────────────────────────
         let rawSamples: [HKCategorySample]
         do {
             rawSamples = try await fetchSleepSamples(from: queryStart, to: queryEnd)
         } catch {
-            debugPrint("🛏️ [SleepDataManager] [STEP 3] HealthKit fetch failed: \(error)")
+            debugPrint("🛏️ [SleepDataManager] [STEP 2] HealthKit fetch failed: \(error)")
             await SleepRemoteLogger.shared.log(
                 level: .error,
-                message: "[STEP 3] HealthKit fetchSleepSamples threw an error",
-                context: [
-                    "step":        "hk_fetch_failed",
-                    "error":       error.localizedDescription,
-                    "windowStart": windowStartStr,
-                    "windowEnd":   windowEndStr
-                ]
+                message: "[STEP 2] HealthKit fetchSleepSamples threw an error",
+                context: ["step": "hk_fetch_failed", "error": error.localizedDescription]
             )
             return
         }
 
-        debugPrint("🛏️ [SleepDataManager] [STEP 3] HealthKit returned \(rawSamples.count) samples")
+        debugPrint("🛏️ [SleepDataManager] [STEP 2] HealthKit returned \(rawSamples.count) samples")
 
-        // Summarise stage counts and unique sources for logging
         var stageCounts: [String: Int] = [:]
         var sourcesFound: Set<String> = []
         for s in rawSamples {
@@ -624,48 +645,22 @@ public class SleepDataManager: NSObject, AppLifecycleObserver {
         await SleepRemoteLogger.shared.log(
             level: rawSamples.isEmpty ? .warn : .info,
             message: rawSamples.isEmpty
-                ? "[STEP 3] No sleep samples found in 6PM window"
-                : "[STEP 3] HealthKit samples fetched successfully",
+                ? "[STEP 2] No sleep samples found in 6PM window"
+                : "[STEP 2] HealthKit samples fetched successfully",
             context: [
-                "step":        "hk_fetch_complete",
+                "step": "hk_fetch_complete",
                 "sampleCount": rawSamples.count,
                 "stageCounts": stageCounts,
-                "sources":     Array(sourcesFound).sorted(),
-                "windowStart": windowStartStr,
-                "windowEnd":   windowEndStr
+                "sources": Array(sourcesFound).sorted()
             ]
         )
 
         guard !rawSamples.isEmpty else {
-            debugPrint("🛏️ [SleepDataManager] [STEP 3] no samples in window — nothing to do")
+            debugPrint("🛏️ [SleepDataManager] [STEP 2] no samples in window — nothing to do")
             return
         }
 
-        // ── STEP 4 (YES branch): User is in bed — cache + start 15-min timer ──
-        if currentlyInBed {
-            let snapshot = buildRawSnapshot(samples: rawSamples, queryStart: queryStart, queryEnd: queryEnd)
-            storeSleepDataToUserDefaults(snapshot)
-
-            debugPrint("🛏️ [SleepDataManager] [STEP 4-YES] user IN BED → cached \(rawSamples.count) samples, starting 15-min re-check timer")
-            await SleepRemoteLogger.shared.log(
-                level: .info,
-                message: "[STEP 4-YES] User in bed — data cached, starting 15-min re-check timer",
-                context: [
-                    "step":        "cached_inbed_timer_starting",
-                    "cachedAt":    isoFormatter.string(from: Date()),
-                    "sampleCount": rawSamples.count,
-                    "sources":     Array(sourcesFound).sorted(),
-                    "stageCounts": stageCounts,
-                    "windowStart": windowStartStr,
-                    "windowEnd":   windowEndStr
-                ]
-            )
-
-            startInBedCheckTimer()
-            return
-        }
-
-        // ── STEP 4 (NO branch): User has woken up — build payload ─────────────
+        // ── STEP 3: Calculate payload and store ───────────────────────────────
         await deliverPayload(samples: rawSamples,
                              queryStart: queryStart,
                              queryEnd: queryEnd,
@@ -673,126 +668,6 @@ public class SleepDataManager: NSObject, AppLifecycleObserver {
                              stageCounts: stageCounts,
                              trigger: "observer",
                              pipelineStartTime: pipelineStartTime)
-    }
-
-    // MARK: - 15-min In-Bed Re-check Timer
-
-    /// Starts a one-shot 15-minute timer.
-    /// When it fires, `isUserCurrentlyInBed` is re-checked:
-    ///   - Still in bed → do nothing; wait for the next HKObserver fire
-    ///   - Woke up      → fetch fresh 6PM window data → build payload → POST
-    private func startInBedCheckTimer() {
-        // Cancel any previous timer before starting a new one
-        DispatchQueue.main.async { [weak self] in
-            guard let self = self else { return }
-            self.inBedCheckTimer?.invalidate()
-            self.inBedCheckTimer = Timer.scheduledTimer(
-                withTimeInterval: 15 * 60,
-                repeats: false
-            ) { [weak self] _ in
-                guard let self = self else { return }
-                debugPrint("🛏️ [SleepDataManager] [TIMER] 15-min inBed re-check timer fired at \(self.isoFormatter.string(from: Date()))")
-                Task { await self.handleInBedTimerFired() }
-            }
-        }
-        debugPrint("🛏️ [SleepDataManager] [TIMER] ⏱ 15-min inBed check timer started at \(isoFormatter.string(from: Date()))")
-    }
-
-    /// Called when the 15-min timer fires after the user was confirmed in bed.
-    private func handleInBedTimerFired() async {
-        let timerFireTime = isoFormatter.string(from: Date())
-        debugPrint("🛏️ [SleepDataManager] [TIMER] re-checking inBed after 15-min wait, now=\(timerFireTime)")
-        await SleepRemoteLogger.shared.log(
-            level: .info,
-            message: "[TIMER] 15-min re-check timer fired — querying isUserCurrentlyInBed",
-            context: ["step": "timer_fired", "timerFireTime": timerFireTime]
-        )
-
-        // Re-check inBed (diagram: second isUserCurrentlyInBed? decision)
-        let stillInBed = await isUserCurrentlyInBed()
-        let checkResultTime = isoFormatter.string(from: Date())
-
-        debugPrint("🛏️ [SleepDataManager] [TIMER] stillInBed=\(stillInBed) at \(checkResultTime)")
-        await SleepRemoteLogger.shared.log(
-            level: .info,
-            message: "[TIMER] isUserCurrentlyInBed re-check complete",
-            context: [
-                "step":      "timer_inbed_recheck",
-                "stillInBed": stillInBed,
-                "checkedAt":  checkResultTime
-            ]
-        )
-
-        if stillInBed {
-            // Diagram: YES → "Wait for next HealthKit Observer Trigger" — do nothing,
-            // the next HKObserver fire will restart the whole pipeline.
-            debugPrint("🛏️ [SleepDataManager] [TIMER] user STILL in bed → waiting for next HK observer fire (no action)")
-            await SleepRemoteLogger.shared.log(
-                level: .info,
-                message: "[TIMER] User still in bed after 15-min — waiting for next HKObserver trigger",
-                context: ["step": "timer_still_inbed", "checkedAt": checkResultTime]
-            )
-            return
-        }
-
-        // Diagram: NO → "Build Aggregated Payload (from cached data) → POST to Backend API"
-        debugPrint("🛏️ [SleepDataManager] [TIMER] user NOT in bed → fetching fresh 6PM window data for delivery")
-        await SleepRemoteLogger.shared.log(
-            level: .info,
-            message: "[TIMER] User woke up — fetching fresh 6PM window data to build payload",
-            context: ["step": "timer_woke_up", "detectedAt": checkResultTime]
-        )
-
-        let (queryStart, queryEnd) = sixPMWindow()
-        let windowStartStr = isoFormatter.string(from: queryStart)
-        let windowEndStr   = isoFormatter.string(from: queryEnd)
-
-        let rawSamples: [HKCategorySample]
-        do {
-            rawSamples = try await fetchSleepSamples(from: queryStart, to: queryEnd)
-        } catch {
-            debugPrint("🛏️ [SleepDataManager] [TIMER] HealthKit fetch failed after timer wake: \(error)")
-            await SleepRemoteLogger.shared.log(
-                level: .error,
-                message: "[TIMER] HealthKit fetch failed after timer-triggered wake",
-                context: ["step": "timer_fetch_failed", "error": error.localizedDescription]
-            )
-            return
-        }
-
-        var stageCounts: [String: Int] = [:]
-        var sourcesFound: Set<String> = []
-        for s in rawSamples {
-            let stage = sleepStageString(from: s.value)
-            stageCounts[stage, default: 0] += 1
-            sourcesFound.insert(s.sourceRevision.source.name)
-        }
-
-        debugPrint("🛏️ [SleepDataManager] [TIMER] fetched \(rawSamples.count) samples for timer-triggered delivery")
-        await SleepRemoteLogger.shared.log(
-            level: rawSamples.isEmpty ? .warn : .info,
-            message: rawSamples.isEmpty
-                ? "[TIMER] No samples found after timer-triggered wake detection"
-                : "[TIMER] Samples fetched — proceeding to build payload",
-            context: [
-                "step":        "timer_fetch_complete",
-                "sampleCount": rawSamples.count,
-                "stageCounts": stageCounts,
-                "sources":     Array(sourcesFound).sorted(),
-                "windowStart": windowStartStr,
-                "windowEnd":   windowEndStr
-            ]
-        )
-
-        guard !rawSamples.isEmpty else { return }
-
-        await deliverPayload(samples: rawSamples,
-                             queryStart: queryStart,
-                             queryEnd: queryEnd,
-                             sourcesFound: sourcesFound,
-                             stageCounts: stageCounts,
-                             trigger: "timer",
-                             pipelineStartTime: timerFireTime)
     }
 
     // MARK: - Shared Payload Delivery (used by both observer NO path and timer wake path)
@@ -811,14 +686,14 @@ public class SleepDataManager: NSObject, AppLifecycleObserver {
         let windowStartStr = isoFormatter.string(from: queryStart)
         let windowEndStr   = isoFormatter.string(from: queryEnd)
 
-        // Build flat aggregated payload
-        guard let payload = buildAggregatedPayload(
-            samples: samples, queryStart: queryStart, queryEnd: queryEnd
-        ) else {
-            debugPrint("🛏️ [SleepDataManager] [\(trigger.uppercased())] buildAggregatedPayload=nil (TOTAL_SLEEP=0 for all sources)")
+        // Build flat aggregated payload using the group-based session detection algorithm:
+        // sorts by startDate → groups by ≤2h gap → discards sessions <3h span →
+        // picks winning source (highest Core+Deep+REM) → ceiling-rounds all durations.
+        guard let payload = calculateSleepPayload(from: samples) else {
+            debugPrint("🛏️ [SleepDataManager] [\(trigger.uppercased())] calculateSleepPayload=nil (no valid sleep groups ≥ 3h)")
             await SleepRemoteLogger.shared.log(
                 level: .warn,
-                message: "[\(trigger.uppercased())] Could not build payload — TOTAL_SLEEP is 0 across all sources",
+                message: "[\(trigger.uppercased())] Could not build payload — no valid sleep groups (all < 3h span)",
                 context: [
                     "step":        "payload_build_failed",
                     "trigger":     trigger,
@@ -927,12 +802,16 @@ public class SleepDataManager: NSObject, AppLifecycleObserver {
         guard let sleepType = HKObjectType.categoryType(forIdentifier: .sleepAnalysis) else {
             throw NSError(domain: "SleepData", code: 2, userInfo: [NSLocalizedDescriptionKey: "Sleep analysis type unavailable"])
         }
-        let predicate = HKQuery.predicateForSamples(withStart: start, end: end, options: .strictEndDate)
+        // Use [] (overlap) — same rationale as fetchSleepData: sleep sessions can
+        // start before or end after the query boundary.
+        let predicate = HKQuery.predicateForSamples(withStart: start, end: end, options: [])
         let sort = NSSortDescriptor(key: HKSampleSortIdentifierStartDate, ascending: true)
         return try await withCheckedThrowingContinuation { cont in
             let q = HKSampleQuery(sampleType: sleepType, predicate: predicate, limit: HKObjectQueryNoLimit, sortDescriptors: [sort]) { _, results, error in
                 if let error = error { cont.resume(throwing: error); return }
-                cont.resume(returning: results as? [HKCategorySample] ?? [])
+                let samples = results as? [HKCategorySample] ?? []
+                debugPrint("🛏️ [SleepDataManager] fetchSleepSamples: \(samples.count) samples from \(self.isoFormatter.string(from: start)) to \(self.isoFormatter.string(from: end))")
+                cont.resume(returning: samples)
             }
             healthStore.execute(q)
         }
@@ -1008,18 +887,90 @@ public class SleepDataManager: NSObject, AppLifecycleObserver {
             "SOURCE":            winnerName,
             "SOURCE_BUNDLE":     winner.bundle,
             "TIMEZONE":          winner.timezone ?? TimeZone.current.identifier,
-            "TOTAL_SLEEP":       Int(totalSleep),
-            "SLEEP_IN_BED":      Int(winner.inBed),
-            "SLEEP_LIGHT":       Int(winner.core),
-            "SLEEP_DEEP":        Int(winner.deep),
-            "SLEEP_REM":         Int(winner.rem),
-            "SLEEP_UNSPECIFIED": Int(winner.unspecified),
-            "SLEEP_AWAKE":       Int(winner.awake),
+            "TOTAL_SLEEP":       Int(totalSleep.rounded(.up)),
+            "SLEEP_IN_BED":      Int(winner.inBed.rounded(.up)),
+            "SLEEP_LIGHT":       Int(winner.core.rounded(.up)),
+            "SLEEP_DEEP":        Int(winner.deep.rounded(.up)),
+            "SLEEP_REM":         Int(winner.rem.rounded(.up)),
+            "SLEEP_UNSPECIFIED": Int(winner.unspecified.rounded(.up)),
+            "SLEEP_AWAKE":       Int(winner.awake.rounded(.up)),
             "BED_TIME":          winner.minStart.map { isoFormatter.string(from: $0) } as Any,
             "WAKE_TIME":         winner.maxEnd.map   { isoFormatter.string(from: $0) } as Any,
             "START_DATE":        isoFormatter.string(from: queryStart),
             "END_DATE":          isoFormatter.string(from: queryEnd)
         ]
+    }
+
+    // MARK: - Sample-Based Sleep Calculation
+
+    /// Calculates a flat aggregated sleep payload directly from a list of raw HealthKit samples.
+    ///
+    /// Algorithm:
+    ///   Step 1 — Sort all samples by `startDate` ascending.
+    ///   Step 2 — Group consecutive samples where the gap between
+    ///             `sample[i].startDate` and `sample[i-1].endDate` is ≤ 2 hours.
+    ///             Any group whose span (first.startDate → max(endDate)) is < 3 hours
+    ///             is discarded as a nap or data artifact. `max(endDate)` is used
+    ///             instead of `last.endDate` because sorting is by startDate — the last
+    ///             sample by start may not have the latest end (e.g. a long inBed sample).
+    ///   Step 3 — Merge all valid groups and delegate to `buildAggregatedPayload` for
+    ///             source selection and stage-level duration totals.
+    ///
+    /// - Parameter samples: Raw `HKCategorySample` array from HealthKit (any order).
+    /// - Returns: Aggregated sleep payload, or `nil` if no valid sleep groups are found.
+    func calculateSleepPayload(from samples: [HKCategorySample]) -> [String: Any]? {
+        guard !samples.isEmpty else { return nil }
+
+        // ── Step 1: Sort by startDate ──────────────────────────────────────────
+        let sorted = samples.sorted { $0.startDate < $1.startDate }
+
+        // ── Step 2: Group consecutive samples (gap ≤ 2 hours) ─────────────────
+        let maxGap: TimeInterval     = 2 * 60 * 60   // 2 hours
+        let minGroupSpan: TimeInterval = 3 * 60 * 60 // 3 hours
+
+        var groups: [[HKCategorySample]] = []
+        var currentGroup: [HKCategorySample] = [sorted[0]]
+
+        for i in 1 ..< sorted.count {
+            let gap = sorted[i].startDate.timeIntervalSince(currentGroup.last!.endDate)
+            if gap <= maxGap {
+                // Within 2-hour tolerance — belongs to the same session group
+                currentGroup.append(sorted[i])
+            } else {
+                // Gap exceeds 2 hours — flush current group and start a new one
+                groups.append(currentGroup)
+                currentGroup = [sorted[i]]
+            }
+        }
+        groups.append(currentGroup) // flush final group
+
+        // Discard groups whose total span (first.startDate → maxEndDate) < 3 hours.
+        // Use max(endDate) across the group — NOT group.last — because sorting is by
+        // startDate, so group.last has the latest start but NOT necessarily the latest end.
+        // (e.g. an inBed sample starting early but ending after all stage samples)
+        let validGroups = groups.filter { group -> Bool in
+            guard let first = group.first else { return false }
+            let maxEnd = group.max(by: { $0.endDate < $1.endDate })!.endDate
+            return maxEnd.timeIntervalSince(first.startDate) >= minGroupSpan
+        }
+
+        guard !validGroups.isEmpty else {
+            debugPrint("🛏️ [SleepDataManager] calculateSleepPayload: no valid sleep groups (all < 3h span)")
+            return nil
+        }
+
+        let totalGroups = groups.count
+        let validSamples = validGroups.flatMap { $0 }
+        debugPrint("🛏️ [SleepDataManager] calculateSleepPayload: \(validGroups.count)/\(totalGroups) group(s) valid, \(validSamples.count) samples retained")
+
+        // ── Step 3: Merge valid groups → build aggregated payload ──────────────
+        // queryStart: earliest startDate (validSamples is sorted by startDate, so .first is correct)
+        // queryEnd:   latest endDate across ALL valid samples — again must use max(endDate),
+        //             not .last!.endDate, for the same reason as the span filter above.
+        let queryStart = validSamples.first!.startDate
+        let queryEnd   = validSamples.max(by: { $0.endDate < $1.endDate })!.endDate
+
+        return buildAggregatedPayload(samples: validSamples, queryStart: queryStart, queryEnd: queryEnd)
     }
 
     // MARK: - Raw snapshot (for local cache)
@@ -1069,31 +1020,6 @@ public class SleepDataManager: NSObject, AppLifecycleObserver {
         debugPrint("🛏️  START_DATE   : \(payload["START_DATE"] ?? "")")
         debugPrint("🛏️  END_DATE     : \(payload["END_DATE"] ?? "")")
         debugPrint("🛏️ ─────────────────────────────────────────────────")
-    }
-    
-    /// Checks whether HealthKit has an active inBed sample that spans the current moment.
-    /// Returns true  → user is currently in bed (session still in progress).
-    /// Returns false → no current inBed coverage → proceed with payload delivery.
-    private func isUserCurrentlyInBed() async -> Bool {
-        guard let sleepType = HKObjectType.categoryType(forIdentifier: .sleepAnalysis) else { return false }
-        let now = Date()
-        let overlapPredicate = HKQuery.predicateForSamples(withStart: now, end: now, options: [])
-        let inBedPredicate = HKQuery.predicateForCategorySamples(
-            with: .equalTo,
-            value: HKCategoryValueSleepAnalysis.inBed.rawValue
-        )
-        let combined = NSCompoundPredicate(andPredicateWithSubpredicates: [overlapPredicate, inBedPredicate])
-        return await withCheckedContinuation { cont in
-            let q = HKSampleQuery(sampleType: sleepType, predicate: combined, limit: 1, sortDescriptors: nil) { _, results, error in
-                if let error = error {
-                    debugPrint("🛏️ [SleepDataManager] isUserCurrentlyInBed error: \(error)")
-                    cont.resume(returning: false)
-                    return
-                }
-                cont.resume(returning: !(results ?? []).isEmpty)
-            }
-            self.healthStore.execute(q)
-        }
     }
     
     // MARK: - UserDefaults Storage

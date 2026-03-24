@@ -11,11 +11,11 @@ import Foundation
 // MARK: - UserDefaults Keys
 
 private struct SleepDeliveryKeys {
-    static let armed = "HumangoSleepDeliveryArmed"
+    static let armed             = "HumangoSleepDeliveryArmed"
     static let pendingLocalSleep = "com.humango.health.sleepPendingLocal"
     /// Legacy from removed API mode
-    static let legacyMode = "com.humango.health.sleepDeliveryMode"
-    static let legacyApiURL = "com.humango.health.sleepDeliveryURL"
+    static let legacyMode    = "com.humango.health.sleepDeliveryMode"
+    static let legacyApiURL  = "com.humango.health.sleepDeliveryURL"
     static let legacyHeaders = "com.humango.health.sleepDeliveryHeaders"
 }
 
@@ -74,6 +74,8 @@ final class SleepBackgroundDeliveryManager {
         var existing = UserDefaults.standard.stringArray(forKey: SleepDeliveryKeys.pendingLocalSleep) ?? []
         existing.append(sleepJSON)
         UserDefaults.standard.set(existing, forKey: SleepDeliveryKeys.pendingLocalSleep)
+        // synchronize() ensures the write is flushed to disk before the process
+        // is killed by iOS after HKObserverQuery's completion() handler returns.
         UserDefaults.standard.synchronize()
         debugPrint("💾 [SleepDelivery] pending sessions=\(existing.count)")
     }
@@ -83,7 +85,7 @@ final class SleepBackgroundDeliveryManager {
         UserDefaults.standard.removeObject(forKey: SleepDeliveryKeys.pendingLocalSleep)
         UserDefaults.standard.synchronize()
         if !sessions.isEmpty {
-            debugPrint("🛏️ [SleepDelivery] retrieved \(sessions.count) session(s)")
+            debugPrint("🛏️ [SleepDelivery] retrieved \(sessions.count) pending session(s)")
         }
         return sessions
     }

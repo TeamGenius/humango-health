@@ -17,6 +17,10 @@ public class HumangoHealthPlugin: NSObject, FlutterPlugin {
     
     // Phase 5: Sleep Data Reading
     let sleepDataMethodChannel = FlutterMethodChannel(name: "com.humango.health/sleep", binaryMessenger: registrar.messenger())
+    // Note: no EventChannel for sleep payload updates — Flutter is suspended during
+    // background HKObserverQuery delivery. The host-app Runner (HealthQueueObserver)
+    // watches UserDefaults via KVO and handles background payloads natively.
+    // Flutter drains getLocalSleepSessions() on AppLifecycleState.resumed instead.
 
     // Phase 6: Health Metrics (HRV, Resting HR, Body Fat, Weight, Height)
     let healthMetricsMethodChannel = FlutterMethodChannel(name: "com.humango.health/metrics", binaryMessenger: registrar.messenger())
@@ -59,7 +63,7 @@ public class HumangoHealthPlugin: NSObject, FlutterPlugin {
           workoutReadChannel.handle(call, result: result)
       } else if ["scheduleWorkoutsFromFlutter", "clearAppleScheduledWorkouts", "requestAuthorizationForWorkoutPush", "getScheduledWorkouts", "computeWorkoutJsonHash"].contains(call.method) {
           WorkoutPlanManager.shared.handle(call, result: result)
-      } else if ["getSleepData", "startSleepMonitoring", "stopSleepMonitoring", "fetchStoredSleepData", "clearStoredSleepData", "enterSleepForeground", "enterSleepBackground", "configureSleepBackgroundDelivery", "getLocalSleepSessions"].contains(call.method) {
+      } else if ["getSleepData", "startSleepMonitoring", "stopSleepMonitoring", "fetchStoredSleepData", "clearStoredSleepData", "enterSleepForeground", "enterSleepBackground", "configureSleepBackgroundDelivery", "getLocalSleepSessions", "calculateSleepPayload"].contains(call.method) {
           // Sleep data channel - remap foreground/background methods to avoid conflict with workout methods
           var mappedCall = call
           if call.method == "enterSleepForeground" {
@@ -79,6 +83,8 @@ public class HumangoHealthPlugin: NSObject, FlutterPlugin {
           handleHRVMonitoring(call, result: result)
       } else if call.method == "setUserLoginState" {
           handleSetUserLoginState(call, result: result)
+      } else if call.method == "saveCredentials" {
+          handleSaveCredentials(call, result: result)
       } else {
           result(FlutterMethodNotImplemented)
       }
@@ -105,6 +111,26 @@ public class HumangoHealthPlugin: NSObject, FlutterPlugin {
   }
 
   // MARK: - User Session
+
+  /// Writes athleteId + accessToken to UserDefaults so the native
+  /// SleepUploadService (Runner layer) can read them during background execution.
+  private func handleSaveCredentials(_ call: FlutterMethodCall, result: @escaping FlutterResult) {
+      guard let args = call.arguments as? [String: Any] else {
+          result(FlutterError(code: "INVALID_ARGS", message: "Expected [String:Any] args", details: nil))
+          return
+      }
+      let defaults = UserDefaults.standard
+      if let athleteId = args["athleteId"] as? String, !athleteId.isEmpty {
+          defaults.set(athleteId, forKey: "flutter.athlete_id")
+      }
+      if let token = args["accessToken"] as? String {
+          // Allow empty string to clear the token.
+          defaults.set(token.isEmpty ? nil : token, forKey: "flutter.access_token")
+      }
+      defaults.synchronize()
+      debugPrint("🔐 [HumangoHealth] Credentials saved to UserDefaults")
+      result(nil)
+  }
 
   private func handleSetUserLoginState(_ call: FlutterMethodCall, result: @escaping FlutterResult) {
       guard let args = call.arguments as? [String: Any],

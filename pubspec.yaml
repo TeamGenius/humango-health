@@ -1,6 +1,6 @@
 name: humango_health
 description: "Flutter plugin for integrating iOS HealthKit and WorkoutKit. Capture health metrics (HRV, resting HR, body composition), workouts, and sleep; push workouts to Apple Watch; workout stream/pending and local sleep session queue (no plugin HTTP for session payloads)."
-version: 0.0.11
+version: 0.0.12
 homepage:
 
 environment:

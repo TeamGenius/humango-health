@@ -40,6 +40,13 @@ class SleepDataManager {
     'com.humango.health/sleep',
   );
 
+  // Note: there is intentionally no EventChannel / stream for sleep payload
+  // updates. Background HKObserverQuery delivery fires while Flutter is
+  // suspended, so an EventChannel event would be lost. Instead, the host-app
+  // Runner (HealthQueueObserver) watches UserDefaults via KVO and handles
+  // background payloads natively. Flutter drains getLocalSleepSessions() on
+  // AppLifecycleState.resumed (see SleepDataScreen).
+
   /// Fetches sleep data from HealthKit for the specified time range.
   ///
   /// **Parameters:**
@@ -231,6 +238,10 @@ class SleepDataManager {
 
   /// Retrieves and clears locally stored sleep sessions.
   ///
+  /// Returns and clears locally-stored pending sessions
+  /// (`com.humango.health.sleepPendingLocal`) — sessions that have NOT yet been
+  /// uploaded to the backend by the native layer.
+  ///
   /// When in `localStorage` mode and the app was in background,
   /// finalized sleep sessions are stored locally. Call this method
   /// after the app becomes active to retrieve them.
@@ -248,6 +259,41 @@ class SleepDataManager {
       throw SleepDataException(
         code: e.code,
         message: e.message ?? 'Failed to get local sleep sessions',
+        details: e.details,
+      );
+    }
+  }
+
+  /// Calculates a flat aggregated sleep payload from HealthKit samples in the
+  /// specified time window, using the group-based session detection algorithm:
+  ///
+  ///   1. Sort samples by `startDate`
+  ///   2. Group consecutive samples with gap ≤ 2 h; discard groups whose
+  ///      wall-clock span is < 3 h (naps / noise)
+  ///   3. Aggregate surviving groups → flat payload with ceiling-rounded seconds
+  ///
+  /// Defaults to the current 6 PM → now window when no dates are supplied.
+  ///
+  /// Throws [SleepDataException] with code `NO_VALID_SLEEP` when no qualifying
+  /// groups are found, or `FETCH_ERROR` on a HealthKit failure.
+  Future<Map<String, dynamic>> calculateSleepPayload({
+    DateTime? startDate,
+    DateTime? endDate,
+  }) async {
+    final args = <String, String>{};
+    if (startDate != null) args['startDate'] = startDate.toIso8601String();
+    if (endDate != null) args['endDate'] = endDate.toIso8601String();
+
+    try {
+      final result = await _channel.invokeMethod<Map<dynamic, dynamic>>(
+        'calculateSleepPayload',
+        args.isEmpty ? null : args,
+      );
+      return Map<String, dynamic>.from(result ?? {});
+    } on PlatformException catch (e) {
+      throw SleepDataException(
+        code: e.code,
+        message: e.message ?? 'Failed to calculate sleep payload',
         details: e.details,
       );
     }

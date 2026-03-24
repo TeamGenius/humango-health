@@ -2,7 +2,7 @@
 
 A comprehensive Flutter plugin for integrating iOS HealthKit and WorkoutKit functionalities natively into the Humango platform.
 
-> **Version 0.0.10** — See [CHANGELOG](CHANGELOG.md) for what's new.
+> **Version 0.0.12** — See [CHANGELOG](CHANGELOG.md) for what's new.
 
 ## Table of Contents
 
@@ -31,7 +31,7 @@ A comprehensive Flutter plugin for integrating iOS HealthKit and WorkoutKit func
 | **Permission Handling** | Request, verify, and continuously monitor HealthKit permissions |
 | **Workout Scheduling** | Push workouts to Apple Watch via WorkoutKit with native deduplication |
 | **Workout Reading** | Real-time workout monitoring with foreground/background modes |
-| **Sleep Data** | Fetch and monitor sleep analysis with foreground (Descriptor) + background (Observer) monitoring; inBed-check pipeline with 15-min re-check timer; flat aggregated payload queued locally for your app to upload |
+| **Sleep Data** | Fetch and monitor sleep analysis with foreground (Descriptor) + background (Observer) monitoring; grouping-based `calculateSleepPayload` algorithm (gap ≤ 2 h, span ≥ 3 h) in the background pipeline; inBed-check pipeline with 15-min re-check timer; flat aggregated payload queued locally for your app to upload |
 | **Health Metrics (HRV)** | One-shot fetch plus automatic HRV updates in foreground, background, and when app is suspended (stream + pending retrieval) |
 | **Background Delivery** | Workouts: stream + UserDefaults pending (no plugin HTTP). Sleep: UserDefaults pending session JSON (no plugin HTTP for session payloads). |
 | **Native Lifecycle Management** | Centralized iOS app lifecycle detection for automatic mode switching |
@@ -1223,8 +1223,9 @@ The plugin provides comprehensive access to Apple HealthKit's sleep analysis dat
 
 - **One-shot fetch**: Query sleep data for a configurable date range
 - **Foreground monitoring**: `HKAnchoredObjectQueryDescriptor` accumulates samples into session state while the app is active
-- **Background monitoring**: `HKObserverQuery` detects changes and accumulates samples into session state when the app is suspended
-- **Session-aware delivery**: When the session detector determines sleep has ended (multi-factor scoring or freeze-window expiry), the complete session JSON is appended to the local pending queue for your app to retrieve and upload
+- **Background monitoring**: `HKObserverQuery` detects changes; raw samples are processed by `calculateSleepPayload` and the resulting payload is stored in the local pending queue
+- **Grouping algorithm**: Samples are sorted, grouped by gap (≤ 2 h), short groups (span < 3 h) discarded, and remaining groups aggregated — filters out wrist-worn noise and fragmented readings
+- **Session-aware delivery**: Once the inBed-check pipeline confirms sleep has ended, the finalized payload JSON is appended to the local pending queue for your app to retrieve and upload
 
 ### Sleep Stages (iOS 16+)
 
@@ -1249,19 +1250,27 @@ void fetchSleepData() async {
     final response = await sleepManager.getSleepData();
     
     if (response.hasSleepData) {
+      // Helper: format minutes as "Xh Ym"
+      String fmtMin(double m) {
+        final total = (m * 60).round();
+        final h = total ~/ 3600; final min = (total % 3600) ~/ 60;
+        if (h > 0 && min > 0) return '${h}h ${min}m';
+        return h > 0 ? '${h}h' : '${min}m';
+      }
+
       print('🛏️ Sleep Summary:');
-      print('   Total sleep: ${response.totalSleepHours.toStringAsFixed(1)} hours');
+      print('   Total sleep: ${fmtMin(response.totalSleepMinutes)}');
       print('   Samples: ${response.sampleCount}');
       
       // Stage breakdown
-      print('   Deep sleep: ${response.stageTotals.asleepDeepMinutes.toStringAsFixed(0)} min');
-      print('   REM sleep: ${response.stageTotals.asleepREMMinutes.toStringAsFixed(0)} min');
-      print('   Core sleep: ${response.stageTotals.asleepCoreMinutes.toStringAsFixed(0)} min');
-      print('   Awake: ${response.stageTotals.awakeMinutes.toStringAsFixed(0)} min');
+      print('   Deep sleep: ${fmtMin(response.stageTotals.asleepDeepMinutes)}');
+      print('   REM sleep: ${fmtMin(response.stageTotals.asleepREMMinutes)}');
+      print('   Core sleep: ${fmtMin(response.stageTotals.asleepCoreMinutes)}');
+      print('   Awake: ${fmtMin(response.stageTotals.awakeMinutes)}');
       
       // Individual samples with raw JSON
       for (final sample in response.samples) {
-        print('   ${sample.sleepStage}: ${sample.durationMinutes.toStringAsFixed(0)} min');
+        print('   ${sample.sleepStage}: ${fmtMin(sample.durationMinutes)}');
         print('      Source: ${sample.sourceName}');
         print('      Device: ${sample.device?.name}');
         print('      Raw JSON: ${sample.rawJson}');
