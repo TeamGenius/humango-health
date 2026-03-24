@@ -2,6 +2,14 @@
 
 ### Bug Fixes
 
+#### Workouts — `removeAllScheduledWorkouts` and `removeScheduledWorkouts` were silently no-ops
+
+`removeAllScheduledWorkouts` and `removeScheduledWorkouts` were fully implemented in `WorkoutPlanManager.swift` but never registered in the plugin's method-channel routing table in `HumangoHealthPlugin.swift`. Every call silently fell through to `FlutterMethodNotImplemented`, and the Dart layer swallowed the error by returning a default empty map, making the bug invisible at call sites.
+
+Both methods have been added to the routing allowlist. No behaviour change — only the routing fix was required.
+
+**Changed in:** `ios/Classes/HumangoHealthPlugin.swift`
+
 #### Sleep — Stage durations now match Apple Health displayed values
 
 `buildAggregatedPayload` and `fetchSleepData` previously summed raw `Double` seconds, producing totals that could differ from Apple Health by 1–2 minutes due to floating-point accumulation and tie-rounding errors.

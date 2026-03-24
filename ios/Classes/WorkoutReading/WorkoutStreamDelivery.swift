@@ -76,7 +76,7 @@ final class WorkoutStreamDelivery {
     }
 
     private func storePending(_ workoutJSON: String) async {
-        var existing = UserDefaults.standard.stringArray(forKey: Self.pendingKey) ?? []
+        var existing: [String] = UserDefaults.standard.stringArray(forKey: Self.pendingKey) ?? []
         existing.append(workoutJSON)
         UserDefaults.standard.set(existing, forKey: Self.pendingKey)
         UserDefaults.standard.synchronize()

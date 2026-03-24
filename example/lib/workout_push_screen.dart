@@ -43,6 +43,12 @@ class _WorkoutPushScreenState extends State<WorkoutPushScreen> {
   String? _errorMessage;
   String? _activeScenarioLabel;
 
+  // ── Manage scheduled workouts state ──────────────────────────────────────
+  List<ScheduledWorkoutInfo> _scheduledWorkouts = [];
+  bool _isLoadingScheduled = false;
+  String? _manageMessage;
+  final Set<String> _removingIds = {};
+
   @override
   void dispose() {
     _jsonController.dispose();
@@ -1035,6 +1041,205 @@ class _WorkoutPushScreenState extends State<WorkoutPushScreen> {
     }
   }
 
+  // ── Manage Scheduled Workouts ─────────────────────────────────────────────
+
+  Future<void> _loadScheduledWorkouts() async {
+    setState(() {
+      _isLoadingScheduled = true;
+      _manageMessage = null;
+    });
+    try {
+      final list = await _pushManager.getScheduledWorkouts();
+      setState(() {
+        _scheduledWorkouts = list;
+        _manageMessage = list.isEmpty
+            ? 'No workouts currently scheduled on Apple Watch.'
+            : null;
+      });
+    } catch (e) {
+      setState(() => _manageMessage = 'Load failed: $e');
+    } finally {
+      setState(() => _isLoadingScheduled = false);
+    }
+  }
+
+  Future<void> _removeAllWorkouts() async {
+    setState(() {
+      _isLoadingScheduled = true;
+      _manageMessage = null;
+    });
+    try {
+      final response = await _pushManager.removeAllScheduledWorkouts();
+      final removed = response['removedFromWatch'] as int? ?? 0;
+      final local = response['localRecordsCleared'] as int? ?? 0;
+      final error = response['error'] as String?;
+      setState(() {
+        _scheduledWorkouts = [];
+        _manageMessage = error != null
+            ? '❌ Remove all failed: $error'
+            : '✅ Removed $removed from Apple Watch, $local local records cleared.';
+      });
+    } catch (e) {
+      setState(() => _manageMessage = '❌ Remove all failed: $e');
+    } finally {
+      setState(() => _isLoadingScheduled = false);
+    }
+  }
+
+  Future<void> _removeWorkoutById(String workoutPlanId) async {
+    setState(() => _removingIds.add(workoutPlanId));
+    try {
+      final results = await _pushManager.removeScheduledWorkouts([
+        workoutPlanId,
+      ]);
+      if (results.isEmpty) {
+        setState(() => _manageMessage = '❌ No response for $workoutPlanId');
+        return;
+      }
+      final r = results.first;
+      switch (r.status) {
+        case WorkoutRemovalStatus.success:
+          setState(() {
+            _scheduledWorkouts.removeWhere((w) => w.id == workoutPlanId);
+            _manageMessage =
+                '✅ Removed ${r.scheduleId ?? workoutPlanId} from Apple Watch and local storage.';
+          });
+          break;
+        case WorkoutRemovalStatus.partial:
+          setState(() {
+            _scheduledWorkouts.removeWhere((w) => w.id == workoutPlanId);
+            _manageMessage = '⚠️ Partial: ${r.message}';
+          });
+          break;
+        case WorkoutRemovalStatus.fail:
+          setState(
+            () => _manageMessage =
+                '❌ Not found: ${r.workoutPlanId}\n${r.message}',
+          );
+          break;
+      }
+    } catch (e) {
+      setState(() => _manageMessage = '❌ Remove failed: $e');
+    } finally {
+      setState(() => _removingIds.remove(workoutPlanId));
+    }
+  }
+
+  Widget _buildManageSection() {
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      children: [
+        const Text(
+          'Manage Scheduled Workouts',
+          style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold),
+        ),
+        const SizedBox(height: 4),
+        const Text(
+          'Lists workouts currently scheduled on Apple Watch. '
+          'Remove individually or all at once.',
+          style: TextStyle(fontSize: 12, color: Colors.grey),
+        ),
+        const SizedBox(height: 10),
+        Row(
+          children: [
+            Expanded(
+              child: OutlinedButton.icon(
+                onPressed: _isLoadingScheduled ? null : _loadScheduledWorkouts,
+                icon: _isLoadingScheduled
+                    ? const SizedBox(
+                        width: 16,
+                        height: 16,
+                        child: CircularProgressIndicator(strokeWidth: 2),
+                      )
+                    : const Icon(Icons.refresh, size: 18),
+                label: const Text('Refresh List'),
+              ),
+            ),
+            const SizedBox(width: 8),
+            Expanded(
+              child: OutlinedButton.icon(
+                onPressed: _isLoadingScheduled || _scheduledWorkouts.isEmpty
+                    ? null
+                    : _removeAllWorkouts,
+                icon: const Icon(Icons.delete_sweep, size: 18),
+                label: const Text('Remove All'),
+                style: OutlinedButton.styleFrom(
+                  foregroundColor: Colors.red,
+                  side: const BorderSide(color: Colors.red),
+                ),
+              ),
+            ),
+          ],
+        ),
+        if (_manageMessage != null) ...[
+          const SizedBox(height: 8),
+          Container(
+            padding: const EdgeInsets.all(10),
+            decoration: BoxDecoration(
+              color: Colors.grey.shade100,
+              borderRadius: BorderRadius.circular(6),
+              border: Border.all(color: Colors.grey.shade300),
+            ),
+            child: Text(_manageMessage!, style: const TextStyle(fontSize: 12)),
+          ),
+        ],
+        if (_scheduledWorkouts.isNotEmpty) ...[
+          const SizedBox(height: 8),
+          ..._scheduledWorkouts.map((w) {
+            final removing = _removingIds.contains(w.id);
+            return Card(
+              margin: const EdgeInsets.only(bottom: 6),
+              child: ListTile(
+                dense: true,
+                title: Text(
+                  w.name ?? w.activityType ?? 'Workout',
+                  style: const TextStyle(
+                    fontSize: 13,
+                    fontWeight: FontWeight.w600,
+                  ),
+                ),
+                subtitle: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    if (w.scheduleId != null)
+                      Text(
+                        'schedule_id: ${w.scheduleId}',
+                        style: const TextStyle(fontSize: 11),
+                      ),
+                    Text(
+                      'planId: ${w.id}',
+                      style: const TextStyle(fontSize: 10, color: Colors.grey),
+                    ),
+                    if (w.scheduledDate != null)
+                      Text(
+                        'date: ${w.scheduledDate!.toLocal().toString().substring(0, 16)}',
+                        style: const TextStyle(fontSize: 11),
+                      ),
+                  ],
+                ),
+                trailing: removing
+                    ? const SizedBox(
+                        width: 24,
+                        height: 24,
+                        child: CircularProgressIndicator(strokeWidth: 2),
+                      )
+                    : IconButton(
+                        icon: const Icon(
+                          Icons.delete,
+                          color: Colors.red,
+                          size: 20,
+                        ),
+                        tooltip: 'Remove this workout',
+                        onPressed: () => _removeWorkoutById(w.id),
+                      ),
+              ),
+            );
+          }),
+        ],
+      ],
+    );
+  }
+
   // ── UI helpers ────────────────────────────────────────────────────────────
 
   Widget _buildScenarioButton(_Scenario s) {
@@ -1343,6 +1548,13 @@ class _WorkoutPushScreenState extends State<WorkoutPushScreen> {
                 padding: const EdgeInsets.symmetric(vertical: 14),
               ),
             ),
+
+            const SizedBox(height: 24),
+            const Divider(),
+
+            // ── Section: Manage Scheduled Workouts ────────────────────────
+            const SizedBox(height: 8),
+            _buildManageSection(),
 
             const SizedBox(height: 24),
             const Divider(),
