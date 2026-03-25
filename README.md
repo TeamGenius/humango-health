@@ -2,7 +2,7 @@
 
 A comprehensive Flutter plugin for integrating iOS HealthKit and WorkoutKit functionalities natively into the Humango platform.
 
-> **Version 0.0.15** — See [CHANGELOG](CHANGELOG.md) for what's new.
+> **Version 0.0.17** — See [CHANGELOG](CHANGELOG.md) for what's new.
 
 ## Table of Contents
 
@@ -164,7 +164,7 @@ Calling `setUserLoggedIn(false)` immediately and synchronously clears all of the
 | Data | What Is Cleared |
 |------|-----------------|
 | **Session gate** | `UserDefaults` `isLoggedIn` flag set to `false` |
-| **Sleep in-bed timer** | Cancels any pending 15-min re-check timer (`SleepDataManager.inBedCheckTimer`) |
+| **Sleep dedup state** | Clears `lastDeliveredSessionId` and `lastDeliveredWakeTime` so the next observer fire re-delivers if new data arrives |
 | **Scheduled workouts** | All workouts in `ScheduledWorkoutStore` (Apple Watch scheduled workouts cache) |
 | **Active monitors** | All running `HKObserverQuery` and `HKAnchoredObjectQueryDescriptor` tasks stopped |
 
@@ -226,7 +226,7 @@ public protocol HumangoHealthDataDelegate: AnyObject {
 | Callback | When called | `json` payload |
 |----------|------------|----------------|
 | `onWorkoutReady(json:deviceId:)` | A completed workout is detected (foreground or background) | Full workout JSON (same shape as `readWorkouts()`) |
-| `onSleepSessionReady(json:sessionId:)` | A sleep session is finalized by the inBed-check pipeline | Flat aggregated sleep payload JSON |
+| `onSleepSessionReady(json:sessionId:)` | A sleep session is ready (HealthKit observer fired, 6PM window fetched, payload computed) | Flat aggregated sleep payload JSON |
 
 ### Wiring in AppDelegate.swift
 
@@ -1138,18 +1138,6 @@ The plugin uses a centralized `AppLifecycleManager` on the iOS side to automatic
 3. **More Accurate**: Native iOS lifecycle detection is more reliable than Flutter callbacks
 4. **Centralized Logic**: All services share the same lifecycle state
 
-### Manual Override (Optional)
-
-While lifecycle is handled automatically, you can still manually trigger mode switches if needed:
-
-```dart
-// Optional: Force foreground mode
-await sleepManager.enterForeground();
-
-// Optional: Force background mode
-await sleepManager.enterBackground();
-```
-
 ---
 
 ## Sleep Data Reading & Monitoring
@@ -1160,7 +1148,7 @@ The plugin provides comprehensive access to Apple HealthKit's sleep analysis dat
 - **Foreground monitoring**: `HKAnchoredObjectQueryDescriptor` accumulates samples into session state while the app is active
 - **Background monitoring**: `HKObserverQuery` detects changes; raw samples are processed by `calculateSleepPayload` and the finalized session is delivered via delegate
 - **Grouping algorithm**: Samples are sorted, grouped by gap (≤ 2 h), short groups (span < 3 h) discarded, and remaining groups aggregated — filters out wrist-worn noise and fragmented readings
-- **Session-aware delivery**: Once the inBed-check pipeline confirms sleep has ended, the finalized payload JSON is passed to `HumangoHealthDataDelegate.onSleepSessionReady(json:sessionId:)` in your iOS Runner
+- **Session-aware delivery**: When the HealthKit observer fires, the 6PM window is fetched, grouped, and if valid the finalized payload JSON is passed to `HumangoHealthDataDelegate.onSleepSessionReady(json:sessionId:)` in your iOS Runner; a deduplication guard prevents re-delivery if the session is unchanged
 
 ### Sleep Stages (iOS 16+)
 

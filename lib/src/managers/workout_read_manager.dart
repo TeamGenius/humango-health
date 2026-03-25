@@ -56,16 +56,6 @@ class WorkoutReadManager {
     await _methodChannel.invokeMethod('setImportPreferences', args);
   }
 
-  /// Manually trigger foreground mode (usually handled by app lifecycle observer)
-  Future<void> enterForegroundMode() async {
-    await _methodChannel.invokeMethod('enterForeground');
-  }
-
-  /// Manually trigger background mode (usually handled by app lifecycle observer)
-  Future<void> enterBackgroundMode() async {
-    await _methodChannel.invokeMethod('enterBackground');
-  }
-
   /// Fetches all workouts in the given date range directly from HealthKit,
   /// without applying the user's import preferences. Every matching workout type
   /// is returned.

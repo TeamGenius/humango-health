@@ -1,3 +1,35 @@
+## 0.0.17 — 2026-03-25
+
+### Breaking Changes
+
+#### Workout Reading — `enterForegroundMode()` / `enterBackgroundMode()` removed from Dart API
+
+The `WorkoutReadManager.enterForegroundMode()` and `WorkoutReadManager.enterBackgroundMode()` Dart methods have been removed. The corresponding `"enterForeground"` / `"enterBackground"` method channel cases have also been removed from `WorkoutServiceChannel.swift` and the plugin's method channel routing in `HumangoHealthPlugin.swift`.
+
+Foreground/background switching is now handled **exclusively** by `AppLifecycleManager`. Both `WorkoutService` and `SleepDataManager` conformant to `AppLifecycleObserver` and register themselves in `init()` — `AppLifecycleManager` drives all transitions automatically via native `UIApplication` notifications. There is no need for Dart to participate.
+
+**Removed from Dart:**
+- `WorkoutReadManager.enterForegroundMode()` — removed
+- `WorkoutReadManager.enterBackgroundMode()` — removed
+
+**Removed from iOS:**
+- `WorkoutServiceChannel`: `"enterForeground"` / `"enterBackground"` switch cases removed; `"enterForeground"` / `"enterBackground"` removed from `loginOptional` set
+- `HumangoHealthPlugin`: `"enterForeground"` / `"enterBackground"` removed from workout channel routing list
+
+**Migration:** Remove any calls to `enterForegroundMode()` or `enterBackgroundMode()` — mode switching is fully automatic.
+
+**Changed in:** `lib/src/managers/workout_read_manager.dart`, `ios/Classes/WorkoutReading/WorkoutServiceChannel.swift`, `ios/Classes/HumangoHealthPlugin.swift`
+
+### Bug Fixes
+
+#### Workout Reading — `fetchAllWorkouts` was silently unrouted in `HumangoHealthPlugin`
+
+`WorkoutServiceChannel.handleFetchAllWorkouts` was implemented and exposed via Dart but was missing from the method channel routing allowlist in `HumangoHealthPlugin.swift`. Every `fetchAllWorkouts()` call fell through to `FlutterMethodNotImplemented`. The method is now correctly included in the routing list alongside `readWorkouts`, `startWorkoutMonitoring`, `stopWorkoutMonitoring`, `setImportPreferences`.
+
+**Changed in:** `ios/Classes/HumangoHealthPlugin.swift`
+
+---
+
 ## 0.0.16 — 2026-03-25
 
 ### Improvements

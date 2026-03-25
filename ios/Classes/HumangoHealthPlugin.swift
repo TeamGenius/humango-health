@@ -18,12 +18,15 @@ public class HumangoHealthPlugin: NSObject, FlutterPlugin {
   public func startAllBackgroundMonitoring() {
       guard UserAuthStateManager.shared.isLoggedIn else {
           debugPrint("🔐 [HumangoHealth] startAllBackgroundMonitoring skipped — user not logged in")
+          SleepRemoteLogger.log(.warn, step: "startAllBackgroundMonitoring", message: "skipped — user not logged in")
           return
       }
       guard HumangoHealthPlugin.delegate != nil else {
           debugPrint("🔐 [HumangoHealth] startAllBackgroundMonitoring skipped — delegate not set. Assign HumangoHealthPlugin.delegate before starting monitoring.")
+          SleepRemoteLogger.log(.warn, step: "startAllBackgroundMonitoring", message: "skipped — delegate nil")
           return
       }
+      SleepRemoteLogger.log(.info, step: "startAllBackgroundMonitoring", message: "starting subsystems")
       workoutReadChannel.autoStartIfConfigured()
       SleepDataManager.shared.autoStartIfConfigured()
       HRVObserverManager.shared.autoStartIfConfigured()
@@ -71,7 +74,7 @@ public class HumangoHealthPlugin: NSObject, FlutterPlugin {
           PermissionManager.shared.verifyAuthorization(result: result)
       } else if call.method == "requestAuthorization" {
           PermissionManager.shared.requestAuthorization(result: result)
-      } else if ["readWorkouts", "startWorkoutMonitoring", "stopWorkoutMonitoring", "setImportPreferences", "enterForeground", "enterBackground"].contains(call.method) {
+      } else if ["readWorkouts", "startWorkoutMonitoring", "stopWorkoutMonitoring", "setImportPreferences", "fetchAllWorkouts"].contains(call.method) {
           // Workout read channel
           workoutReadChannel.handle(call, result: result)
       } else if ["scheduleWorkoutsFromFlutter", "clearAppleScheduledWorkouts", "requestAuthorizationForWorkoutPush", "getScheduledWorkouts", "computeWorkoutJsonHash", "removeAllScheduledWorkouts", "removeScheduledWorkouts"].contains(call.method) {

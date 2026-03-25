@@ -27,9 +27,7 @@ class WorkoutServiceChannel: NSObject {
     }
     
     func handle(_ call: FlutterMethodCall, result: @escaping FlutterResult) {
-        let loginOptional = Set([
-            "stopWorkoutMonitoring", "enterForeground", "enterBackground",
-        ])
+        let loginOptional = Set(["stopWorkoutMonitoring"])
         if !loginOptional.contains(call.method) {
             guard UserAuthStateManager.shared.guardLoggedInForHealthData(result: result) else { return }
         }
@@ -44,12 +42,6 @@ class WorkoutServiceChannel: NSObject {
             handleSetImportPreferences(call, result)
         case "fetchAllWorkouts":
             handleFetchAllWorkouts(call, result)
-        case "enterForeground":
-            workoutService?.enterForegroundMode()
-            result(nil)
-        case "enterBackground":
-            workoutService?.enterBackgroundMode()
-            result(nil)
         default:
             result(FlutterMethodNotImplemented)
         }
@@ -453,23 +445,28 @@ class WorkoutServiceChannel: NSObject {
     func autoStartIfConfigured() {
         guard UserAuthStateManager.shared.isLoggedIn else {
             debugPrint("Read Workouts: Auto-start skipped — user not logged in")
+            SleepRemoteLogger.log(.warn, step: "workout.autoStart", message: "skipped — user not logged in")
             return
         }
         guard HumangoHealthPlugin.delegate != nil else {
             debugPrint("Read Workouts: Auto-start skipped — no delegate configured")
+            SleepRemoteLogger.log(.warn, step: "workout.autoStart", message: "skipped — delegate nil")
             return
         }
         guard workoutService == nil else {
             debugPrint("Read Workouts: Auto-start skipped — monitoring already active")
+            SleepRemoteLogger.log(.info, step: "workout.autoStart", message: "skipped — already active")
             return
         }
         
         let startDate = Date().addingTimeInterval(-24 * 60 * 60) // 24h lookback
+        let mode = AppLifecycleManager.shared.isInForeground ? "foreground" : "background"
+        SleepRemoteLogger.log(.info, step: "workout.autoStart", message: "starting", context: ["mode": mode])
         workoutService = WorkoutService(startDate: startDate)
 
         Task {
             await workoutService?.start()
-            debugPrint("Read Workouts: ✅ Auto-started workout monitoring from \(startDate)")
+            debugPrint("Read Workouts: ✅ Auto-started workout monitoring (\(mode)) from \(startDate)")
         }
     }
 

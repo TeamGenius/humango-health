@@ -60,14 +60,22 @@ final class AppLifecycleManager {
     // MARK: - Initialization
     
     private init() {
-        setupNotificationObservers()
-        
-        // Set initial state based on current app state
-        DispatchQueue.main.async { [weak self] in
-            if let state = UIApplication.shared.applicationState as UIApplication.State? {
-                self?.isInForeground = (state == .active)
+        // Set initial state SYNCHRONOUSLY before any observer calls.
+        // Plugin registration (which triggers first access to this singleton) runs on the
+        // main thread, so UIApplication.shared.applicationState is safe here.
+        // The old DispatchQueue.main.async approach left isInForeground = true during all
+        // synchronous autoStart calls, causing startLiveUpdates() to be chosen even on a
+        // cold background relaunch by HealthKit — preventing HKObserverQuery registration.
+        if Thread.isMainThread {
+            isInForeground = (UIApplication.shared.applicationState == .active)
+        } else {
+            // Rare non-main-thread init path: descend synchronously to main so the
+            // state is correct before setupNotificationObservers returns.
+            DispatchQueue.main.sync {
+                self.isInForeground = (UIApplication.shared.applicationState == .active)
             }
         }
+        setupNotificationObservers()
     }
     
     deinit {

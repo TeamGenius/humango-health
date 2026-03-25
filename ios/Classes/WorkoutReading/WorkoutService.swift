@@ -63,14 +63,18 @@ final class WorkoutService: AppLifecycleObserver {
        
     }
 
-    // Call this ONCE after you create the service
-    // Note: Authorization is handled by PermissionManager before creating this service
-    // startLiveUpdates() uses an open-ended anchored query (startDate → nil) so the first
-    // stream delivery already includes all historical workouts — no separate fetch needed.
+    // Call this ONCE after you create the service.
+    // Chooses foreground (live stream) vs background (observer) based on current app state
+    // so a cold background relaunch by HealthKit correctly registers the observer.
     func start() async {
         authorized = true
-        debugPrint("Read Workouts: WorkoutService: start")
-        startLiveUpdates()
+        if AppLifecycleManager.shared.isInForeground {
+            debugPrint("Read Workouts: WorkoutService: start → foreground mode")
+            startLiveUpdates()
+        } else {
+            debugPrint("Read Workouts: WorkoutService: start → background mode")
+            startBackgroundMonitoring()
+        }
     }
     
     // MARK: - AppLifecycleObserver (Native iOS lifecycle)
@@ -234,21 +238,24 @@ final class WorkoutService: AppLifecycleObserver {
         // Use a broad predicate (or nil) so you don’t miss changes
         observer = HKObserverQuery(sampleType: .workoutType(), predicate: nil) { [weak self] _, completion, error in
             guard let self = self else { completion(); return }
-            // ALWAYS re-arm observer — use defer to ensure completion() is called once.
-            defer { completion() }
+            // NOTE: Do NOT use `defer { completion() }` here.
+            // completion() must be called AFTER the async fetch/deliver pipeline finishes
+            // so iOS does not suspend the app mid-delivery.
 
             if let error = error {
                 debugPrint("Read Workouts: WorkoutService: workout observer error: \(error)")
+                completion()
                 return
             }
 
-            // Keep observer work minimal — schedule async Task to do the real work.
+            debugPrint("Read Workouts: WorkoutService: workout observer fired (background) — fetching workouts")
             Task {
-                debugPrint("Read Workouts: WorkoutService: workout observer fired (background) — fetching workouts (one-shot)")
-                 // use upToNow: true so predicate end = now (includes newly finished workouts)
-                 await self.fetchWorkouts(upToNow: true)
-                    
-                 self.pruneOldRouteServices()
+                // use upToNow: true so predicate end = now (includes newly finished workouts)
+                await self.fetchWorkouts(upToNow: true)
+                self.pruneOldRouteServices()
+                // Signal HealthKit AFTER all async work completes so iOS keeps the
+                // app alive for the full fetch → route → delegate pipeline.
+                completion()
             }
         }
 
