@@ -34,7 +34,8 @@ public class UserAuthStateManager {
     /// Whether the user is currently logged in.
     ///
     /// Defaults to `false` on fresh install — no background monitoring starts until
-    /// Flutter explicitly calls `setUserLoggedIn(true)` after a successful login.
+    /// the host app sets this to `true` after a successful login (native layer,
+    /// e.g. your Runner session channel — there is no library Dart API for login).
     public var isLoggedIn: Bool {
         get { UserDefaults.standard.bool(forKey: loggedInKey) }
         set {

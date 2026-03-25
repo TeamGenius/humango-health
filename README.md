@@ -32,15 +32,15 @@ A comprehensive Flutter plugin for integrating iOS HealthKit and WorkoutKit func
 | **Workout Scheduling** | Push workouts to Apple Watch via WorkoutKit with native deduplication |
 | **Workout Reading** | Real-time workout monitoring with foreground/background modes; completed workouts delivered via `HumangoHealthDataDelegate.onWorkoutReady` |
 | **Sleep Data** | Fetch and monitor sleep analysis; foreground (Descriptor) + background (Observer) monitoring; grouping-based `calculateSleepPayload` algorithm (gap ≤ 2 h, span ≥ 3 h); finalized sessions delivered via `HumangoHealthDataDelegate.onSleepSessionReady` |
-| **Health Metrics (HRV)** | One-shot fetch plus automatic HRV updates in foreground, background, and when app is suspended (stream + pending retrieval) |
-| **Delegate Delivery** | Workouts and sleep sessions are pushed to the host app through `HumangoHealthDataDelegate` — no UserDefaults queue, no EventChannel stream, no plugin HTTP |
+| **Health Metrics (HRV, HR, etc.)** | One-shot reads via `HealthMetricsManager`; quantity-metric batches while monitoring use **`hrvUpdates`** in the **foreground** and **`HumangoHealthDataDelegate.onHealthMetricSamplesReady`** when the app is backgrounded or suspended (`getPendingHRVUpdates` is a legacy no-op — always `[]`) |
+| **Delegate Delivery** | Workouts, finalized sleep sessions, and quantity-metric batches are pushed through **`HumangoHealthDataDelegate`** — no plugin-owned payload queues or HTTP |
 | **Native Lifecycle Management** | Centralized iOS app lifecycle detection for automatic mode switching |
 
 ## Consumer app integration
 
 The plugin **reads HealthKit on the device** and **pushes** updates directly to your host app via the **`HumangoHealthDataDelegate`** protocol. Completed workout and finalized sleep session JSON is delivered through delegate callbacks registered in your iOS Runner — the plugin performs no HTTP and maintains no persistent queues.
 
-Implement `HumangoHealthDataDelegate` in your Runner (see [Delegate Delivery](#delegate-delivery)), call `setUserLoggedIn(true)` after auth, and add `HumangoHealthPlugin.delegate = yourHandler` in `AppDelegate`. A bundled Flutter reference app lives under **[example/](example/)** — see [`example/README.md`](example/README.md).
+Implement `HumangoHealthDataDelegate` in your Runner (see [Delegate Delivery](#delegate-delivery)). After auth, the **host app** (native) must set `UserAuthStateManager.shared.isLoggedIn`, assign `HumangoHealthPlugin.delegate`, and call `HumangoHealthPlugin.shared?.startAllBackgroundMonitoring()` — there is **no** `UserSessionManager.setUserLoggedIn` in the published Dart API. The bundled app uses **`ExampleSessionChannel`** (`com.humango.example/session`) as a reference; copy that pattern in production. See **[example/](example/)** and [`example/README.md`](example/README.md).
 
 ## Documentation
 
@@ -62,7 +62,7 @@ Subsystem reference (under `docs/`):
 ```
 ┌──────────────────────────────────────────────────────────────────┐
 │                    Flutter Application Layer                     │
-│  ├─ UserSessionManager (login/logout gate)                       │
+│  ├─ (Host Runner sets UserAuthStateManager + delegate)            │
 │  ├─ PermissionManager (permissions)                              │
 │  ├─ WorkoutPushManager (scheduling)                              │
 │  ├─ WorkoutReadManager (reading/monitoring)                      │
@@ -90,7 +90,7 @@ Subsystem reference (under `docs/`):
 
 ## User Session Management
 
-The library uses a **user session gate** to prevent background health observers from auto-starting before the user has logged in, and to cleanly wipe all stored data on logout.
+The library uses a **native user session gate** (`UserAuthStateManager`) so HealthKit observers do not auto-start before login and so logout can tear everything down. The gate is a boolean persisted in `UserDefaults` and is **written from your iOS Runner** (or shared framework), not from a library Dart API.
 
 ### Why This Matters
 
@@ -99,7 +99,7 @@ The plugin persists login state across app launches so HealthKit observers can a
 - A freshly installed app (no user yet) would attempt to start background observers on every launch.
 - After logout, background observers could continue running with stale configuration.
 
-The `UserSessionManager` solves both problems with a single boolean persisted in `UserDefaults`. Workout and sleep monitors also require **`HumangoHealthPlugin.delegate`** to be set — auto-start is skipped if the delegate is `nil`.
+Workout, sleep, and quantity-metric auto-start also require **`HumangoHealthPlugin.delegate`** to be set — if the delegate is `nil`, `startAllBackgroundMonitoring()` is a no-op (see `HumangoHealthPlugin.swift`).
 
 ---
 
@@ -132,8 +132,9 @@ HumangoHealthPlugin.register()
 
 ```
 User installs app
-  → Logs in → setUserLoggedIn(true)
+  → Logs in → native sets UserAuthStateManager.shared.isLoggedIn = true
   → AppDelegate sets HumangoHealthPlugin.delegate = ExampleHealthDataHandler()
+  → startAllBackgroundMonitoring() runs (or your session channel does the same)
   → Kills app
 
 Next launch:
@@ -147,7 +148,7 @@ Next launch:
 
 ```
 User installs app
-  → Logs in → setUserLoggedIn(true)
+  → Logs in → native sets isLoggedIn = true
   → AppDelegate does NOT set HumangoHealthPlugin.delegate
   → Kills app
 
@@ -159,7 +160,7 @@ Next launch:
 
 ### Logout Cleanup — What Gets Cleared
 
-Calling `setUserLoggedIn(false)` immediately and synchronously clears all of the following:
+Calling **`HumangoHealthPlugin.shared?.logout()`** (or setting `isLoggedIn = false` **without** using the plugin’s logout path — not recommended) affects cleanup as documented in native code. The plugin’s **`logout()`** clears all of the following:
 
 | Data | What Is Cleared |
 |------|-----------------|
@@ -172,46 +173,27 @@ Calling `setUserLoggedIn(false)` immediately and synchronously clears all of the
 
 ---
 
-### API Reference
+### Session API (host app)
 
-```dart
-import 'package:humango_health/humango_health.dart';
+Login and logout are **not** exposed as `UserSessionManager` Dart methods in the published package. Mirror the bundled **`ExampleSessionChannel` / `ExampleSessionManager`** pattern:
 
-// After a successful login — optionally supply userId for tagged remote log events
-await UserSessionManager.setUserLoggedIn(true, userId: 'user-abc123');
+1. **iOS Runner:** Register a MethodChannel (example: `com.humango.example/session`).
+2. **On login:** Set `UserAuthStateManager.shared.isLoggedIn = true`, optionally `userId`, assign `HumangoHealthPlugin.delegate`, then `HumangoHealthPlugin.shared?.startAllBackgroundMonitoring()`.
+3. **On logout:** Call `HumangoHealthPlugin.shared?.logout()` (stops monitors, clears data, sets `isLoggedIn = false`).
 
-// After logout
-await UserSessionManager.setUserLoggedIn(false);
-```
+From Flutter you invoke your channel (see `example/lib/example_session_manager.dart`).
 
-### Recommended Integration
+### Optional: credentials in UserDefaults
 
-```dart
-import 'package:humango_health/humango_health.dart';
+If your native upload code needs `athleteId` / `accessToken`, the optional internal `UserSessionManager.saveCredentials` Dart helper targets `com.humango.health/session` — implement that channel in your Runner if you use it (the example app relies on the session channel above instead).
 
-class AuthService {
-  /// Call after a successful login (token received, user identity confirmed).
-  Future<void> onLoginSuccess() async {
-    // Mark the user as logged in — unblocks background observer auto-start.
-    await UserSessionManager.setUserLoggedIn(true, userId: userId);
-    // Delegate callbacks (onWorkoutReady / onSleepSessionReady) are wired in
-    // AppDelegate.swift — no Dart configuration required.
-  }
-
-  /// Call after the user logs out.
-  Future<void> onLogout() async {
-    await UserSessionManager.setUserLoggedIn(false);
-  }
-}
-```
-
-> **Important:** Always call `setUserLoggedIn(true)` **before** any monitoring is expected. The login flag must be set so that auto-start on the next app launch finds `isLoggedIn == true`.
+> **Important:** Set **`isLoggedIn`** and **`delegate`** before you expect monitoring or delegate callbacks. Auto-start during `HumangoHealthPlugin.register()` runs only when both are satisfied.
 
 ---
 
 ## Delegate Delivery
 
-The plugin delivers workouts and finalized sleep sessions to your host app through the **`HumangoHealthDataDelegate`** Swift protocol. This replaces the old EventChannel `workoutStream` and UserDefaults pending queues \u2014 there is no Dart-side subscription and no local queue to drain.
+The plugin delivers **workouts**, **finalized sleep sessions**, and **quantity-metric batches** (HRV, heart rate, resting HR, body composition, etc.) through **`HumangoHealthDataDelegate`**. There are no plugin-owned UserDefaults queues for these payloads.
 
 ### Protocol
 
@@ -220,13 +202,17 @@ The plugin delivers workouts and finalized sleep sessions to your host app throu
 public protocol HumangoHealthDataDelegate: AnyObject {
     func onWorkoutReady(json: String, deviceId: String)
     func onSleepSessionReady(json: String, sessionId: String)
+    func onHealthMetricSamplesReady(json: String, metricType: String, fetchedAt: String)
 }
 ```
+
+Default implementations in `HumangoHealthDataDelegate.swift` are no-ops so you can override only what you need.
 
 | Callback | When called | `json` payload |
 |----------|------------|----------------|
 | `onWorkoutReady(json:deviceId:)` | A completed workout is detected (foreground or background) | Full workout JSON (same shape as `readWorkouts()`) |
-| `onSleepSessionReady(json:sessionId:)` | A sleep session is ready (HealthKit observer fired, 6PM window fetched, payload computed) | Flat aggregated sleep payload JSON |
+| `onSleepSessionReady(json:sessionId:)` | A sleep session is ready (HealthKit observer fired, window fetched, payload computed) | Flat aggregated sleep payload JSON |
+| `onHealthMetricSamplesReady(...)` | Quantity-metric observer fired (any app state); always called for batches | Same shape as each `hrvUpdates` event: `metricType`, `unit`, `samples`, `sampleCount`, `fetchedAt` |
 
 ### Wiring in AppDelegate.swift
 
@@ -282,6 +268,11 @@ final class ExampleHealthDataHandler: HumangoHealthDataDelegate {
         Task { await post(path: "sleep", json: json) }
     }
 
+    func onHealthMetricSamplesReady(json: String, metricType: String, fetchedAt: String) {
+        print("[Delegate] \u{1F4CA} Metric batch \u2014 type=\(metricType), fetchedAt=\(fetchedAt)")
+        // Upload or persist when using startHRVMonitoring / quantity observers
+    }
+
     // MARK: - Upload
 
     private func post(path: String, json: String) async {
@@ -307,9 +298,9 @@ final class ExampleHealthDataHandler: HumangoHealthDataDelegate {
 
 **Key points:**
 
-- `onWorkoutReady` and `onSleepSessionReady` are called on a background thread \u2014 use `Task { ... }` or `DispatchQueue.main.async` if you need to update UI.
+- Delegate methods may run off the main thread \u2014 use `Task { ... }` or `DispatchQueue.main.async` if you need to update UI.
 - `athleteId` should come from your auth context (user profile), not a random UUID in production.
-- Both callbacks receive raw JSON strings; parse with `JSONSerialization.jsonObject` or `JSONDecoder` as needed.
+- Callbacks receive raw JSON strings (or parse `onHealthMetricSamplesReady` the same way as a single `hrvUpdates` event).
 - The plugin sets no retain cycle: `HumangoHealthPlugin.delegate` is a `weak` reference \u2014 keep a strong reference in your `AppDelegate` or a DI container.
 
 ### Sleep Session JSON Shape
@@ -340,7 +331,7 @@ The `json` parameter in `onSleepSessionReady` has the same flat aggregated shape
 ## Requirements
 
 - **iOS 18.0** minimum deployment target
-- **Physical device** required for testing (HealthKit not available in Simulator)
+- **Physical device** recommended for HealthKit testing (simulator support is limited)
 - **Apple Watch** required for WorkoutKit scheduling features
 
 ### iOS Setup (Info.plist)
@@ -1603,41 +1594,35 @@ Each `HealthMetricSample` includes:
 
 ### HRV automatic updates (background / suspended)
 
-HRV can be observed automatically so new data is delivered when HealthKit is updated — in foreground via a stream, and in background or when the app is suspended via pending updates.
+Quantity metrics (HRV, heart rate, resting HR, body fat, weight, height) can be observed so HealthKit writes trigger a batched payload.
 
-- **Foreground:** While the app is active and monitoring is started, new HRV samples are emitted on the `hrvUpdates` stream.
-- **Background / suspended:** iOS wakes the app briefly when new HRV is saved. The native layer collects updates; call `getPendingHRVUpdates()` after the app returns to foreground to retrieve and clear them.
+- **Foreground:** While the app is active and monitoring is started, batches are duplicated to the **`hrvUpdates`** EventChannel stream (one event per metric batch).
+- **Background / suspended:** iOS may wake the app briefly; native code **only** forwards batches to **`HumangoHealthDataDelegate.onHealthMetricSamplesReady`**. The MethodChannel `getPendingHRVUpdates` remains for compatibility but **always returns an empty list** — do not rely on it for uploads.
 
-Call `startHRVMonitoring()` once (e.g. after user logs in or when entering the health metrics flow). Monitoring persists across app launches and auto-starts on next launch. Use `stopHRVMonitoring()` to disable.
+Call `startHRVMonitoring()` once (e.g. after user logs in). Monitoring persistence follows native `UserDefaults` flags; use `stopHRVMonitoring()` to disable. **`HumangoHealthPlugin.delegate`** must be set or background batches are dropped at the delegate step.
 
 ```dart
 final metrics = HealthMetricsManager();
 
-// Start observing (foreground + background + suspended)
 await metrics.startHRVMonitoring();
 
-// Foreground: listen to live updates
 metrics.hrvUpdates.listen((update) {
-  print('New HRV: ${update['samples']}');
+  print('Metric ${update['metricType']}: ${update['sampleCount']} samples');
 });
 
-// When resuming from background: get updates collected while away
+// Legacy: always [] — use HumangoHealthDataDelegate for background batches
 final pending = await metrics.getPendingHRVUpdates();
-for (final update in pending) {
-  print('Pending HRV: ${update['samples']}');
-}
 
-// Optional: check state, stop when done
 final active = await metrics.isHRVMonitoringActive();
 await metrics.stopHRVMonitoring();
 ```
 
 | Method / getter | Description |
 |-----------------|-------------|
-| `startHRVMonitoring()` | Start observing HealthKit for new HRV data; enables background delivery |
+| `startHRVMonitoring()` | Start observing configured quantity types; enables background delivery |
 | `stopHRVMonitoring()` | Stop observation and background delivery |
-| `hrvUpdates` | Stream of HRV updates (foreground only) |
-| `getPendingHRVUpdates()` | Returns and clears updates collected in background/suspended |
+| `hrvUpdates` | Stream of metric batches (**foreground** mirror of native payloads) |
+| `getPendingHRVUpdates()` | **Always `[]`** — use delegate for background/suspended delivery |
 | `isHRVMonitoringActive()` | Whether monitoring is currently enabled |
 
 ### Error Handling
@@ -1667,7 +1652,7 @@ Health Metrics reading requires HealthKit read permissions for the corresponding
 | Channel | Type | Purpose |
 |---------|------|--------|
 | `com.humango.health/metrics` | MethodChannel | Health metrics queries |
-| `com.humango.health/metrics/hrv_updates` | EventChannel | HRV automatic updates (foreground stream) |
+| `com.humango.health/metrics/hrv_updates` | EventChannel | Quantity-metric batches while app is **foreground** (same payload shape as delegate; HRV, HR, resting HR, body comp, …) |
 
 ---
 ## Channel Reference
@@ -1679,12 +1664,11 @@ All communication between Flutter and iOS uses these channels:
 | `healthkit/method` | MethodChannel | Permission handling (`requestAuthorization`, `verifyAuthorization`) |
 | `healthkit/event` | EventChannel | Permission status stream (`permissionStream`) |
 | `com.humango.workouts/workoutplan` | MethodChannel | Workout scheduling (push/remove) |
-| `com.humango.workouts/read` | MethodChannel | Workout reading |
-| `com.humango.workouts/read/stream` | EventChannel | Real-time workout updates |
+| `com.humango.workouts/read` | MethodChannel | Workout reading (one-shot + monitoring control) |
 | `com.humango.health/sleep` | MethodChannel | Sleep data operations |
-| `com.humango.health/session` | MethodChannel | User login/logout state (`setUserLoginState`) |
+| `com.humango.health/session` | MethodChannel | Optional: `saveCredentials` if implemented in your Runner (not registered by the plugin itself) |
 | `com.humango.health/metrics` | MethodChannel | Health metrics (HRV, HR, body comp) |
-| `com.humango.health/metrics/hrv_updates` | EventChannel | HRV automatic updates (foreground stream) |
+| `com.humango.health/metrics/hrv_updates` | EventChannel | Quantity-metric batches while app is **foreground** (same payload shape as delegate; HRV, HR, resting HR, body comp, …) |
 
 ---
 

@@ -5,6 +5,8 @@
 **Plugin:** `humango_health`  
 **Subsystem:** Health Data Reading & Monitoring
 
+> **Status (March 2026):** This file describes a **generic** “read any health type + local queue” design. The **shipped** plugin implements **domain-specific** APIs instead: **`SleepDataManager`**, **`HealthMetricsManager`**, **`WorkoutReadManager`**, plus **`HumangoHealthDataDelegate`** for session/metric batch delivery. Treat the sections below as **historical / aspirational** unless explicitly matched in code; prefer [README.md](README.md) and `docs/health_data_reading.md`.
+
 ---
 
 ## Requirements

@@ -4,11 +4,11 @@ Use this guide when wiring **any** Flutter host app to **`humango_health`**. It 
 
 | Document | Use when |
 |----------|----------|
-| **This guide** | Implementing or reviewing **your app’s** coordinator, providers, and subscriptions |
+| **This guide** | Implementing or reviewing **your app’s** coordinator, providers, native bridge, and Dart streams |
 | [client_integration_contract.md](client_integration_contract.md) | Semantics, envelopes, ordering, success criteria, and library vs client responsibilities |
 | Subsystem docs (`activity_reading.md`, `sleep_data.md`, …) | Payloads and APIs **per domain** |
 
-**Reference patterns (this repo):** [User Session Management — Recommended Integration](../README.md#recommended-integration) in the README (login → `configureBackgroundDelivery` + `configureSleepBackgroundDelivery`; logout → `setUserLoggedIn(false)`). A runnable sample is bundled under **[`example/`](../example/)** ([`example/README.md`](../example/README.md), including `HealthSyncCoordinator`). In **your** app, implement the same coordinator idea using §2–§4 below.
+**Reference (this repo):** [README — User Session Management](../README.md#user-session-management) and [README — Delegate Delivery](../README.md#delegate-delivery). The example app uses **`ExampleSessionChannel`** / **`ExampleSessionManager`** (`com.humango.example/session`) plus **`HealthSyncCoordinator`**. Copy that **pattern** into production (your own channel names are fine).
 
 ---
 
@@ -18,60 +18,48 @@ Use this guide when wiring **any** Flutter host app to **`humango_health`**. It 
 flowchart TB
   subgraph app [Your client app]
     C[Coordinator / auth gate]
+    NATIVE[iOS Runner: session + HumangoHealthDataDelegate]
     M[Shared manager instances]
     P[Providers or scoped state]
     UI[Screens / widgets]
+    C --> NATIVE
     C --> M
     M --> P
     P --> UI
   end
   subgraph lib [humango_health]
-    N[Native HealthKit + observers]
-    D[Dart managers + streams]
-    N --> D
+    HK[Native HealthKit + observers]
+    D[Dart managers + EventChannels]
+    HK --> D
   end
+  NATIVE --> HK
   D --> M
-  C -->|session + configure| lib
 ```
 
-- **`humango_health`** reads HealthKit on the device and **pushes** updates via streams and local queues. Workout and sleep **session** payloads are not POSTed by the plugin; your app uploads them.
-- **Your app** supplies **when** configuration runs (after login / token), **one subscription per domain**, and **narrow UI updates**.
+- **`humango_health`** reads HealthKit on the device. **Workouts**, **finalized sleep**, and **quantity-metric batches** (background/suspended) are pushed through **`HumangoHealthDataDelegate`** — the plugin does **not** POST to your API and does **not** maintain payload queues for those domains.
+- **Your iOS Runner** sets **`UserAuthStateManager.shared.isLoggedIn`**, assigns **`HumangoHealthPlugin.delegate`**, and calls **`startAllBackgroundMonitoring()`** after login; **`logout()`** on sign-out.
+- **Dart** uses MethodChannels for one-shot reads and for **`permissionStream`** / **`hrvUpdates`** where applicable.
 
 ---
 
 ## 2. Non‑negotiables (same in every client)
 
-1. **Single orchestration for background delivery**  
-   One module (e.g. `HealthSyncCoordinator`) calls:
-   - `UserSessionManager.setUserLoggedIn` when your user session changes  
-   - `WorkoutReadManager.configureBackgroundDelivery` (workouts — arms stream/pending only, no native HTTP)  
-   - `SleepDataManager.configureSleepBackgroundDelivery` (sleep)  
-   after **auth (and athlete/user id)** is available.  
-   Do **not** scatter these calls across unrelated widgets or routes.
+1. **Single orchestration for session + monitoring**  
+   One module (e.g. `HealthSyncCoordinator`) should:
+   - Call your **native session bridge** on login/logout (see `ExampleSessionChannel`).
+   - Start **`startMonitoring`** / **`startHRVMonitoring`** (and any other monitors) from one place after auth — not from every screen.
 
-2. **Idempotent configure**  
-   Safe to call again after **token refresh** or app resume: native code skips no-op writes when the armed state is unchanged. Workout and sleep background delivery are **stream / local queue only**—the plugin does not store API URLs or auth headers for session payloads.
+2. **Delegate is mandatory for background “push” payloads**  
+   If `HumangoHealthPlugin.delegate` is `nil`, auto-start skips and **delegate-only** deliveries (workouts, sleep nights, metric batches in background) are dropped. Set the delegate **before** `GeneratedPluginRegistrant` / plugin register completes if you rely on auto-start at launch.
 
-3. **One stable subscription per domain**  
-   For each stream (`workoutStream`, `permissionStream`, `hrvUpdates`, …): one listener per manager instance, **cancel** in `dispose` / when turning monitoring off. Avoid multiple listeners that each fire the same side effects.
+3. **One stable subscription per Dart stream**  
+   `permissionStream`, `hrvUpdates`: one listener per manager; cancel in `dispose`. There is **no** `workoutStream` in Dart — workout uploads are implemented in **`onWorkoutReady`** (Swift) or your own bridge.
 
 4. **No timer‑based sync as primary path**  
-   Do not poll the library on an interval for data that observers already deliver. Use **explicit** one-shot APIs for catch-up (`readWorkouts`, `getSleepData`, `getPendingHRVUpdates`, `getLocalSleepSessions`, etc.) on login, pull-to-refresh, or cold start—not a repeating background timer.
+   Prefer observers + **explicit** one-shot catch-up (`readWorkouts`, `getSleepData`, metric queries). **`getPendingHRVUpdates`** always returns **`[]`** — do not use it for recovery; use **`onHealthMetricSamplesReady`** for background metric batches.
 
-5. **Foreground streams vs local queues**  
-   **Workouts:** `workoutStream` + optional UserDefaults pending JSON. **Sleep:** finalized sessions in `UserDefaults`; drain with `getLocalSleepSessions()` and upload from your app.
-
-### Background uploads: your backend
-
-The plugin does **not** POST workout or sleep session JSON. While the app is **suspended**, uploading those payloads requires **native iOS** (e.g. Runner `URLSession` background tasks) or waiting until the app runs again—not Dart `http` alone.
-
-| Approach | Who calls your API | Coordinator |
-|----------|-------------------|-------------|
-| **Workouts** | Your app (Dart when foreground, or Runner native) | Coordinator arms delivery; you consume stream / pending JSON. |
-| **Sleep** | Your app (same) | Coordinator calls `configureSleepBackgroundDelivery`; you drain `getLocalSleepSessions()`. |
-| **Runner Swift + background `URLSession`** | Your native code | Session + `configure*`; your code owns HTTP. |
-
-The coordinator **orchestrates** (session, idempotent configure, shared managers); it does **not** replace your networking layer.
+5. **Uploads are host-owned**  
+   While suspended, use **`URLSession`** (or similar) from the delegate implementation if you cannot wait for Dart.
 
 ---
 
@@ -79,11 +67,10 @@ The coordinator **orchestrates** (session, idempotent configure, shared managers
 
 | Piece | Responsibility |
 |--------|----------------|
-| **Coordinator** (`ChangeNotifier`, Riverpod notifier, or app service) | Session; calls `configureBackgroundDelivery` + `configureSleepBackgroundDelivery` once per logical “config needed” event (login, token refresh). Holds or exposes **singleton** `WorkoutReadManager` / `SleepDataManager` if you want one native channel pairing per process. |
-| **Auth / credentials** | When login completes (or token updates), invoke coordinator: `setLoggedIn` + `ensureBackgroundDeliveryConfigured` (names may differ). |
-| **Feature screens** | Call `startMonitoring` / `readWorkouts` / `getSleepData` as needed; **subscribe** to streams using managers from coordinator (or injected dependency). **Do not** call `configureBackgroundDelivery` from each tab. |
-| **State** | Parse events; update incremental models; `notifyListeners` / `setState` only when data actually changes. |
-| **UI** | Prefer **`Selector`** / **`Consumer`** with a narrow `select:` (Provider) or **`select`** (Riverpod) so unrelated health updates do not rebuild large trees (e.g. a full metrics tab). |
+| **Runner session channel** | Set `isLoggedIn`, `delegate`, `startAllBackgroundMonitoring()` / `logout()` |
+| **Coordinator** | Invokes session channel from Dart after auth; holds singleton `WorkoutReadManager` / `SleepDataManager` / `HealthMetricsManager` / `PermissionManager` |
+| **Delegate handler (`HumangoHealthDataDelegate`)** | POST JSON for workouts, sleep, and metric batches; dedupe / retry |
+| **Feature screens** | `readWorkouts`, `getSleepData`, toggles for monitoring; **do not** re-implement session setup per tab |
 
 ---
 
@@ -91,78 +78,62 @@ The coordinator **orchestrates** (session, idempotent configure, shared managers
 
 ### Bootstrap
 
-- [ ] Add `humango_health` dependency (version or Git `ref:`); see [contract doc § Local development](client_integration_contract.md#local-development-against-unpublished-library-changes) for `path:` / overrides during plugin development.
-- [ ] Register your **coordinator** above the UI that needs health (e.g. next to global `Provider`s).
+- [ ] Add `humango_health` dependency; see [contract § Local development](client_integration_contract.md#local-development-against-unpublished-library-changes) for `path:` / overrides.
+- [ ] Implement **`HumangoHealthDataDelegate`** and register your **session** MethodChannel in the Runner.
+- [ ] Provide a **coordinator** (or app service) that calls the session channel after login.
 
 ### Session (login / logout)
 
-- [ ] On **login** (user id + token available): `UserSessionManager.setUserLoggedIn(true, userId: …)`.
-- [ ] On **logout**: `setUserLoggedIn(false)` so native observers and stored delivery config follow the plugin’s session rules ([README § User Session](../README.md#user-session-management)).
-- [ ] Immediately after login (or on same pipeline): run **background delivery configuration** (next section).
+- [ ] **Login:** native sets `UserAuthStateManager.shared.isLoggedIn = true`, optional `userId`, `HumangoHealthPlugin.delegate = …`, `startAllBackgroundMonitoring()`.
+- [ ] **Logout:** `HumangoHealthPlugin.shared?.logout()` (clears monitors and session flag inside native cleanup — see README).
 
-### Background delivery (one place)
+### Monitoring & reads
 
-- [ ] **Workouts:** `configureBackgroundDelivery(const BackgroundDeliveryConfig())` — arms stream/pending; upload from your app.
-- [ ] **Sleep:** `configureSleepBackgroundDelivery(const SleepBackgroundDeliveryConfig())` — **local queue only** (`localStorage`). Call `getLocalSleepSessions()` and upload from your app.
-- [ ] On **token refresh** or resume, you may call the same configure methods again; native code treats identical config as a no-op.
-
-### Per domain
-
-- [ ] **Permissions:** one `PermissionManager.permissionStream` subscription at app or shell level; expose to UI via provider.
-- [ ] **Workout read:** one `WorkoutReadManager` (from coordinator), `workoutStream` subscription only while monitoring; cancel on stop; use one-shot `readWorkouts` for catch-up.
-- [ ] **Sleep:** one `SleepDataManager`; foreground monitoring vs one-shot `getSleepData` per subsystem docs; no duplicate `configureSleepBackgroundDelivery` from feature widgets.
-- [ ] **HRV / metrics:** one `hrvUpdates` subscription when HRV monitoring is active; do not stack duplicate listeners in `initState` and toggle handlers (see [README — HRV automatic updates](../README.md#hrv-automatic-updates-background--suspended)).
+- [ ] **Workouts:** `WorkoutReadManager.startMonitoring` / `readWorkouts` as needed; uploads in **`onWorkoutReady`**.
+- [ ] **Sleep:** `SleepDataManager.startMonitoring` / `getSleepData`; uploads in **`onSleepSessionReady`**.
+- [ ] **Metrics:** `HealthMetricsManager.startHRVMonitoring()`; **`hrvUpdates`** while foreground; **`onHealthMetricSamplesReady`** for background batches.
+- [ ] **Permissions:** single `permissionStream` subscription at app shell.
 
 ### UI performance
 
-- [ ] Replace broad `Consumer`/`context.watch` with **`Selector`** / narrow **`select`** where lists or heavy subtrees depend on health state.
-- [ ] Optional: document recommended **event envelope** shape in your app when parsing maps from streams ([contract § Event envelope](client_integration_contract.md#event-envelope-recommended)).
+- [ ] Narrow **`Selector`** / **`select`** so health events do not rebuild entire trees.
 
-### Testing (client)
+### Testing
 
-- [ ] Mock stream emissions; assert provider/state updates.
-- [ ] Optionally: integration test configure → emit → state.
+- [ ] Mock Dart streams; for delegate behavior, XCTest or integration tests against your Runner handler.
 
 ---
 
-## 5. Mapping concerns to docs (and the bundled example app)
-
-This repo includes a Flutter **`example/`** project — see [`example/README.md`](../example/README.md) for `HealthSyncCoordinator` and feature tabs. Use the following as your **pattern checklist** when adapting patterns to your own app:
+## 5. Mapping concerns to docs
 
 | Concern | Where to read |
 |---------|----------------|
-| Coordinator: session + `configure*` once | [README — Recommended Integration](../README.md#recommended-integration), §2–§4 in this guide |
-| Permissions + one `permissionStream` | [README — Permission Handling](../README.md#permission-handling) |
-| Workout read: stream vs `readWorkouts` | [README — Workout Reading & Monitoring](../README.md#workout-reading--monitoring), [activity_reading.md](activity_reading.md) |
-| Sleep: monitor + `getLocalSleepSessions` | [README — Sleep Data Reading & Monitoring](../README.md#sleep-data-reading--monitoring), [sleep_data.md](sleep_data.md) |
-| HRV: `startHRVMonitoring` + single stream | [README — HRV automatic updates](../README.md#hrv-automatic-updates-background--suspended) |
-
-Copy the **pattern**, not necessarily the class names: use Riverpod, GetIt, or your DI as long as the rules in §2 hold.
+| Session + delegate | [README](../README.md#user-session-management), [Delegate Delivery](../README.md#delegate-delivery) |
+| Workout read / monitor | [README — Workout Reading](../README.md#workout-reading--monitoring), [activity_reading.md](activity_reading.md) |
+| Sleep | [README — Sleep](../README.md#sleep-data-reading--monitoring), [sleep_data.md](sleep_data.md) |
+| Metrics / HRV | [README — HRV / metrics](../README.md#hrv-automatic-updates-background--suspended) |
 
 ---
 
-## 6. Anti‑patterns (avoid in any client)
+## 6. Anti‑patterns
 
 | Don’t | Do instead |
 |-------|------------|
-| `Timer.periodic` to re-fetch the same HealthKit-backed data the library already observes | Subscribe to streams + explicit one-shot on login/refresh |
-| `configureBackgroundDelivery` from every feature screen | Coordinator once (or on token refresh) |
-| Multiple `WorkoutReadManager()` instances each calling configure | One coordinator-owned manager (or clearly documented lifecycle per instance) |
-| Full-screen `setState` on every health event | Incremental models; narrow selectors |
-| Assuming cross-domain event ordering | Document per-domain; handle idempotent `(type, id)` |
+| Expect `workoutStream` or `configureBackgroundDelivery` | Use delegate + MethodChannel reads (removed in 0.0.14–0.0.15) |
+| Rely on `getLocalSleepSessions` or sleep `UserDefaults` queues | Implement `onSleepSessionReady` |
+| Poll `getPendingHRVUpdates` | Implement `onHealthMetricSamplesReady` |
+| Call session setup from every tab | Coordinator / single native entry |
 
 ---
 
 ## 7. Aligning versions in another repo
 
-- Pin **`humango_health`** to a **version or Git ref** in the client `pubspec.yaml`.
-- Keep a **vendored copy** of this guide and/or [client_integration_contract.md](client_integration_contract.md) that matches the pinned release; refresh when bumping the dependency.
-- When the library adds or changes streams, update coordinator + subsystem notes and QA using [Success criteria](client_integration_contract.md#success-criteria-both-sides) in the contract doc.
+- Pin **`humango_health`** in `pubspec.yaml`.
+- Refresh vendored copies of this guide and the [contract](client_integration_contract.md) when bumping the package.
 
 ---
 
 ## 8. Related links
 
 - [README — Consumer app integration](../README.md#consumer-app-integration)
-- [README — Background delivery configuration](../README.md#background-delivery-configuration)
-- [CHANGELOG](../CHANGELOG.md) for breaking API or behavior changes per release
+- [CHANGELOG](../CHANGELOG.md)

@@ -5,6 +5,8 @@
 **Plugin:** `humango_health`  
 **Subsystem:** Health Data Reading & Monitoring
 
+> **Status (March 2026):** The **implemented** surface is split across **`WorkoutReadManager`**, **`SleepDataManager`**, **`HealthMetricsManager`**, and **`HumangoHealthDataDelegate`** — not a single `readHealthData` / `getLocalHealthData` API. Use [README.md](../README.md) and the per-domain docs (`activity_reading.md`, `sleep_data.md`, subsystem files). The remainder of this document is kept for long-form design reference and may not match the binary API.
+
 ---
 
 ## Requirements

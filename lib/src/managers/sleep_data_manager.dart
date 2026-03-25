@@ -83,8 +83,9 @@ class SleepDataManager {
   /// In **background**: Uses HKObserverQuery to detect changes and accumulates
   /// samples into session state.
   ///
-  /// When the session ends, the finalized session JSON is stored locally;
-  /// retrieve with [getLocalSleepSessions] and upload from your app.
+  /// When the session ends, native code calls
+  /// `HumangoHealthDataDelegate.onSleepSessionReady(json:sessionId:)` — there is
+  /// no Dart stream or local queue to drain for finalized sessions.
   Future<Map<String, dynamic>> startMonitoring({DateTime? startDate}) async {
     final effectiveStartDate =
         startDate ?? DateTime.now().subtract(const Duration(hours: 24));

@@ -25,10 +25,10 @@ The library is intended to be **self-contained** on iOS: it **fetches** HealthKi
 
 | Role | Responsibility |
 |------|----------------|
-| **Library (`humango_health`)** | **Owns** HealthKit access on the device: **fetches** data via native queries/observers/delivery, and **pushes** updates to subscribed Dart clients and local queues. **Emits when there is a real update** (or when an explicit one-shot completes). Does **not** depend on the app polling to discover HealthKit changes. |
-| **Client app** | **Subscribes once per domain**, parses events, updates local state and UI. Does **not** use periodic polling as the primary sync mechanism for data the library already observes. |
+| **Library (`humango_health`)** | **Owns** HealthKit reads on the device via native queries and observers. **Dart:** MethodChannels + small set of EventChannels (`permissionStream`, `hrvUpdates`). **Runner:** **`HumangoHealthDataDelegate`** for completed workouts, finalized sleep, and quantity-metric batches when Flutter is not in foreground. **Emits when there is a real update** (or when a one-shot API completes). |
+| **Client app** | **One** delegate implementation for upload/dedup; **stable** Dart stream subscriptions where they exist; **does not** use periodic polling as the primary sync for observer-driven data. |
 
-**Workouts** are delivered via `workoutStream` or pending `UserDefaults` JSON only. **Sleep** finalized sessions are stored locally for `getLocalSleepSessions()` — the plugin **does not** POST workout or sleep session payloads to your API.
+**Workouts** and **finalized sleep sessions** are delivered only via **`HumangoHealthDataDelegate`** in your iOS Runner (no Dart `workoutStream`, no plugin-owned `UserDefaults` payload queues). **Quantity-metric** batches use the same delegate when the app is backgrounded or suspended; the foreground **`hrvUpdates`** stream mirrors batches for Dart. The plugin **does not** POST health payloads to your API.
 
 ---
 
@@ -89,7 +89,7 @@ Until all channels use this envelope, document each existing stream’s payload 
 ### Cold start and catch-up
 
 - **On subscribe:** Document whether the library emits **only future changes** or also a **snapshot / catch-up** for known state.
-- **After process death:** Document the supported **reconciliation** path (`readWorkouts`, `getLocalSleepSessions`, `getPendingHRVUpdates`, etc.). This is **not** “polling”; it is **event-driven recovery** or **user-triggered** refresh.
+- **After process death:** Document the supported **reconciliation** path (`readWorkouts`, `getSleepData`, one-shot metrics queries, etc.). Background metric batches and completed workouts/sleep rely on **native delegate delivery** when iOS relaunches the app — `getPendingHRVUpdates` is not a recovery path (it returns an empty list). Prefer **user-triggered** refresh when Dart was not running.
 
 ### Idempotency
 
@@ -120,18 +120,19 @@ For each public `Stream` / `EventChannel` surface:
 
 Optional: configuration (debounce window, strict dedupe on/off) for different app tradeoffs.
 
-### 4. Foreground stream vs background delivery
+### 4. Foreground stream vs delegate delivery
 
 | Path | Purpose |
 |------|---------|
-| **Workout UI stream** (`WorkoutReadManager.workoutStream`) | Real-time workout JSON; pending queue in `UserDefaults` when no listener. **No** plugin HTTP for workouts. |
-| **Sleep** (`SleepBackgroundDeliveryConfig`) | Local pending queue only; retrieve with `getLocalSleepSessions()` and upload from the app. |
+| **Workouts** | **`HumangoHealthDataDelegate.onWorkoutReady`** when monitoring detects a completed workout. One-shot history remains **`readWorkouts`** / **`fetchAllWorkouts`** on the MethodChannel. **No** plugin HTTP. |
+| **Sleep** | **`HumangoHealthDataDelegate.onSleepSessionReady`** when a night is finalized. One-shot **`getSleepData`** / **`calculateSleepPayload`** remain on the MethodChannel. |
+| **Quantity metrics** | **`hrvUpdates`** EventChannel while **foreground**; **`onHealthMetricSamplesReady`** when not (delegate required). |
 
-If the client must react to background upload outcomes, provide a **small, documented** stream or callback that fires only on those outcomes — **not** as a stand-in for polling.
+Host upload outcomes (HTTP success/failure) are **entirely app-owned** — the library does not emit “upload succeeded” events.
 
 ### 5. Configuration idempotency
 
-- `configureBackgroundDelivery` (and similar) should be **safe to call again** with the same or updated config (e.g. token rotation) without duplicate observers or undefined behavior.
+- Calls such as **`startHRVMonitoring`** should be **safe to repeat** (native code should not stack duplicate observers). Session wiring (**`isLoggedIn`**, **`delegate`**) is host-owned and should be idempotent where your app retries login.
 
 ### 6. Testing in the library
 
@@ -142,21 +143,21 @@ If the client must react to background upload outcomes, provide a **small, docum
 
 ## Client app responsibilities (checklist)
 
-### 1. Single orchestration for background delivery
+### 1. Single orchestration for session + monitoring
 
 - One module (e.g. `HealthSyncCoordinator`) runs after **auth + athlete id** (and token) are available.
-- Configures workout and sleep background delivery **once** (or idempotently on token refresh).
-- Avoids conflicting or duplicate `configureBackgroundDelivery` calls from unrelated widgets/providers.
+- Invokes your **native** session bridge **once** (login → `isLoggedIn`, `delegate`, `startAllBackgroundMonitoring()`; logout → `logout()`).
+- Starts Dart-side monitoring (`startWorkoutMonitoring`, `startSleepMonitoring`, `startHRVMonitoring`) from one place — not scattered across unrelated widgets.
 
-### 2. Stable subscriptions
+### 2. Stable subscriptions / single delegate handler
 
-- One stable `Stream` subscription per manager; **cancel** in `dispose` / `stopMonitoring`.
-- Avoid multiple listeners that each trigger the same side effects.
+- For each Dart **`Stream`** (`permissionStream`, `hrvUpdates`, …): one listener per manager; **cancel** in `dispose` / when monitoring stops.
+- **Workouts** and **sleep** completions: implement **`HumangoHealthDataDelegate`** once in the Runner; avoid duplicate side effects across multiple delegate objects.
 
 ### 3. No polling as primary sync
 
 - Do not use a timer to re-fetch the same data the library already observes.
-- Use **explicit** user or lifecycle triggers (pull-to-refresh, post-login) if calling a one-shot library API such as `readWorkouts`, `getSleepData`, or `getLocalSleepSessions`.
+- Use **explicit** user or lifecycle triggers (pull-to-refresh, post-login) if calling one-shot APIs such as `readWorkouts`, `getSleepData`, or metric fetches.
 
 ### 4. Adapt to the envelope
 
