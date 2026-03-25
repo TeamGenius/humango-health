@@ -16,20 +16,50 @@ public class HumangoHealthPlugin: NSObject, FlutterPlugin {
   /// Triggers all subsystems to auto-start background monitoring (workouts, sleep, HRV)
   /// provided they have been previously configured/armed. Safe to call after login.
   public func startAllBackgroundMonitoring() {
-      guard UserAuthStateManager.shared.isLoggedIn else {
-          debugPrint("🔐 [HumangoHealth] startAllBackgroundMonitoring skipped — user not logged in")
-          SleepRemoteLogger.log(.warn, step: "startAllBackgroundMonitoring", message: "skipped — user not logged in")
-          return
-      }
-      guard HumangoHealthPlugin.delegate != nil else {
-          debugPrint("🔐 [HumangoHealth] startAllBackgroundMonitoring skipped — delegate not set. Assign HumangoHealthPlugin.delegate before starting monitoring.")
-          SleepRemoteLogger.log(.warn, step: "startAllBackgroundMonitoring", message: "skipped — delegate nil")
-          return
-      }
-      SleepRemoteLogger.log(.info, step: "startAllBackgroundMonitoring", message: "starting subsystems")
+      guard guardMonitoringPreconditions("startAllBackgroundMonitoring") else { return }
+      SleepRemoteLogger.log(.info, step: "startAllBackgroundMonitoring", message: "starting all subsystems")
       workoutReadChannel.autoStartIfConfigured()
       SleepDataManager.shared.autoStartIfConfigured()
       HRVObserverManager.shared.autoStartIfConfigured()
+  }
+
+  /// Starts background monitoring for **activity/workout reading** only.
+  /// Requires the user to be logged in and `HumangoHealthPlugin.delegate` to be set.
+  public func startActivityBackgroundMonitoring() {
+      guard guardMonitoringPreconditions("startActivityBackgroundMonitoring") else { return }
+      SleepRemoteLogger.log(.info, step: "startActivityBackgroundMonitoring", message: "starting activity subsystem")
+      workoutReadChannel.autoStartIfConfigured()
+  }
+
+  /// Starts background monitoring for **sleep data** only.
+  /// Requires the user to be logged in and `HumangoHealthPlugin.delegate` to be set.
+  public func startSleepBackgroundMonitoring() {
+      guard guardMonitoringPreconditions("startSleepBackgroundMonitoring") else { return }
+      SleepRemoteLogger.log(.info, step: "startSleepBackgroundMonitoring", message: "starting sleep subsystem")
+      SleepDataManager.shared.autoStartIfConfigured()
+  }
+
+  /// Starts background monitoring for **health metrics** (HRV, resting HR, etc.) only.
+  /// Requires the user to be logged in and `HumangoHealthPlugin.delegate` to be set.
+  public func startHealthMetricsBackgroundMonitoring() {
+      guard guardMonitoringPreconditions("startHealthMetricsBackgroundMonitoring") else { return }
+      SleepRemoteLogger.log(.info, step: "startHealthMetricsBackgroundMonitoring", message: "starting health metrics subsystem")
+      HRVObserverManager.shared.autoStartIfConfigured()
+  }
+
+  /// Shared precondition check for all monitoring entry points.
+  private func guardMonitoringPreconditions(_ caller: String) -> Bool {
+      guard UserAuthStateManager.shared.isLoggedIn else {
+          debugPrint("🔐 [HumangoHealth] \(caller) skipped — user not logged in")
+          SleepRemoteLogger.log(.warn, step: caller, message: "skipped — user not logged in")
+          return false
+      }
+      guard HumangoHealthPlugin.delegate != nil else {
+          debugPrint("🔐 [HumangoHealth] \(caller) skipped — delegate not set. Assign HumangoHealthPlugin.delegate before starting monitoring.")
+          SleepRemoteLogger.log(.warn, step: caller, message: "skipped — delegate nil")
+          return false
+      }
+      return true
   }
 
   public static func register(with registrar: FlutterPluginRegistrar) {

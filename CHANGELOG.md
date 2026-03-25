@@ -1,3 +1,69 @@
+## 0.0.18 — 2026-03-26
+
+### Breaking Changes
+
+#### Delegate — `onWorkoutReady` now delivers `HuWorkout` instead of a JSON string
+
+The `HumangoHealthDataDelegate.onWorkoutReady` signature has changed:
+
+```swift
+// Before
+func onWorkoutReady(json: String, deviceId: String)
+
+// After
+func onWorkoutReady(workout: HuWorkout, deviceId: String)
+```
+
+The delegate now receives the assembled `HuWorkout` struct directly, giving the host app typed access to `workout.sport`, `workout.duration`, `workout.statistics`, `workout.routeData`, `workout.metadata`, etc. without parsing JSON. Call `workout.toDict()` → `JSONSerialization` if you still need a JSON string for upload.
+
+**Migration:** Update your `HumangoHealthDataDelegate` implementation to accept `workout: HuWorkout` instead of `json: String`. See [ExampleHealthDataHandler](example/ios/Runner/ExampleHealthDataHandler.swift) for the updated pattern.
+
+**Changed in:** `ios/Classes/HumangoHealthDataDelegate.swift`, `ios/Classes/WorkoutReading/RouteService.swift`, `example/ios/Runner/ExampleHealthDataHandler.swift`
+
+### Features
+
+#### Workout Scheduling — Expanded sport support (28 HKWorkoutActivityType mappings)
+
+The `Sport` enum now supports 28 workout activity types (up from 4), covering all sports used in the Humango training plans:
+
+| Category | Sports |
+|----------|--------|
+| **Endurance** | RUNNING, CYCLING, SWIMMING, POOL_SWIMMING, OPEN_WATER_SWIMMING, WALKING, HIKING, ROWING, CARDIO, HIIT, HYROX |
+| **Winter** | ALPINE_SKIING, NORDIC_SKIING, SNOWSHOEING |
+| **Strength & Flexibility** | STRENGTH, YOGA |
+| **Water** | PADDLING |
+| **Ball Sports** | SOCCER, TENNIS, SQUASH, PICKLEBALL, BADMINTON, BASEBALL, HOCKEY, VOLLEYBALL, HANDBALL, BASKETBALL |
+| **Multi-discipline** | MULTISPORT *(accepted in enum; scheduling deferred — requires SwimBikeRunWorkout builder)* |
+
+**Routing logic:**
+- **SWIMMING / POOL_SWIMMING / OPEN_WATER_SWIMMING** → `SingleGoalWorkout` (POOL_SWIMMING forces `.indoor` location; OPEN_WATER_SWIMMING forces `.outdoor`)
+- **MULTISPORT** → Skipped at scheduling time with a logged warning (SwimBikeRunWorkout builder is a future task)
+- **All other sports** → `CustomWorkout`, with automatic **fallback to `SingleGoalWorkout`** if `CustomWorkout` throws a `StateError` (e.g., ball sports that don't support interval blocks)
+
+**Validation** now derives valid values from `Sport.allCases` — no hardcoded array to maintain.
+
+**Changed in:** `ios/Classes/WorkoutScheduling/WorkoutInstanceModel.swift`, `ios/Classes/WorkoutScheduling/WorkoutPlanManager.swift`, `ios/Classes/WorkoutScheduling/WorkoutPlanBuilder.swift`, `ios/Classes/Extensions/HKWorkoutActivityType+Extensions.swift`, `lib/src/models/enums/workout_enums.dart`
+
+#### Background Monitoring — Individual subsystem start methods
+
+The host app can now start each monitoring subsystem independently instead of all-at-once:
+
+```swift
+// Start everything (existing — still works)
+HumangoHealthPlugin.shared?.startAllBackgroundMonitoring()
+
+// Or start individually:
+HumangoHealthPlugin.shared?.startActivityBackgroundMonitoring()      // workouts only
+HumangoHealthPlugin.shared?.startSleepBackgroundMonitoring()         // sleep only
+HumangoHealthPlugin.shared?.startHealthMetricsBackgroundMonitoring() // HRV / metrics only
+```
+
+All four methods share the same login + delegate precondition check. The existing `startAllBackgroundMonitoring()` is unchanged and continues to start all three subsystems.
+
+**Changed in:** `ios/Classes/HumangoHealthPlugin.swift`
+
+---
+
 ## 0.0.17 — 2026-03-25
 
 ### Breaking Changes

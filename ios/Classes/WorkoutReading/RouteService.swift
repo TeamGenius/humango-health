@@ -330,24 +330,11 @@ class RouteService {
 
     // push workout payload
     func pushWorkout(finalWorkout: HuWorkout) async {
-        guard let dict = finalWorkout.toDict() else {
-            debugPrint("[RouteService] pushWorkout: toDict() returned nil for \(finalWorkout.deviceActivityId)")
-            return
-        }
-        do {
-            let data = try JSONSerialization.data(withJSONObject: dict, options: [])
-            let deviceId = finalWorkout.deviceActivityId
-            guard let jsonString = String(data: data, encoding: .utf8) else {
-                debugPrint("[RouteService] pushWorkout: UTF-8 encoding failed for \(deviceId)")
-                return
-            }
-            if let delegate = HumangoHealthPlugin.delegate {
-                delegate.onWorkoutReady(json: jsonString, deviceId: deviceId)
-            } else {
-                debugPrint("[RouteService] delegate is nil — workout \(deviceId) not delivered")
-            }
-        } catch {
-            debugPrint("[RouteService] pushWorkout JSON error for \(finalWorkout.deviceActivityId): \(error)")
+        let deviceId = finalWorkout.deviceActivityId
+        if let delegate = HumangoHealthPlugin.delegate {
+            delegate.onWorkoutReady(workout: finalWorkout, deviceId: deviceId)
+        } else {
+            debugPrint("[RouteService] delegate is nil — workout \(deviceId) not delivered")
         }
     }
 

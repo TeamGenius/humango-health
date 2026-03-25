@@ -18,9 +18,9 @@ public protocol HumangoHealthDataDelegate: AnyObject {
 
     /// Called when a completed workout is ready for processing/upload.
     /// - Parameters:
-    ///   - json: Serialised `HuWorkout` JSON string.
+    ///   - workout: The assembled `HuWorkout` struct with all route, sample, and metadata fields populated.
     ///   - deviceId: The HealthKit workout UUID (`deviceActivityId`).
-    func onWorkoutReady(json: String, deviceId: String)
+    func onWorkoutReady(workout: HuWorkout, deviceId: String)
 
     /// Called when a processed sleep session payload is ready for processing/upload.
     /// - Parameters:
@@ -39,7 +39,7 @@ public protocol HumangoHealthDataDelegate: AnyObject {
 }
 
 public extension HumangoHealthDataDelegate {
-    func onWorkoutReady(json: String, deviceId: String) {}
+    func onWorkoutReady(workout: HuWorkout, deviceId: String) {}
     func onSleepSessionReady(json: String, sessionId: String) {}
     func onHealthMetricSamplesReady(json: String, metricType: String, fetchedAt: String) {}
 }

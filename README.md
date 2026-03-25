@@ -2,7 +2,7 @@
 
 A comprehensive Flutter plugin for integrating iOS HealthKit and WorkoutKit functionalities natively into the Humango platform.
 
-> **Version 0.0.17** — See [CHANGELOG](CHANGELOG.md) for what's new.
+> **Version 0.0.18** — See [CHANGELOG](CHANGELOG.md) for what's new.
 
 ## Table of Contents
 
@@ -30,7 +30,7 @@ A comprehensive Flutter plugin for integrating iOS HealthKit and WorkoutKit func
 | **User Session Management** | Login/logout gate for all background observers with automatic data cleanup on logout |
 | **Permission Handling** | Request, verify, and continuously monitor HealthKit permissions |
 | **Workout Scheduling** | Push workouts to Apple Watch via WorkoutKit with native deduplication |
-| **Workout Reading** | Real-time workout monitoring with foreground/background modes; completed workouts delivered via `HumangoHealthDataDelegate.onWorkoutReady` |
+| **Workout Reading** | Real-time workout monitoring with foreground/background modes; completed workouts delivered via `HumangoHealthDataDelegate.onWorkoutReady(workout:deviceId:)` |
 | **Sleep Data** | Fetch and monitor sleep analysis; foreground (Descriptor) + background (Observer) monitoring; grouping-based `calculateSleepPayload` algorithm (gap ≤ 2 h, span ≥ 3 h); finalized sessions delivered via `HumangoHealthDataDelegate.onSleepSessionReady` |
 | **Health Metrics (HRV, HR, etc.)** | One-shot reads via `HealthMetricsManager`; quantity-metric batches while monitoring use **`hrvUpdates`** in the **foreground** and **`HumangoHealthDataDelegate.onHealthMetricSamplesReady`** when the app is backgrounded or suspended (`getPendingHRVUpdates` is a legacy no-op — always `[]`) |
 | **Delegate Delivery** | Workouts, finalized sleep sessions, and quantity-metric batches are pushed through **`HumangoHealthDataDelegate`** — no plugin-owned payload queues or HTTP |
@@ -40,7 +40,7 @@ A comprehensive Flutter plugin for integrating iOS HealthKit and WorkoutKit func
 
 The plugin **reads HealthKit on the device** and **pushes** updates directly to your host app via the **`HumangoHealthDataDelegate`** protocol. Completed workout and finalized sleep session JSON is delivered through delegate callbacks registered in your iOS Runner — the plugin performs no HTTP and maintains no persistent queues.
 
-Implement `HumangoHealthDataDelegate` in your Runner (see [Delegate Delivery](#delegate-delivery)). After auth, the **host app** (native) must set `UserAuthStateManager.shared.isLoggedIn`, assign `HumangoHealthPlugin.delegate`, and call `HumangoHealthPlugin.shared?.startAllBackgroundMonitoring()` — there is **no** `UserSessionManager.setUserLoggedIn` in the published Dart API. The bundled app uses **`ExampleSessionChannel`** (`com.humango.example/session`) as a reference; copy that pattern in production. See **[example/](example/)** and [`example/README.md`](example/README.md).
+Implement `HumangoHealthDataDelegate` in your Runner (see [Delegate Delivery](#delegate-delivery)). After auth, the **host app** (native) must set `UserAuthStateManager.shared.isLoggedIn`, assign `HumangoHealthPlugin.delegate`, and call `HumangoHealthPlugin.shared?.startAllBackgroundMonitoring()` (or start individual subsystems with `startActivityBackgroundMonitoring()`, `startSleepBackgroundMonitoring()`, `startHealthMetricsBackgroundMonitoring()`) — there is **no** `UserSessionManager.setUserLoggedIn` in the published Dart API. The bundled app uses **`ExampleSessionChannel`** (`com.humango.example/session`) as a reference; copy that pattern in production. See **[example/](example/)** and [`example/README.md`](example/README.md).
 
 ## Documentation
 
@@ -99,7 +99,14 @@ The plugin persists login state across app launches so HealthKit observers can a
 - A freshly installed app (no user yet) would attempt to start background observers on every launch.
 - After logout, background observers could continue running with stale configuration.
 
-Workout, sleep, and quantity-metric auto-start also require **`HumangoHealthPlugin.delegate`** to be set — if the delegate is `nil`, `startAllBackgroundMonitoring()` is a no-op (see `HumangoHealthPlugin.swift`).
+Workout, sleep, and quantity-metric auto-start also require **`HumangoHealthPlugin.delegate`** to be set — if the delegate is `nil`, monitoring start methods are a no-op (see `HumangoHealthPlugin.swift`). You can start subsystems individually:
+
+```swift
+HumangoHealthPlugin.shared?.startAllBackgroundMonitoring()          // all three
+HumangoHealthPlugin.shared?.startActivityBackgroundMonitoring()      // workouts only
+HumangoHealthPlugin.shared?.startSleepBackgroundMonitoring()         // sleep only
+HumangoHealthPlugin.shared?.startHealthMetricsBackgroundMonitoring() // HRV / metrics only
+```
 
 ---
 
@@ -178,7 +185,7 @@ Calling **`HumangoHealthPlugin.shared?.logout()`** (or setting `isLoggedIn = fal
 Login and logout are **not** exposed as `UserSessionManager` Dart methods in the published package. Mirror the bundled **`ExampleSessionChannel` / `ExampleSessionManager`** pattern:
 
 1. **iOS Runner:** Register a MethodChannel (example: `com.humango.example/session`).
-2. **On login:** Set `UserAuthStateManager.shared.isLoggedIn = true`, optionally `userId`, assign `HumangoHealthPlugin.delegate`, then `HumangoHealthPlugin.shared?.startAllBackgroundMonitoring()`.
+2. **On login:** Set `UserAuthStateManager.shared.isLoggedIn = true`, optionally `userId`, assign `HumangoHealthPlugin.delegate`, then start monitoring — either `startAllBackgroundMonitoring()` or individual subsystems.
 3. **On logout:** Call `HumangoHealthPlugin.shared?.logout()` (stops monitors, clears data, sets `isLoggedIn = false`).
 
 From Flutter you invoke your channel (see `example/lib/example_session_manager.dart`).
@@ -200,7 +207,7 @@ The plugin delivers **workouts**, **finalized sleep sessions**, and **quantity-m
 ```swift
 // humango_health plugin
 public protocol HumangoHealthDataDelegate: AnyObject {
-    func onWorkoutReady(json: String, deviceId: String)
+    func onWorkoutReady(workout: HuWorkout, deviceId: String)
     func onSleepSessionReady(json: String, sessionId: String)
     func onHealthMetricSamplesReady(json: String, metricType: String, fetchedAt: String)
 }
@@ -208,9 +215,9 @@ public protocol HumangoHealthDataDelegate: AnyObject {
 
 Default implementations in `HumangoHealthDataDelegate.swift` are no-ops so you can override only what you need.
 
-| Callback | When called | `json` payload |
-|----------|------------|----------------|
-| `onWorkoutReady(json:deviceId:)` | A completed workout is detected (foreground or background) | Full workout JSON (same shape as `readWorkouts()`) |
+| Callback | When called | Payload |
+|----------|------------|----------|
+| `onWorkoutReady(workout:deviceId:)` | A completed workout is detected (foreground or background) | `HuWorkout` struct — call `workout.toDict()` for JSON |
 | `onSleepSessionReady(json:sessionId:)` | A sleep session is ready (HealthKit observer fired, window fetched, payload computed) | Flat aggregated sleep payload JSON |
 | `onHealthMetricSamplesReady(...)` | Quantity-metric observer fired (any app state); always called for batches | Same shape as each `hrvUpdates` event: `metricType`, `unit`, `samples`, `sampleCount`, `fetchedAt` |
 
@@ -258,8 +265,11 @@ final class ExampleHealthDataHandler: HumangoHealthDataDelegate {
 
     // MARK: - HumangoHealthDataDelegate
 
-    func onWorkoutReady(json: String, deviceId: String) {
-        print("[Delegate] \u{1F3C3} Workout ready \u2014 deviceId=\(deviceId)")
+    func onWorkoutReady(workout: HuWorkout, deviceId: String) {
+        print("[Delegate] \u{1F3C3} Workout ready \u2014 deviceId=\(deviceId), sport=\(workout.sport.name)")
+        guard let dict = workout.toDict(),
+              let data = try? JSONSerialization.data(withJSONObject: dict),
+              let json = String(data: data, encoding: .utf8) else { return }
         Task { await post(path: "activities", json: json) }
     }
 
@@ -1421,7 +1431,7 @@ void configureWorkoutTypes() async {
 
 ### Starting Workout Monitoring
 
-Start monitoring for new workouts. The native iOS side uses `HKAnchoredObjectQueryDescriptor` in the foreground and `HKObserverQuery` in the background. Completed workouts are delivered to your iOS Runner via `HumangoHealthDataDelegate.onWorkoutReady(json:deviceId:)` — there is no Dart stream to subscribe to.
+Start monitoring for new workouts. The native iOS side uses `HKAnchoredObjectQueryDescriptor` in the foreground and `HKObserverQuery` in the background. Completed workouts are delivered to your iOS Runner via `HumangoHealthDataDelegate.onWorkoutReady(workout:deviceId:)` — there is no Dart stream to subscribe to.
 
 ```dart
 import 'package:humango_health/humango_health.dart';
@@ -1432,7 +1442,7 @@ void startWorkoutMonitoring() async {
   await workoutManager.startMonitoring(
     DateTime.now().subtract(const Duration(days: 7)),
   );
-  // Workouts arrive via HumangoHealthDataDelegate.onWorkoutReady in AppDelegate.swift
+  // Workouts arrive via HumangoHealthDataDelegate.onWorkoutReady(workout:deviceId:) in AppDelegate.swift
 }
 
 void stopWorkoutMonitoring() async {
@@ -1457,8 +1467,8 @@ Each workout includes comprehensive data:
 
 | Mode | Technology | Data Delivery |
 |------|------------|---------------|
-| **Foreground** | `HKAnchoredObjectQueryDescriptor` | Completed workouts delivered via `HumangoHealthDataDelegate.onWorkoutReady(json:deviceId:)` |
-| **Background** | `HKObserverQuery` + `enableBackgroundDelivery()` | Same — delivered via `HumangoHealthDataDelegate.onWorkoutReady(json:deviceId:)`. The plugin does **not** POST workouts. |
+| **Foreground** | `HKAnchoredObjectQueryDescriptor` | Completed workouts delivered via `HumangoHealthDataDelegate.onWorkoutReady(workout:deviceId:)` |
+| **Background** | `HKObserverQuery` + `enableBackgroundDelivery()` | Same — delivered via `HumangoHealthDataDelegate.onWorkoutReady(workout:deviceId:)`. The plugin does **not** POST workouts. |
 
 ### Fetching All Workouts (No Preference Filter)
 

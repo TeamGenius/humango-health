@@ -21,31 +21,33 @@ enum WorkoutActivityType {
   elliptical,
   stairClimbing,
   triathlon,
+  paddleSports,
+  downhillSkiing,
+  mixedCardio,
+  crossCountrySkiing,
+  snowSports,
+  soccer,
+  tennis,
+  squash,
+  pickleball,
+  badminton,
+  baseball,
+  hockey,
+  volleyball,
+  handball,
+  basketball,
+  swimBikeRun,
   other,
 }
 
 /// Represents an iOS HKWorkoutSessionLocationType natively mapped.
-enum WorkoutLocation {
-  indoor,
-  outdoor,
-  unknown,
-}
+enum WorkoutLocation { indoor, outdoor, unknown }
 
 /// Represents the type of step in a CustomWorkout natively mapped.
-enum WorkoutStepType {
-  work,
-  recovery,
-  warmup,
-  cooldown,
-}
+enum WorkoutStepType { work, recovery, warmup, cooldown }
 
 /// Represents the type of goal natively mapped.
-enum WorkoutGoalType {
-  distance,
-  time,
-  energy,
-  open,
-}
+enum WorkoutGoalType { distance, time, energy, open }
 
 /// Represents the unit for a given WorkoutGoal natively mapped.
 enum WorkoutGoalUnit {
@@ -60,18 +62,7 @@ enum WorkoutGoalUnit {
 }
 
 /// Represents the type of alert for a WorkoutStep natively mapped.
-enum WorkoutAlertType {
-  heartRate,
-  pace,
-  power,
-  cadence,
-  time,
-  distance,
-}
+enum WorkoutAlertType { heartRate, pace, power, cadence, time, distance }
 
 /// Represents the metric scope for a given WorkoutAlert natively mapped.
-enum WorkoutAlertMetric {
-  current,
-  average,
-  zone,
-}
+enum WorkoutAlertMetric { current, average, zone }

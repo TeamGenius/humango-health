@@ -29,18 +29,26 @@ class WorkoutPlanBuilder {
         for workout in workouts {
             print("🏗 Building: \(workout.summary?.name ?? "Unnamed") | sport: \(workout.sport.rawValue)")
 
-            if workout.sport == .swimming {
-                // ── Swimming: route to SingleGoalWorkout ────────────────────
+            if workout.sport.isMultisport {
+                // ── Multisport: requires SwimBikeRunWorkout builder (not yet implemented) ──
+                print("⚠️ [Humango Health] MULTISPORT not yet supported for scheduling — skipping")
+                continue
+
+            } else if workout.sport.isSwimmingType {
+                // ── Swimming variants: route to SingleGoalWorkout ────────────
                 let item = buildSingleGoalItem(from: workout)
                 if item != nil {
                     scheduledItems.append(item!)
                 }
                
             } else {
-                // ── All other sports: CustomWorkout ──────────────────────────
+                // ── All other sports: CustomWorkout, with SingleGoal fallback ─
                 let item = try buildCustomWorkoutItem(from: workout)
-                if item != nil {
-                    scheduledItems.append(item!)
+                if let item = item {
+                    scheduledItems.append(item)
+                } else if let fallback = buildGenericSingleGoalItem(from: workout) {
+                    print("  ↩️ CustomWorkout failed — falling back to SingleGoalWorkout for \(workout.sport.rawValue)")
+                    scheduledItems.append(fallback)
                 }
             }
         }
@@ -59,10 +67,13 @@ class WorkoutPlanBuilder {
         let activity = workout.sport.hkWorkoutType   // .swimming
 
         // Location resolution:
+        // • Sport.impliedLocation present (POOL_SWIMMING → .indoor, OPEN_WATER_SWIMMING → .outdoor)
         // • pool_size present  → WorkoutLocation.indoor — skips the "Pool or Open Water?" Watch prompt
         // • pool_size absent   → derive from summary.indoor_outdoor, fall back to .unknown
         let location: HKWorkoutSessionLocationType
-        if workout.poolSize != nil {
+        if let implied = workout.sport.impliedLocation {
+            location = implied
+        } else if workout.poolSize != nil {
             location = WorkoutLocation.indoor.hkLocationType
         } else {
             location = workout.summary?.indoorOutdoor?.hkLocationType ?? .unknown
@@ -108,6 +119,44 @@ class WorkoutPlanBuilder {
 
         return ScheduledWorkoutItem(
             workout: .goal(swimWorkout),
+            scheduledDate: workout.date,
+            workoutModel: workout
+        )
+    }
+
+    // MARK: - Generic SingleGoalWorkout fallback (non-swimming)
+
+    /// Fallback for sports where CustomWorkout throws a StateError (e.g., ball sports).
+    /// Creates a simple SingleGoalWorkout using the sport's native HKWorkoutActivityType.
+    private func buildGenericSingleGoalItem(
+        from workout: WorkoutInstanceModelElement
+    ) -> ScheduledWorkoutItem? {
+
+        let activity = workout.sport.hkWorkoutType
+        let location = workout.summary?.indoorOutdoor?.hkLocationType ?? .unknown
+
+        let goal = resolveTopLevelGoal(
+            distance: workout.distance,
+            duration: workout.duration,
+            measurementUnit: workout.unit ?? workout.summary?.measurementUnit
+        )
+
+        print("  → Generic SingleGoalWorkout fallback | sport=\(workout.sport.rawValue) goal=\(goal) location=\(location)")
+
+        guard SingleGoalWorkout.supportsGoal(goal, activity: activity, location: location) else {
+            print("  ⚠️ SingleGoalWorkout does not support goal \(goal) for \(activity)/\(location) — falling back to .open")
+            let fallbackGoal: WorkoutGoal = .open
+            let sgWorkout = SingleGoalWorkout(activity: activity, location: location, goal: fallbackGoal)
+            return ScheduledWorkoutItem(
+                workout: .goal(sgWorkout),
+                scheduledDate: workout.date,
+                workoutModel: workout
+            )
+        }
+
+        let sgWorkout = SingleGoalWorkout(activity: activity, location: location, goal: goal)
+        return ScheduledWorkoutItem(
+            workout: .goal(sgWorkout),
             scheduledDate: workout.date,
             workoutModel: workout
         )

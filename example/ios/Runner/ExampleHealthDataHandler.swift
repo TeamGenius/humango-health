@@ -16,8 +16,14 @@ final class ExampleHealthDataHandler: HumangoHealthDataDelegate {
 
     private let apiBase = "https://humango-api-629346406456.us-central1.run.app"
 
-    func onWorkoutReady(json: String, deviceId: String) {
-        print("[Example][Delegate] 🏃 Workout ready — deviceId=\(deviceId), posting to /activities/\(athleteId)")
+    func onWorkoutReady(workout: HuWorkout, deviceId: String) {
+        print("[Example][Delegate] 🏃 Workout ready — deviceId=\(deviceId), sport=\(workout.sport.name), posting to /activities/\(athleteId)")
+        guard let dict = workout.toDict(),
+              let data = try? JSONSerialization.data(withJSONObject: dict),
+              let json = String(data: data, encoding: .utf8) else {
+            print("[Example][Delegate] ❌ Failed to serialise HuWorkout for \(deviceId)")
+            return
+        }
         Task { await postWorkout(json: json) }
     }
 

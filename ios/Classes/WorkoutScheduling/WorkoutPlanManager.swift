@@ -338,7 +338,7 @@ public class WorkoutPlanManager: NSObject {
             }
             
             // Validate sport
-            let validSports = ["RUNNING", "CYCLING", "SWIMMING", "STRENGTH"]
+            let validSports = Sport.allCases.map { $0.rawValue }
             if let sport = dict["sport"] as? String {
                 if !validSports.contains(sport.uppercased()) {
                     errors.append("Invalid value for 'sport': '\(sport)'. Must be one of: \(validSports.joined(separator: ", "))")
