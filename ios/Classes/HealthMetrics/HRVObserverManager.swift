@@ -2,9 +2,9 @@
 //  HRVObserverManager.swift
 //  humango_health
 //
-//  Observes HealthKit HRV (heartRateVariabilitySDNN) and automatically reads new data
-//  when it is added. Works in foreground, background, and when app is suspended
-//  (iOS wakes the app briefly via enableBackgroundDelivery).
+//  Observes HealthKit quantity samples (HRV, heart rate, resting HR, body composition, etc.)
+//  and reads new data when it is added. Works in foreground, background, and when the app is
+//  suspended (iOS wakes the app briefly via enableBackgroundDelivery).
 //
 
 import Foundation
@@ -15,14 +15,81 @@ import Flutter
 
 private struct HRVObserverKeys {
     static let monitoringEnabled = "com.humango.health.hrvMonitoringEnabled"
-    static let pendingUpdates = "com.humango.health.hrvPendingUpdates"
-    static let lastProcessedAnchor = "com.humango.health.hrvLastAnchor"
+    /// Removed — cleared on start so leftover JSON is not mistaken for live state.
+    static let legacyPendingUpdates = "com.humango.health.hrvPendingUpdates"
+    static let legacyLastAnchor = "com.humango.health.hrvLastAnchor"
 }
+
+// MARK: - Per-type fetch tuning
+
+/// Keys match `HealthMetricsManager` / Dart `HealthMetricType.key`.
+private struct ObservableQuantityMetric {
+    let metricKey: String
+    let identifier: HKQuantityTypeIdentifier
+    let unit: HKUnit
+    let unitLabel: String
+    /// HealthKit query lookback from now.
+    let lookbackDays: Int
+    let sampleLimit: Int
+}
+
+/// All quantity metrics we push to the host `HumangoHealthDataDelegate` and mirror on the
+/// (foreground-only) EventChannel. No UserDefaults queue — background delivery uses the delegate.
+/// Heart rate is high-volume: short window + higher cap; others use a modest weekly window.
+private let observedQuantityMetrics: [ObservableQuantityMetric] = [
+    ObservableQuantityMetric(
+        metricKey: "heartRateVariabilitySDNN",
+        identifier: .heartRateVariabilitySDNN,
+        unit: HKUnit.secondUnit(with: .milli),
+        unitLabel: "ms",
+        lookbackDays: 7,
+        sampleLimit: 100
+    ),
+    ObservableQuantityMetric(
+        metricKey: "heartRate",
+        identifier: .heartRate,
+        unit: HKUnit.count().unitDivided(by: .minute()),
+        unitLabel: "bpm",
+        lookbackDays: 1,
+        sampleLimit: 500
+    ),
+    ObservableQuantityMetric(
+        metricKey: "restingHeartRate",
+        identifier: .restingHeartRate,
+        unit: HKUnit.count().unitDivided(by: .minute()),
+        unitLabel: "bpm",
+        lookbackDays: 7,
+        sampleLimit: 100
+    ),
+    ObservableQuantityMetric(
+        metricKey: "bodyFatPercentage",
+        identifier: .bodyFatPercentage,
+        unit: HKUnit.percent(),
+        unitLabel: "%",
+        lookbackDays: 30,
+        sampleLimit: 100
+    ),
+    ObservableQuantityMetric(
+        metricKey: "bodyMass",
+        identifier: .bodyMass,
+        unit: HKUnit.gramUnit(with: .kilo),
+        unitLabel: "kg",
+        lookbackDays: 30,
+        sampleLimit: 100
+    ),
+    ObservableQuantityMetric(
+        metricKey: "height",
+        identifier: .height,
+        unit: HKUnit.meterUnit(with: .centi),
+        unitLabel: "cm",
+        lookbackDays: 365,
+        sampleLimit: 50
+    ),
+]
 
 // MARK: - HRVObserverManager
 
-/// Manages HKObserverQuery and background delivery for HRV so the app automatically
-/// reads HRV when HealthKit is updated (foreground, background, suspended).
+/// Manages HKObserverQuery + background delivery for quantity vitals and body metrics.
 public class HRVObserverManager: NSObject, AppLifecycleObserver {
     static let shared = HRVObserverManager()
 
@@ -33,7 +100,7 @@ public class HRVObserverManager: NSObject, AppLifecycleObserver {
         return f
     }()
 
-    private var observerQuery: HKObserverQuery?
+    private var observerQueries: [String: HKObserverQuery] = [:]
     private var isMonitoring = false
     private var eventSink: FlutterEventSink?
 
@@ -48,178 +115,172 @@ public class HRVObserverManager: NSObject, AppLifecycleObserver {
 
     // MARK: - Public API
 
-    /// Whether HRV monitoring has been started and is persisted (for auto-start on launch).
+    /// Whether metric observation has been started and is persisted (for auto-start on launch).
     var isMonitoringEnabled: Bool {
         get { UserDefaults.standard.bool(forKey: HRVObserverKeys.monitoringEnabled) }
         set { UserDefaults.standard.set(newValue, forKey: HRVObserverKeys.monitoringEnabled); UserDefaults.standard.synchronize() }
     }
 
-    /// Attach Flutter event sink to stream HRV updates when in foreground.
+    /// Attach Flutter event sink to stream metric updates when in foreground.
     func attachEventSink(_ sink: FlutterEventSink?) {
         self.eventSink = sink
     }
 
-    /// Start observing HRV. Registers HKObserverQuery and enables background delivery.
+    /// Start observing all configured quantity types and enable background delivery for each.
     func startMonitoring() {
         guard UserAuthStateManager.shared.isLoggedIn else {
-            print("📊 [HRV Observer] startMonitoring ignored — user not logged in")
+            print("📊 [Quantity metrics observer] startMonitoring ignored — user not logged in")
             return
         }
         guard HKHealthStore.isHealthDataAvailable() else {
-            print("📊 [HRV Observer] HealthKit not available")
-            return
-        }
-
-        guard let hrvType = HKQuantityType.quantityType(forIdentifier: .heartRateVariabilitySDNN) else {
-            print("📊 [HRV Observer] HRV type not available")
+            print("📊 [Quantity metrics observer] HealthKit not available")
             return
         }
 
         if isMonitoring {
-            print("📊 [HRV Observer] Already monitoring")
+            print("📊 [Quantity metrics observer] Already monitoring")
             return
         }
+
+        UserDefaults.standard.removeObject(forKey: HRVObserverKeys.legacyPendingUpdates)
+        UserDefaults.standard.removeObject(forKey: HRVObserverKeys.legacyLastAnchor)
 
         isMonitoring = true
         isMonitoringEnabled = true
 
-        // Enable background delivery so iOS wakes the app when new HRV is written
         Task {
-            do {
-                try await healthStore.enableBackgroundDelivery(for: hrvType, frequency: .immediate)
-                print("📊 [HRV Observer] Enabled background delivery for HRV (immediate)")
-            } catch {
-                print("📊 [HRV Observer] enableBackgroundDelivery failed: \(error)")
+            for config in observedQuantityMetrics {
+                guard let qType = HKQuantityType.quantityType(forIdentifier: config.identifier) else { continue }
+                do {
+                    try await healthStore.enableBackgroundDelivery(for: qType, frequency: .immediate)
+                    print("📊 [Quantity metrics observer] Enabled background delivery for \(config.metricKey)")
+                } catch {
+                    print("📊 [Quantity metrics observer] enableBackgroundDelivery failed (\(config.metricKey)): \(error)")
+                }
             }
         }
 
         let predicate = HKQuery.predicateForSamples(withStart: nil, end: nil, options: .strictStartDate)
-        observerQuery = HKObserverQuery(sampleType: hrvType, predicate: predicate) { [weak self] _, completion, error in
-            guard let self = self else { completion(); return }
-            defer { completion() }
-
-            if let error = error {
-                print("📊 [HRV Observer] Observer error: \(error)")
-                return
+        for config in observedQuantityMetrics {
+            guard let quantityType = HKQuantityType.quantityType(forIdentifier: config.identifier) else {
+                print("📊 [Quantity metrics observer] Type unavailable: \(config.metricKey)")
+                continue
             }
-
-            print("📊 [HRV Observer] HRV data changed in HealthKit — fetching new samples")
-            Task {
-                await self.fetchAndDeliverHRVUpdates()
+            let key = config.metricKey
+            let query = HKObserverQuery(sampleType: quantityType, predicate: predicate) { [weak self] _, completion, error in
+                guard let self = self else { completion(); return }
+                defer { completion() }
+                if let error = error {
+                    print("📊 [Quantity metrics observer] Observer error (\(key)): \(error)")
+                    return
+                }
+                print("📊 [Quantity metrics observer] HealthKit changed — \(key)")
+                Task {
+                    await self.fetchAndDeliverUpdates(metricKey: key)
+                }
             }
+            healthStore.execute(query)
+            observerQueries[key] = query
         }
 
-        if let query = observerQuery {
-            healthStore.execute(query)
-            print("📊 [HRV Observer] Started HRV observer (foreground + background + suspended)")
-            // Sync current state immediately so UI reflects latest (including after deletions)
-            Task { await self.fetchAndDeliverHRVUpdates() }
+        print("📊 [Quantity metrics observer] Started \(observerQueries.count) observer(s)")
+        Task {
+            for config in observedQuantityMetrics {
+                await fetchAndDeliverUpdates(metricKey: config.metricKey)
+            }
         }
     }
 
-    /// Stop observing and disable background delivery.
+    /// Stop observing and disable background delivery for all types.
     func stopMonitoring() {
-        guard let hrvType = HKQuantityType.quantityType(forIdentifier: .heartRateVariabilitySDNN) else { return }
-
-        if let query = observerQuery {
+        for (_, query) in observerQueries {
             healthStore.stop(query)
-            observerQuery = nil
         }
+        observerQueries.removeAll()
 
-        healthStore.disableBackgroundDelivery(for: hrvType) { success, error in
-            if let error = error {
-                print("📊 [HRV Observer] disableBackgroundDelivery error: \(error)")
-            } else {
-                print("📊 [HRV Observer] Disabled background delivery for HRV")
+        for config in observedQuantityMetrics {
+            guard let qType = HKQuantityType.quantityType(forIdentifier: config.identifier) else { continue }
+            healthStore.disableBackgroundDelivery(for: qType) { success, error in
+                if let error = error {
+                    print("📊 [Quantity metrics observer] disableBackgroundDelivery error (\(config.metricKey)): \(error)")
+                } else if success {
+                    print("📊 [Quantity metrics observer] Disabled background delivery for \(config.metricKey)")
+                }
             }
         }
 
         isMonitoring = false
         isMonitoringEnabled = false
         eventSink = nil
-        print("📊 [HRV Observer] Stopped HRV monitoring")
+        print("📊 [Quantity metrics observer] Stopped all metric monitoring")
     }
 
-    /// Clear all state (e.g. on logout). Stops monitoring and clears pending data.
+    /// Clear all state (e.g. on logout). Stops monitoring.
     func stopAndClearAll() {
         stopMonitoring()
-        UserDefaults.standard.removeObject(forKey: HRVObserverKeys.pendingUpdates)
-        UserDefaults.standard.removeObject(forKey: HRVObserverKeys.lastProcessedAnchor)
+        UserDefaults.standard.removeObject(forKey: HRVObserverKeys.legacyPendingUpdates)
+        UserDefaults.standard.removeObject(forKey: HRVObserverKeys.legacyLastAnchor)
         UserDefaults.standard.synchronize()
-        print("📊 [HRV Observer] Cleared all state")
+        print("📊 [Quantity metrics observer] Cleared all state")
     }
 
-    /// Fetch HRV updates collected while app was in background. Returns and clears pending list.
+    /// Legacy API: pending batches are no longer stored. Use `HumangoHealthDataDelegate`
+    /// (`onHealthMetricSamplesReady`) for background delivery; returns `[]` always.
     func retrievePendingHRVUpdates() -> [[String: Any]] {
-        guard let data = UserDefaults.standard.data(forKey: HRVObserverKeys.pendingUpdates),
-              let array = try? JSONSerialization.jsonObject(with: data) as? [[String: Any]] else {
-            return []
-        }
-        UserDefaults.standard.removeObject(forKey: HRVObserverKeys.pendingUpdates)
-        UserDefaults.standard.synchronize()
-        if !array.isEmpty {
-            print("📊 [HRV Observer] Retrieved \(array.count) pending HRV update(s)")
-        }
-        return array
+        []
     }
 
-    /// Auto-start HRV monitoring on app launch when the user is logged in and monitoring was left enabled.
-    /// Call from plugin register() and after login.
+    /// Auto-start on app launch when the user is logged in and monitoring was left enabled.
     func autoStartIfConfigured() {
         guard UserAuthStateManager.shared.isLoggedIn else {
-            print("📊 [HRV Observer] Auto-start skipped — user not logged in")
+            print("📊 [Quantity metrics observer] Auto-start skipped — user not logged in")
             return
         }
         guard !isMonitoring else {
-            print("📊 [HRV Observer] Auto-start skipped — already monitoring")
+            print("📊 [Quantity metrics observer] Auto-start skipped — already monitoring")
             return
         }
         guard isMonitoringEnabled else {
-            print("📊 [HRV Observer] Auto-start skipped — HRV monitoring not enabled")
+            print("📊 [Quantity metrics observer] Auto-start skipped — monitoring not enabled")
             return
         }
         startMonitoring()
-        print("📊 [HRV Observer] Auto-started HRV monitoring from persisted preference")
+        print("📊 [Quantity metrics observer] Auto-started from persisted preference")
     }
 
     // MARK: - AppLifecycleObserver
 
     public func appDidEnterForeground() {
-        // Deliver any pending updates from background first
-        let pending = retrievePendingHRVUpdates()
-        if !pending.isEmpty, let sink = eventSink {
-            for update in pending {
-                DispatchQueue.main.async { sink(update) }
+        Task {
+            for config in observedQuantityMetrics {
+                await fetchAndDeliverUpdates(metricKey: config.metricKey)
             }
         }
-        // Always fetch latest from HealthKit so UI reflects adds/deletions done in Health app
-        Task { await self.fetchAndDeliverHRVUpdates() }
     }
 
-    public func appDidEnterBackground() {
-        // No-op; observer keeps running and will store to UserDefaults when it fires in background
-    }
+    public func appDidEnterBackground() {}
 
     // MARK: - Fetch and Deliver
 
-    /// Fetches recent HRV samples and delivers to Flutter (foreground) or stores for later (background).
-    private func fetchAndDeliverHRVUpdates() async {
-        guard let hrvType = HKQuantityType.quantityType(forIdentifier: .heartRateVariabilitySDNN) else { return }
+    private func config(forMetricKey key: String) -> ObservableQuantityMetric? {
+        observedQuantityMetrics.first { $0.metricKey == key }
+    }
 
-        let unit = HKUnit.secondUnit(with: .milli)
+    private func fetchAndDeliverUpdates(metricKey: String) async {
+        guard let config = config(forMetricKey: metricKey) else { return }
+        guard let quantityType = HKQuantityType.quantityType(forIdentifier: config.identifier) else { return }
+
         let endDate = Date()
-        let startDate = Calendar.current.date(byAdding: .day, value: -7, to: endDate) ?? endDate
-
+        let startDate = Calendar.current.date(byAdding: .day, value: -config.lookbackDays, to: endDate) ?? endDate
         let predicate = HKQuery.predicateForSamples(withStart: startDate, end: endDate, options: .strictStartDate)
         let sortDescriptor = NSSortDescriptor(key: HKSampleSortIdentifierStartDate, ascending: false)
-        let limit = 100
 
         do {
             let samples = try await withCheckedThrowingContinuation { (cont: CheckedContinuation<[HKQuantitySample], Error>) in
                 let query = HKSampleQuery(
-                    sampleType: hrvType,
+                    sampleType: quantityType,
                     predicate: predicate,
-                    limit: limit,
+                    limit: config.sampleLimit,
                     sortDescriptors: [sortDescriptor]
                 ) { _, results, error in
                     if let error = error {
@@ -231,35 +292,51 @@ public class HRVObserverManager: NSObject, AppLifecycleObserver {
                 healthStore.execute(query)
             }
 
-            let sampleDicts = samples.map { convertToDict($0, unit: unit) }
-            // Always deliver payload (including empty) so deletions in Health app are reflected
+            let sampleDicts = samples.map {
+                convertToDict($0, unit: config.unit, unitLabel: config.unitLabel)
+            }
             let payload: [String: Any] = [
-                "metricType": "heartRateVariabilitySDNN",
-                "unit": "ms",
+                "metricType": config.metricKey,
+                "unit": config.unitLabel,
                 "samples": sampleDicts,
                 "sampleCount": sampleDicts.count,
                 "fetchedAt": isoFormatter.string(from: Date()),
             ]
 
+            deliverMetricPayloadToDelegate(payload)
+
             if AppLifecycleManager.shared.isInForeground, let sink = eventSink {
                 DispatchQueue.main.async { sink(payload) }
-                print("📊 [HRV Observer] Delivered \(sampleDicts.count) HRV sample(s) to Flutter stream")
+                print("📊 [Quantity metrics observer] Delivered \(sampleDicts.count) sample(s) to Flutter (\(metricKey))")
             } else {
-                print("📊 [HRV Observer] Received HRV in background — sampleCount=\(sampleDicts.count), fetchedAt=\(payload["fetchedAt"] ?? ""), will store for later")
-                storePendingUpdate(payload)
-                print("📊 [HRV Observer] Stored \(sampleDicts.count) HRV sample(s) for later (background)")
+                print("📊 [Quantity metrics observer] Background batch (\(metricKey)) — delegated only, count=\(sampleDicts.count)")
             }
         } catch {
-            print("📊 [HRV Observer] Fetch error: \(error)")
+            print("📊 [Quantity metrics observer] Fetch error (\(metricKey)): \(error)")
         }
     }
 
-    private func convertToDict(_ sample: HKQuantitySample, unit: HKUnit) -> [String: Any] {
+    private func deliverMetricPayloadToDelegate(_ payload: [String: Any]) {
+        guard let delegate = HumangoHealthPlugin.delegate else { return }
+        guard let jsonData = try? JSONSerialization.data(withJSONObject: payload, options: []),
+              let jsonString = String(data: jsonData, encoding: .utf8),
+              let fetchedAt = payload["fetchedAt"] as? String,
+              let metricType = payload["metricType"] as? String else {
+            print("📊 [Quantity metrics observer] Delegate delivery skipped — JSON serialization failed")
+            return
+        }
+        DispatchQueue.main.async {
+            delegate.onHealthMetricSamplesReady(json: jsonString, metricType: metricType, fetchedAt: fetchedAt)
+        }
+        print("📊 [Quantity metrics observer] Delegated batch — metricType=\(metricType), count=\(payload["sampleCount"] ?? 0)")
+    }
+
+    private func convertToDict(_ sample: HKQuantitySample, unit: HKUnit, unitLabel: String) -> [String: Any] {
         let value = sample.quantity.doubleValue(for: unit)
         var dict: [String: Any] = [
             "uuid": sample.uuid.uuidString,
             "value": value,
-            "unit": "ms",
+            "unit": unitLabel,
             "startDate": isoFormatter.string(from: sample.startDate),
             "endDate": isoFormatter.string(from: sample.endDate),
             "sourceName": sample.sourceRevision.source.name,
@@ -283,18 +360,5 @@ public class HRVObserverManager: NSObject, AppLifecycleObserver {
             dict["metadata"] = meta
         }
         return dict
-    }
-
-    private func storePendingUpdate(_ payload: [String: Any]) {
-        var existing: [[String: Any]] = []
-        if let data = UserDefaults.standard.data(forKey: HRVObserverKeys.pendingUpdates),
-           let arr = try? JSONSerialization.jsonObject(with: data) as? [[String: Any]] {
-            existing = arr
-        }
-        existing.append(payload)
-        if let data = try? JSONSerialization.data(withJSONObject: existing) {
-            UserDefaults.standard.set(data, forKey: HRVObserverKeys.pendingUpdates)
-            UserDefaults.standard.synchronize()
-        }
     }
 }

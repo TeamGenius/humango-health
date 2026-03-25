@@ -138,7 +138,11 @@ enum SleepSessionStatus {
 /// After freeze window ends (12 PM), any accumulated session is auto-finalized.
 @available(iOS 14.0, *)
 class SleepSessionDetector {
-    
+
+    private let stateLock = NSLock()
+    /// Process-local only — not written to `UserDefaults` (host app handles persistence via delegate if needed).
+    private var memoryBackedSessionState: SleepSessionState?
+
     private let config: SleepSessionConfig
     private let isoFormatter: ISO8601DateFormatter = {
         let formatter = ISO8601DateFormatter()
@@ -148,6 +152,7 @@ class SleepSessionDetector {
     
     init(config: SleepSessionConfig = .default) {
         self.config = config
+        UserDefaults.standard.removeObject(forKey: "com.humango.health.sleepSessionState")
     }
     
     // MARK: - Freeze Window Check
@@ -377,30 +382,27 @@ class SleepSessionDetector {
         return minutesSinceDeep < config.deepSleepAbsenceWindowMinutes
     }
     
-    // MARK: - Persistence
-    
-    private static let stateKey = "com.humango.health.sleepSessionState"
-    
-    /// Saves session state to UserDefaults for persistence across background wakes.
+    // MARK: - State retention (memory only)
+
+    /// Saves session state in memory for the lifetime of this detector instance.
     func saveState(_ state: SleepSessionState) {
-        if let data = try? JSONEncoder().encode(state) {
-            UserDefaults.standard.set(data, forKey: Self.stateKey)
-            print("🛏️ [SleepDetector] Saved session state: \(state.segmentCount) segments, \(String(format: "%.0f", state.totalSleepMinutes))m sleep")
-        }
+        stateLock.lock()
+        memoryBackedSessionState = state
+        stateLock.unlock()
+        print("🛏️ [SleepDetector] Saved session state: \(state.segmentCount) segments, \(String(format: "%.0f", state.totalSleepMinutes))m sleep")
     }
-    
-    /// Loads session state from UserDefaults.
+
     func loadState() -> SleepSessionState {
-        guard let data = UserDefaults.standard.data(forKey: Self.stateKey),
-              let state = try? JSONDecoder().decode(SleepSessionState.self, from: data) else {
-            return .empty
-        }
-        return state
+        stateLock.lock()
+        let state = memoryBackedSessionState
+        stateLock.unlock()
+        return state ?? .empty
     }
-    
-    /// Clears persisted session state (call after session is processed).
+
     func clearState() {
-        UserDefaults.standard.removeObject(forKey: Self.stateKey)
+        stateLock.lock()
+        memoryBackedSessionState = nil
+        stateLock.unlock()
         print("🛏️ [SleepDetector] Cleared session state")
     }
     

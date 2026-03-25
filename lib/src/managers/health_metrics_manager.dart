@@ -15,14 +15,16 @@ import '../models/health_metric_sample.dart';
 ///
 /// Provides typed access to:
 /// - **HRV** (heartRateVariabilitySDNN) – standard deviation of heartbeat intervals in ms
+/// - **Heart Rate** – beat-to-beat / timed HR samples in bpm
 /// - **Resting Heart Rate** – estimated lowest resting HR in bpm
 /// - **Body Fat %** – body fat percentage (0-1 from HealthKit, displayed as %)
 /// - **Weight** (bodyMass) – in kg
 /// - **Height** – in cm
 ///
-/// HRV auto-read: Call [startHRVMonitoring] to observe HealthKit for new HRV data.
-/// Updates are delivered via [hrvUpdates] stream when in foreground, or via
-/// [getPendingHRVUpdates] after returning from background/suspended.
+/// Quantity metrics auto-read: Call [startHRVMonitoring] to observe HealthKit for new
+/// samples (HRV, heart rate, resting HR, body fat, weight, height). Foreground updates
+/// use [hrvUpdates]. Background delivery is via iOS `HumangoHealthDataDelegate`
+/// (`onHealthMetricSamplesReady`); [getPendingHRVUpdates] always returns an empty list.
 ///
 /// Example usage:
 /// ```dart
@@ -184,8 +186,20 @@ class HealthMetricsManager {
     DateTime? startDate,
     DateTime? endDate,
     int? limit,
-  }) => getMetric(
+  }  ) => getMetric(
     HealthMetricType.heartRateVariabilitySDNN,
+    startDate: startDate,
+    endDate: endDate,
+    limit: limit,
+  );
+
+  /// Fetch heart rate samples (not the same as resting heart rate).
+  Future<HealthMetricResponse> getHeartRate({
+    DateTime? startDate,
+    DateTime? endDate,
+    int? limit,
+  }) => getMetric(
+    HealthMetricType.heartRate,
     startDate: startDate,
     endDate: endDate,
     limit: limit,
@@ -243,30 +257,29 @@ class HealthMetricsManager {
   // HRV automatic updates (background / suspended)
   // ---------------------------------------------------------------------------
 
-  /// Stream of HRV updates when new data is written to HealthKit.
+  /// Stream of quantity-metric updates when new data is written to HealthKit.
+  /// Check `metricType` on each map (`heartRate`, `heartRateVariabilitySDNN`, etc.).
   /// Only emits while the app is in foreground and [startHRVMonitoring] is active.
-  /// When the app was in background/suspended, use [getPendingHRVUpdates] after
-  /// resuming to get updates that were collected while away.
+  /// After background, rely on the host delegate or pull via [getMetric] / [getAllMetrics].
   Stream<Map<String, dynamic>> get hrvUpdates =>
       _hrvEventChannel.receiveBroadcastStream().cast<Map<dynamic, dynamic>>().map(
             (m) => Map<String, dynamic>.from(m),
           );
 
-  /// Start observing HealthKit for new HRV data. Works in foreground, background,
-  /// and when app is suspended (iOS wakes the app briefly when new HRV is saved).
-  /// Call once after user logs in; persists across app launches when user stays logged in.
+  /// Start observing HealthKit for quantity vitals and body metrics (HRV, heart rate,
+  /// resting HR, body fat, weight, height). Works in foreground, background, and when
+  /// suspended. Call once after login; persists across launches when left enabled.
   Future<void> startHRVMonitoring() async {
     await _channel.invokeMethod('startHRVMonitoring');
   }
 
-  /// Stop HRV observation and background delivery.
+  /// Stop quantity-metric observation and background delivery for all observed types.
   Future<void> stopHRVMonitoring() async {
     await _channel.invokeMethod('stopHRVMonitoring');
   }
 
-  /// Returns HRV updates that were collected while the app was in background or
-  /// suspended. Each element has the same shape as a single [getMetric] response
-  /// (metricType, unit, samples, sampleCount, fetchedAt). Clears the pending list.
+  /// Legacy hook: always `[]`. Background metric batches are delivered to
+  /// `HumangoHealthDataDelegate.onHealthMetricSamplesReady` on iOS, not queued here.
   Future<List<Map<String, dynamic>>> getPendingHRVUpdates() async {
     final result = await _channel.invokeMethod<List<dynamic>>('getPendingHRVUpdates');
     if (result == null) return [];

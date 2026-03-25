@@ -10,7 +10,7 @@ Pod::Spec.new do |s|
   Flutter plugin for integrating iOS HealthKit and WorkoutKit into other apps.
   Capture health metrics (HRV, resting HR, body fat, weight, height), read and
   monitor workouts, push scheduled workouts to Apple Watch, and read/monitor
-  sleep data. Workout delivery is stream/UserDefaults only; sleep sessions are queued locally (no plugin HTTP). iOS 18.0+.
+  sleep data. Workouts, sleep payloads, and metric batches are delivered to the host app via `HumangoHealthDataDelegate` (no plugin HTTP). iOS 18.0+.
                        DESC
   s.homepage         = 'https://github.com/humango/humango-health'
   s.license          = { :file => '../LICENSE' }

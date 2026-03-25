@@ -3,12 +3,13 @@
 //  humango_health
 //
 //  Models for HealthKit quantity-type metrics:
-//  HRV, resting heart rate, body fat %, weight (bodyMass), height
+//  HRV, heart rate, resting heart rate, body fat %, weight (bodyMass), height
 //
 
 /// Supported health metric types that map to HKQuantityTypeIdentifiers.
 enum HealthMetricType {
   heartRateVariabilitySDNN,
+  heartRate,
   restingHeartRate,
   bodyFatPercentage,
   bodyMass,
@@ -22,6 +23,8 @@ enum HealthMetricType {
     switch (this) {
       case HealthMetricType.heartRateVariabilitySDNN:
         return 'HRV (SDNN)';
+      case HealthMetricType.heartRate:
+        return 'Heart Rate';
       case HealthMetricType.restingHeartRate:
         return 'Resting Heart Rate';
       case HealthMetricType.bodyFatPercentage:
@@ -38,6 +41,8 @@ enum HealthMetricType {
     switch (this) {
       case HealthMetricType.heartRateVariabilitySDNN:
         return 'ms';
+      case HealthMetricType.heartRate:
+        return 'bpm';
       case HealthMetricType.restingHeartRate:
         return 'bpm';
       case HealthMetricType.bodyFatPercentage:
@@ -315,6 +320,7 @@ class AllHealthMetricsResponse {
 
   /// Quick access helpers
   HealthMetricResponse? get hrv => metrics['heartRateVariabilitySDNN'];
+  HealthMetricResponse? get heartRate => metrics['heartRate'];
   HealthMetricResponse? get restingHeartRate => metrics['restingHeartRate'];
   HealthMetricResponse? get bodyFatPercentage => metrics['bodyFatPercentage'];
   HealthMetricResponse? get weight => metrics['bodyMass'];

@@ -332,8 +332,6 @@ private class MockSleepDelegate: NSObject, HumangoHealthDataDelegate {
     var lastJson: String?
     var lastSessionId: String?
 
-    func onWorkoutReady(json: String, deviceId: String) {}
-
     func onSleepSessionReady(json: String, sessionId: String) {
         callCount += 1
         lastJson = json

@@ -4,6 +4,11 @@ import UIKit
 
 public class PermissionManager {
     public static let shared = PermissionManager()
+
+    private init() {
+        UserDefaults.standard.removeObject(forKey: "com.humango.health.lastKnownPermissions")
+    }
+
     var healthStore: HKHealthStore { SharedHealthKitStore.shared }
     
     // MARK: - EventChannel sink (holds the live stream connection to Flutter)
@@ -56,8 +61,9 @@ public class PermissionManager {
         }
     }
     
-    // MARK: - Cached previous authorization snapshot (used to detect regressions)
-    private let cacheKey = "com.humango.health.lastKnownPermissions"
+    // MARK: - In-memory authorization snapshot (session + process lifetime only; not persisted)
+    private let authSnapshotLock = NSLock()
+    private var inMemoryAuthSnapshot: [String: String] = [:]
     
     // Comprehensive quantity identifiers for all workout and health data types
     // Hard-coded authorization regardless of user workout preferences
@@ -463,8 +469,8 @@ public class PermissionManager {
         return result
     }
     
-    // MARK: - Snapshot persistence (UserDefaults)
-    
+    // MARK: - Snapshot (memory only)
+
     private func persistAuthSnapshot(_ map: [String: Any]) {
         var snapshot: [String: String] = [:]
         for (key, value) in map {
@@ -472,15 +478,22 @@ public class PermissionManager {
                 snapshot[key] = strValue
             }
         }
-        UserDefaults.standard.set(snapshot, forKey: cacheKey)
+        authSnapshotLock.lock()
+        inMemoryAuthSnapshot = snapshot
+        authSnapshotLock.unlock()
     }
-    
+
     private func loadAuthSnapshot() -> [String: String] {
-        return UserDefaults.standard.dictionary(forKey: cacheKey) as? [String: String] ?? [:]
+        authSnapshotLock.lock()
+        let copy = inMemoryAuthSnapshot
+        authSnapshotLock.unlock()
+        return copy
     }
-    
+
     private func clearAuthSnapshot() {
-        UserDefaults.standard.removeObject(forKey: cacheKey)
+        authSnapshotLock.lock()
+        inMemoryAuthSnapshot = [:]
+        authSnapshotLock.unlock()
     }
 }
 

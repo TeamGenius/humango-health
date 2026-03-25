@@ -28,6 +28,10 @@ final class ExampleHealthDataHandler: HumangoHealthDataDelegate {
         Task { await postSleep(json: json) }
     }
 
+    func onHealthMetricSamplesReady(json: String, metricType: String, fetchedAt: String) {
+        print("[Example][Delegate] 📊 Metric batch — type=\(metricType), fetchedAt=\(fetchedAt) (example logs only; wire upload if needed)")
+    }
+
     // MARK: - Remote Log
 
     private func logSleepPayload(json: String, sessionId: String) {

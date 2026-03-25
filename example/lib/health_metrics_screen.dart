@@ -39,18 +39,8 @@ class _HealthMetricsScreenState extends State<HealthMetricsScreen>
     if (!mounted) return;
     if (!active) return;
     _hrvSubscription = _metricsManager.hrvUpdates.listen(_onHrvUpdate);
-    final pending = await _metricsManager.getPendingHRVUpdates();
     if (!mounted) return;
-    setState(() {
-      _hrvMonitoringActive = true;
-      if (pending.isNotEmpty) {
-        final total = pending.fold<int>(
-          0,
-          (s, e) => s + ((e['sampleCount'] as int?) ?? 0),
-        );
-        _lastHrvUpdate = '$total from background';
-      }
-    });
+    setState(() => _hrvMonitoringActive = true);
   }
 
   @override
@@ -108,26 +98,18 @@ class _HealthMetricsScreenState extends State<HealthMetricsScreen>
     await _metricsManager.startHRVMonitoring();
     _hrvSubscription?.cancel();
     _hrvSubscription = _metricsManager.hrvUpdates.listen(_onHrvUpdate);
-    final pending = await _metricsManager.getPendingHRVUpdates();
     if (mounted) {
-      setState(() {
-        _hrvMonitoringActive = true;
-        if (pending.isNotEmpty) {
-          final total = pending.fold<int>(
-            0,
-            (s, e) => s + ((e['sampleCount'] as int?) ?? 0),
-          );
-          _lastHrvUpdate = '$total from background';
-        }
-      });
+      setState(() => _hrvMonitoringActive = true);
     }
   }
 
   void _onHrvUpdate(Map<String, dynamic> update) {
     if (!mounted) return;
     final count = update['sampleCount'] as int? ?? 0;
+    final metricType = update['metricType'] as String? ?? 'metric';
     setState(() {
-      _lastHrvUpdate = count == 0 ? 'No HRV data' : '$count HRV sample(s)';
+      _lastHrvUpdate =
+          count == 0 ? 'No $metricType data' : '$count sample(s) · $metricType';
     });
     _fetchAllMetrics();
   }
@@ -347,6 +329,12 @@ class _HealthMetricsScreenState extends State<HealthMetricsScreen>
             Colors.purple,
           ),
           _buildMetricCard(
+            HealthMetricType.heartRate,
+            _allMetrics!.heartRate,
+            Icons.favorite_border,
+            Colors.pink,
+          ),
+          _buildMetricCard(
             HealthMetricType.restingHeartRate,
             _allMetrics!.restingHeartRate,
             Icons.favorite,
@@ -414,7 +402,7 @@ class _HealthMetricsScreenState extends State<HealthMetricsScreen>
                 const SizedBox(width: 12),
                 const Expanded(
                   child: Text(
-                    'HRV auto-read',
+                    'Quantity metrics auto-read',
                     style: TextStyle(
                       fontWeight: FontWeight.w600,
                       fontSize: 16,
@@ -431,8 +419,8 @@ class _HealthMetricsScreenState extends State<HealthMetricsScreen>
             const SizedBox(height: 4),
             Text(
               _hrvMonitoringActive
-                  ? 'Updates when Health app (or Watch) writes new HRV. Works in background and when app is closed.'
-                  : 'Turn on to automatically read HRV when HealthKit is updated.',
+                  ? 'Updates when HealthKit changes HRV, heart rate, resting HR, body fat, weight, or height. Works in background.'
+                  : 'Turn on to observe those quantity types and stream updates to Flutter (and the native delegate).',
               style: TextStyle(fontSize: 12, color: Colors.grey[700]),
             ),
             if (_lastHrvUpdate != null) ...[

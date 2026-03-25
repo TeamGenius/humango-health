@@ -5,7 +5,7 @@ public class HumangoHealthPlugin: NSObject, FlutterPlugin {
   /// The plugin instance registered with Flutter. Weak so it doesn't prevent deallocation.
   public static weak var shared: HumangoHealthPlugin?
 
-  /// Host-app delegate that receives workout and sleep data ready for upload.
+  /// Host-app delegate that receives workout, sleep, and quantity-metric batches ready for upload.
   /// Set this after the user logs in (e.g. from `UserSessionChannel`).
   public static var delegate: HumangoHealthDataDelegate?
 

@@ -3,7 +3,7 @@
 //  humango_health
 //
 //  Generic HKQuantityType reader for body metrics and vital signs.
-//  Supports: HRV, resting heart rate, body fat %, weight (bodyMass), height
+//  Supports: HRV, heart rate, resting heart rate, body fat %, weight (bodyMass), height
 //
 
 import Flutter
@@ -24,6 +24,11 @@ private let metricDescriptors: [String: MetricDescriptor] = [
         identifier: .heartRateVariabilitySDNN,
         unit: HKUnit.secondUnit(with: .milli),
         unitLabel: "ms"
+    ),
+    "heartRate": MetricDescriptor(
+        identifier: .heartRate,
+        unit: HKUnit.count().unitDivided(by: .minute()),
+        unitLabel: "bpm"
     ),
     "restingHeartRate": MetricDescriptor(
         identifier: .restingHeartRate,
