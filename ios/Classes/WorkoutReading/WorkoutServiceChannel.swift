@@ -216,14 +216,9 @@ class WorkoutServiceChannel: NSObject {
     // MARK: - Helper Methods for Route & Quantity Data
     
     private func fetchWorkoutRoutes(_ workout: HKWorkout) async throws -> [HKWorkoutRoute] {
-        // Check authorization for workout routes
-        let routeType = HKSeriesType.workoutRoute()
-        let authStatus = healthStore.authorizationStatus(for: routeType)
-        guard authStatus == .sharingAuthorized else {
-            debugPrint("Read Workouts: Workout route not authorized")
-            return []
-        }
-        
+        // Note: authorizationStatus(for:) only reflects *write* permission.
+        // Read permission is intentionally hidden by HealthKit — just run the query
+        // and it returns empty results if the user hasn't granted read access.
         debugPrint("Read Workouts: Fetching routes for workout \(workout.uuid.uuidString)")
         
         let pred = HKQuery.predicateForObjects(from: workout)
@@ -285,14 +280,9 @@ class WorkoutServiceChannel: NSObject {
                     guard let qType = HKObjectType.quantityType(forIdentifier: id) else {
                         return (idx, [])
                     }
-                    
-                    // Check authorization status before querying
-                    let authStatus = self.healthStore.authorizationStatus(for: qType)
-                    guard authStatus == .sharingAuthorized else {
-                        // Skip this type if not authorized
-                        return (idx, [])
-                    }
-                    
+                    // Note: authorizationStatus(for:) only reflects *write* permission.
+                    // Read permission is intentionally hidden by HealthKit — just run the
+                    // query and handle errors gracefully below.
                     do {
                         let pred = HKQuery.predicateForSamples(
                             withStart: workout.startDate,

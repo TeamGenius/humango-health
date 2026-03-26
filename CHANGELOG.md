@@ -1,3 +1,21 @@
+## 0.0.20 — 2026-03-26
+
+### Bug Fixes
+
+#### Workout Reading — Route data and quantity samples were always empty
+
+Fixed a critical bug where `fetchWorkoutRoutes` and `fetchAllQuantitySeriesForWorkout` silently returned empty results for every workout.
+
+`HKHealthStore.authorizationStatus(for:)` only reflects **write** (sharing) authorization — Apple intentionally hides read authorization status for privacy. Because the plugin requests read-only access (not write) for routes and quantity types, the status was always `.sharingDenied` / `.notDetermined`, causing both guards (`guard authStatus == .sharingAuthorized`) to bail with `return []` on every fetch.
+
+**Fix:** Removed both incorrect `sharingAuthorized` guards and let HealthKit queries run directly. Queries already return empty results if the user hasn't granted read access, and errors are caught by the existing `do/catch` at each call site.
+
+**Impact:** Workouts with GPS route data now correctly return route locations and quantity samples (e.g. a 34-minute outdoor cycling workout previously showing 0 GPS points now returns 2043 route points and 2740 quantity samples).
+
+**Changed in:** `ios/Classes/WorkoutReading/WorkoutServiceChannel.swift`
+
+---
+
 ## 0.0.19 — 2026-03-26
 
 ### Improvements

@@ -70,17 +70,43 @@ class _WorkoutReadScreenState extends State<WorkoutReadScreen> {
     });
 
     try {
-      final now = DateTime.now();
-      final startDate = now.subtract(const Duration(days: 7));
+      final endDate = DateTime.now();
+      final startDate = endDate.subtract(const Duration(days: 7));
 
-      final rawJsons = await _readManager.readWorkouts(startDate);
-      debugPrint('Fetched ${rawJsons.length} raw workout JSON strings');
+      debugPrint(
+        'WorkoutReadScreen: readWorkouts '
+        'start=${startDate.toUtc().toIso8601String()} '
+        'end=${endDate.toUtc().toIso8601String()}',
+      );
 
-      final parsed = rawJsons
-          .map(
-            (e) => WorkoutData.fromJson(jsonDecode(e) as Map<String, dynamic>),
-          )
-          .toList();
+      final rawJsons = await _readManager.readWorkouts(
+        startDate,
+        endDate: endDate,
+      );
+      debugPrint(
+        'WorkoutReadScreen: received ${rawJsons.length} raw JSON string(s)',
+      );
+
+      final parsed = <WorkoutData>[];
+      for (final (index, raw) in rawJsons.indexed) {
+        final w = WorkoutData.fromJson(
+          jsonDecode(raw) as Map<String, dynamic>,
+        );
+        final routeStatus = w.route.isNotEmpty
+            ? '✅ ${w.route.length} GPS point(s)'
+            : '⚠️ NO route locations';
+        debugPrint(
+          'WorkoutReadScreen: [${index + 1}/${rawJsons.length}] '
+          'id=${w.workoutId.length > 8 ? w.workoutId.substring(0, 8) : w.workoutId}… '
+          'sport=${w.activityType} '
+          'start=${w.startTime.toLocal().toString().substring(0, 16)} '
+          'duration=${w.duration.toStringAsFixed(0)}s '
+          'distance=${w.distance != null ? '${w.distance!.toStringAsFixed(0)} m' : 'nil'} '
+          'route=$routeStatus '
+          'series=${w.quantitySeries.length} type(s)',
+        );
+        parsed.add(w);
+      }
 
       // Newest first
       parsed.sort((a, b) => b.startTime.compareTo(a.startTime));
@@ -88,7 +114,9 @@ class _WorkoutReadScreenState extends State<WorkoutReadScreen> {
       setState(() {
         _fetchedWorkouts = parsed;
         _statusMessage =
-            'Fetched ${parsed.length} workout(s) from past 7 days.';
+            'Fetched ${parsed.length} workout(s) '
+            'from ${startDate.toLocal().toString().substring(0, 10)} '
+            'to ${endDate.toLocal().toString().substring(0, 10)}.';
       });
     } catch (e) {
       setState(() => _statusMessage = 'Error fetching workouts: $e');
