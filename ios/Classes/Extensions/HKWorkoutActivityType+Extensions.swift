@@ -64,6 +64,22 @@ extension HKWorkoutActivityType {
         case .wrestling: return "Wrestling"
         case .mindAndBody: return "Mind & Body"
         case .preparationAndRecovery: return "Preparation & Recovery"
+        // Additional activity types
+        case .australianFootball: return "Australian Football"
+        case .bowling:            return "Bowling"
+        case .curling:            return "Curling"
+        case .fencing:            return "Fencing"
+        case .play:               return "Play"
+        case .racquetball:        return "Racquetball"
+        case .tableTennis:        return "Table Tennis"
+        case .trackAndField:      return "Track and Field"
+        case .snowboarding:       return "Snowboarding"
+        case .stairs:             return "Stairs"
+        case .stepTraining:       return "Step Training"
+        case .taiChi:             return "Tai Chi"
+        case .discSports:         return "Disc Sports"
+        case .fitnessGaming:      return "Fitness Gaming"
+        case .archery:            return "Archery"
         default: return "Other"
         }
     }

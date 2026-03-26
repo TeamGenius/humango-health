@@ -1,3 +1,27 @@
+## 0.0.19 — 2026-03-26
+
+### Improvements
+
+#### Workout Reading — `HuWorkout` and `HuRouteData` refactored and hardened
+
+`HuWorkout` and `HuRouteData` have been rewritten to match the server-side API contract and eliminate the processing errors that occurred when the previous implementation produced malformed payloads.
+
+**Key changes:**
+
+- **`struct` instead of `class`** — Both types are now Swift value-types (`struct`), making them thread-safe and copy-safe by default.
+- **Type-safe `workoutActivities`** — Changed from `[Any]` to `[HKWorkoutActivity]?`, removing all `compactMap`/`as?` casts at use sites.
+- **ISO 8601 timestamps in `HuRouteData.toDict()`** — Location and sample timestamps now use `ISO8601DateFormatter` with `.withInternetDateTime` + `.withFractionalSeconds` instead of Swift string interpolation (`"\(date)"`), which produced non-standard locale-dependent strings and caused server parse failures.
+- **`@available(iOS 16.0, *)` annotation** — Added to both types; matches the minimum iOS version used by `HKAnchoredObjectQueryDescriptor` and related APIs.
+- **`public` access modifiers** — All properties, `init`, and methods are now `public` for correct framework visibility.
+- **Circular `rawJson` reference removed** — The previous `toDict()` had `dict["rawJson"] = dict` which caused `JSONSerialization` to throw and silently return `nil` for every workout.
+- **`formatMetadata()` extended** — Added `isScheduledWorkout` → `IS_SCHEDULED_WORKOUT` and `scheduledWorkoutId` → `SCHEDULED_WORKOUT_ID` key mappings so scheduled workout linkage is preserved in the API payload.
+- **`HuRouteData.empty()` static helper** — Added for convenience at call sites that synthesise workouts without route data.
+- **`toDict()` / `toJson()` split** — `toJson()` now delegates to `toDict()` instead of duplicating the entire serialisation logic.
+
+**Changed in:** `ios/Classes/WorkoutReading/HuWorkout.swift`
+
+---
+
 ## 0.0.18 — 2026-03-26
 
 ### Breaking Changes
