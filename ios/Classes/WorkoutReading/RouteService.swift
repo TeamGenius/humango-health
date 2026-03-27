@@ -190,15 +190,22 @@ class RouteService {
 
         observer = HKObserverQuery(sampleType: HKSeriesType.workoutRoute(), predicate: nil) { [weak self] _, completion, error in
                 guard let self = self else { completion(); return }
-                defer { completion() }
+                // NOTE: Do NOT use `defer { completion() }` here.
+                // completion() must be called AFTER all async work (fetch → build → push)
+                // finishes so iOS keeps the app alive for the full pipeline.
+                // Calling it early via defer lets iOS re-suspend the app before the
+                // route data is fetched, built, and delivered to the delegate.
 
                 if let error = error {
                     debugPrint("[RouteService] workoutRoute observer error: \(error)")
+                    completion()
                     return
                 }
 
             Task {
                 await self.fetchWorkoutRoute()
+                // Signal HealthKit only after the full fetch → build → push chain completes.
+                completion()
             }
             }
 
@@ -240,20 +247,36 @@ class RouteService {
         guard !workoutRoutes.isEmpty else {
             routeDebounceTask?.cancel()
             routeDebounceTask = nil
-            Task { self.handleCompleteWorkout(location: []) }
+            await handleCompleteWorkout(location: [])
             return
         }
 
         routeDebounceTask?.cancel()
         let workoutUUID = workout.uuid.uuidString
 
+        // In background mode, skip the debounce entirely.
+        // iOS background execution is ~30 s after the HealthKit completion signal;
+        // a 60-second wait means the push never happens in background.
+        // Deduplication in WorkoutRecordStore prevents duplicate pushes when the
+        // observer fires again with the same route data.
+        if !AppLifecycleManager.shared.isInForeground {
+            do {
+                let locationsData: [CLLocation] = try await buildRouteData(from: workoutRoutes)
+                await handleCompleteWorkout(location: locationsData)
+            } catch {
+                debugPrint("[RouteService] background route build error (\(workoutUUID)): \(error)")
+            }
+            return
+        }
+
+        // Foreground: debounce to coalesce multiple rapid route updates.
         routeDebounceTask = Task { [weak self] in
             do {
                 try await Task.sleep(nanoseconds: RouteService.routeUpdateWaitSeconds * 1_000_000_000)
                 guard let self = self, !Task.isCancelled else { return }
                 do {
                     let locationsData: [CLLocation] = try await self.buildRouteData(from: self.workoutRoutes)
-                    self.handleCompleteWorkout(location: locationsData)
+                    await self.handleCompleteWorkout(location: locationsData)
                 } catch {
                     debugPrint("[RouteService] route build error after debounce (\(workoutUUID)): \(error)")
                 }
@@ -294,45 +317,49 @@ class RouteService {
     }
 
     // MARK: - Build HuWorkout and push
-    func handleCompleteWorkout(location: [CLLocation]) {
-        Task {
-            do {
-                let series = try await fetchAllQuantitySeriesForWorkoutOrdered(workout)
+    // Made `async` so callers can await the full fetch → build → push pipeline.
+    // This is required for the background path where HealthKit's completion() must
+    // not be called until the delegate has been notified (onWorkoutReady).
+    func handleCompleteWorkout(location: [CLLocation]) async {
+        do {
+            let series = try await fetchAllQuantitySeriesForWorkoutOrdered(workout)
 
-                var dictMetaData = workout.metadata ?? [String:Any]()
-                dictMetaData["dataSource"] = workout.sourceRevision.source.name
-                dictMetaData["iosVersion"] = ProcessInfo.processInfo.operatingSystemVersionString
+            var dictMetaData = workout.metadata ?? [String:Any]()
+            dictMetaData["dataSource"] = workout.sourceRevision.source.name
+            dictMetaData["iosVersion"] = ProcessInfo.processInfo.operatingSystemVersionString
 
-                let scheduledWorkoutId = await getScheduledWorkoutId(workout)
-                dictMetaData["isScheduledWorkout"] = scheduledWorkoutId != nil
-                if let scheduleId = scheduledWorkoutId {
-                    dictMetaData["scheduledWorkoutId"] = scheduleId
-                }
-
-                let huWorkout = HuWorkout(
-                    distance: workout.totalDistance,
-                    duration: workout.duration,
-                    sport: workout.workoutActivityType,
-                    start_time: workout.startDate,
-                    routeData: HuRouteData(samples: series, locations: location),
-                    deviceActivityId: workout.uuid.uuidString,
-                    statistics: workout.allStatistics,
-                    events: workout.workoutEvents,
-                    workoutActivities: workout.workoutActivities,
-                    metadata: dictMetaData
-                )
-                await pushWorkout(finalWorkout: huWorkout)
-            } catch {
-                debugPrint("[RouteService] handleCompleteWorkout error: \(error)")
+            let scheduledWorkoutId = await getScheduledWorkoutId(workout)
+            dictMetaData["isScheduledWorkout"] = scheduledWorkoutId != nil
+            if let scheduleId = scheduledWorkoutId {
+                dictMetaData["scheduledWorkoutId"] = scheduleId
             }
+
+            let huWorkout = HuWorkout(
+                distance: workout.totalDistance,
+                duration: workout.duration,
+                sport: workout.workoutActivityType,
+                start_time: workout.startDate,
+                routeData: HuRouteData(samples: series, locations: location),
+                deviceActivityId: workout.uuid.uuidString,
+                statistics: workout.allStatistics,
+                events: workout.workoutEvents,
+                workoutActivities: workout.workoutActivities,
+                metadata: dictMetaData
+            )
+            await pushWorkout(finalWorkout: huWorkout)
+        } catch {
+            debugPrint("[RouteService] handleCompleteWorkout error: \(error)")
         }
     }
 
     // push workout payload
+    // `await` the delegate so the upload completes before completion() is signalled
+    // to HealthKit. Without `await` iOS re-suspends the app before the network
+    // request from the host app's handler finishes.
     func pushWorkout(finalWorkout: HuWorkout) async {
         let deviceId = finalWorkout.deviceActivityId
         if let delegate = HumangoHealthPlugin.delegate {
-            delegate.onWorkoutReady(workout: finalWorkout, deviceId: deviceId)
+            await delegate.onWorkoutReady(workout: finalWorkout, deviceId: deviceId)
         } else {
             debugPrint("[RouteService] delegate is nil — workout \(deviceId) not delivered")
         }

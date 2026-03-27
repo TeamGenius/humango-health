@@ -593,7 +593,10 @@ public class SleepDataManager: NSObject, AppLifecycleObserver {
         if let delegate = HumangoHealthPlugin.delegate {
             lastDeliveredSessionId = sessionId
             lastDeliveredWakeTime  = wakeTime
-            delegate.onSleepSessionReady(json: jsonString, sessionId: sessionId)
+            // `await` so the host app's upload completes before we return.
+            // completion() is called after this function returns, so iOS keeps
+            // the app alive for the full fetch → compute → upload pipeline.
+            await delegate.onSleepSessionReady(json: jsonString, sessionId: sessionId)
             SleepRemoteLogger.log(.info, step: "deliver", message: "onSleepSessionReady delivered", context: [
                 "sessionId": sessionId,
                 "wakeTime":  wakeTime,

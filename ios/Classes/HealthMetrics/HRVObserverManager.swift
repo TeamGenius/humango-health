@@ -169,14 +169,18 @@ public class HRVObserverManager: NSObject, AppLifecycleObserver {
             let key = config.metricKey
             let query = HKObserverQuery(sampleType: quantityType, predicate: predicate) { [weak self] _, completion, error in
                 guard let self = self else { completion(); return }
-                defer { completion() }
+                // NOTE: Do NOT use `defer { completion() }` here.
+                // completion() must be called AFTER fetchAndDeliverUpdates finishes
+                // so iOS keeps the app alive for the full fetch → delegate pipeline.
                 if let error = error {
                     print("📊 [Quantity metrics observer] Observer error (\(key)): \(error)")
+                    completion()
                     return
                 }
                 print("📊 [Quantity metrics observer] HealthKit changed — \(key)")
                 Task {
                     await self.fetchAndDeliverUpdates(metricKey: key)
+                    completion()
                 }
             }
             healthStore.execute(query)
@@ -303,7 +307,7 @@ public class HRVObserverManager: NSObject, AppLifecycleObserver {
                 "fetchedAt": isoFormatter.string(from: Date()),
             ]
 
-            deliverMetricPayloadToDelegate(payload)
+            await deliverMetricPayloadToDelegate(payload)
 
             if AppLifecycleManager.shared.isInForeground, let sink = eventSink {
                 DispatchQueue.main.async { sink(payload) }
@@ -316,7 +320,11 @@ public class HRVObserverManager: NSObject, AppLifecycleObserver {
         }
     }
 
-    private func deliverMetricPayloadToDelegate(_ payload: [String: Any]) {
+    // Made `async` so `fetchAndDeliverUpdates` can `await` it, keeping the full
+    // pipeline synchronous with the HealthKit completion() handler.
+    // Removed DispatchQueue.main.async — the delegate method is now async and
+    // handles any threading requirements internally.
+    private func deliverMetricPayloadToDelegate(_ payload: [String: Any]) async {
         guard let delegate = HumangoHealthPlugin.delegate else { return }
         guard let jsonData = try? JSONSerialization.data(withJSONObject: payload, options: []),
               let jsonString = String(data: jsonData, encoding: .utf8),
@@ -325,9 +333,7 @@ public class HRVObserverManager: NSObject, AppLifecycleObserver {
             print("📊 [Quantity metrics observer] Delegate delivery skipped — JSON serialization failed")
             return
         }
-        DispatchQueue.main.async {
-            delegate.onHealthMetricSamplesReady(json: jsonString, metricType: metricType, fetchedAt: fetchedAt)
-        }
+        await delegate.onHealthMetricSamplesReady(json: jsonString, metricType: metricType, fetchedAt: fetchedAt)
         print("📊 [Quantity metrics observer] Delegated batch — metricType=\(metricType), count=\(payload["sampleCount"] ?? 0)")
     }
 

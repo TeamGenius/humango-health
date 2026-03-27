@@ -38,11 +38,12 @@ final class WorkoutService: AppLifecycleObserver {
         
         // Register with AppLifecycleManager for automatic foreground/background switching
         AppLifecycleManager.shared.addObserver(self)
-        debugPrint("Read Workouts: WorkoutService initialized with native lifecycle observer")
+        debugPrint("[Humango] WorkoutService: initialized — startDate=\(startDate), lifecycle observer registered")
     }
     
     deinit {
         AppLifecycleManager.shared.removeObserver(self)
+        debugPrint("[Humango] WorkoutService: deallocated")
     }
     
     func handleSpotImporting(){
@@ -50,7 +51,6 @@ final class WorkoutService: AppLifecycleObserver {
         importCycling =  UserDefaults.standard.bool(forKey: UserDefaultsKeys.isImportCycling)
         importSwimming =  UserDefaults.standard.bool(forKey: UserDefaultsKeys.isImportSwimming)
 
-        
         if !importRunning {
             excludeImporting.append(running)
         }
@@ -60,7 +60,7 @@ final class WorkoutService: AppLifecycleObserver {
         if !importSwimming {
             excludeImporting.append(swimminng)
         }
-       
+        debugPrint("[Humango] WorkoutService: import prefs — running=\(importRunning) cycling=\(importCycling) swimming=\(importSwimming) excluded=\(excludeImporting)")
     }
 
     // Call this ONCE after you create the service.
@@ -69,10 +69,10 @@ final class WorkoutService: AppLifecycleObserver {
     func start() async {
         authorized = true
         if AppLifecycleManager.shared.isInForeground {
-            debugPrint("Read Workouts: WorkoutService: start → foreground mode")
+            debugPrint("[Humango] WorkoutService: start → foreground mode")
             startLiveUpdates()
         } else {
-            debugPrint("Read Workouts: WorkoutService: start → background mode")
+            debugPrint("[Humango] WorkoutService: start → background mode (cold background relaunch)")
             startBackgroundMonitoring()
         }
     }
@@ -80,60 +80,76 @@ final class WorkoutService: AppLifecycleObserver {
     // MARK: - AppLifecycleObserver (Native iOS lifecycle)
     
     func appDidEnterForeground() {
+        debugPrint("[Humango] WorkoutService: appDidEnterForeground — switching to foreground mode")
+        SleepRemoteLogger.log(.info, step: "lifecycle", message: "appDidEnterForeground", subsystem: "WorkoutService")
         enterForegroundMode()
     }
     
     func appDidEnterBackground() {
+        debugPrint("[Humango] WorkoutService: appDidEnterBackground — switching to background mode")
+        SleepRemoteLogger.log(.info, step: "lifecycle", message: "appDidEnterBackground", subsystem: "WorkoutService")
         enterBackgroundMode()
     }
 
     // MARK: - Foreground / Background switches
 
-    // Call to switch into background mode: stop live streaming & enable background observer
     func enterBackgroundMode() {
-        guard authorized else { return }
-        
-        // stop foreground live streaming
+        guard authorized else {
+            debugPrint("[Humango] WorkoutService: enterBackgroundMode skipped — not authorized")
+            SleepRemoteLogger.log(.warn, step: "enterBackgroundMode", message: "skipped — not authorized", subsystem: "WorkoutService")
+            return
+        }
+        let activeRouteCount = routeServices.count
+        debugPrint("[Humango] WorkoutService: enterBackgroundMode — stopping live updates, starting background observer (activeRouteServices=\(activeRouteCount))")
+        SleepRemoteLogger.log(.info, step: "enterBackgroundMode", message: "entering background mode", context: [
+            "activeRouteServices": activeRouteCount,
+        ], subsystem: "WorkoutService")
         stopLiveUpdates()
-        // start background observer/wake-ups
         startBackgroundMonitoring()
-        debugPrint("Read Workouts: WorkoutService -> entered BACKGROUND mode via native lifecycle")
+        debugPrint("[Humango] WorkoutService: entered BACKGROUND mode")
 
-        // Propagate to retained route services
         routeServiceQueue.async(flags: .barrier) {
-            for (_, rs) in self.routeServices {
+            for (id, rs) in self.routeServices {
+                debugPrint("[Humango] WorkoutService: propagating background mode → RouteService(\(id))")
                 rs.enterBackgroundMode()
             }
         }
     }
 
-    // Call to switch back into foreground mode: stop background monitoring & start live streaming
     func enterForegroundMode() {
-        guard authorized else { return }
-        
-        // stop background observer/wake-ups
+        guard authorized else {
+            debugPrint("[Humango] WorkoutService: enterForegroundMode skipped — not authorized")
+            SleepRemoteLogger.log(.warn, step: "enterForegroundMode", message: "skipped — not authorized", subsystem: "WorkoutService")
+            return
+        }
+        let activeRouteCount = routeServices.count
+        debugPrint("[Humango] WorkoutService: enterForegroundMode — stopping background observer, starting live updates (activeRouteServices=\(activeRouteCount))")
+        SleepRemoteLogger.log(.info, step: "enterForegroundMode", message: "entering foreground mode", context: [
+            "activeRouteServices": activeRouteCount,
+        ], subsystem: "WorkoutService")
         stopBackgroundMonitoring()
-        // start live streaming in foreground
         startLiveUpdates()
-        debugPrint("Read Workouts: WorkoutService -> entered FOREGROUND mode via native lifecycle")
+        debugPrint("[Humango] WorkoutService: entered FOREGROUND mode")
 
-        // Propagate to retained route services
         routeServiceQueue.async(flags: .barrier) {
-            for (_, rs) in self.routeServices {
+            for (id, rs) in self.routeServices {
+                debugPrint("[Humango] WorkoutService: propagating foreground mode → RouteService(\(id))")
                 rs.enterForegroundMode()
             }
         }
 
-        // opportunistic cleanup
         pruneOldRouteServices()
     }
 
-   
-    // Live stream while app is open
-    func startLiveUpdates() {
-        guard authorized else { return }
+    // MARK: - Live Updates (Foreground)
 
-        // OPEN-ENDED: start at startDate, no endDate so future workouts match
+    func startLiveUpdates() {
+        guard authorized else {
+            debugPrint("[Humango] WorkoutService: startLiveUpdates skipped — not authorized")
+            return
+        }
+        debugPrint("[Humango] WorkoutService: startLiveUpdates — opening HKAnchoredObjectQueryDescriptor stream from \(startDate)")
+
         let livePredicate = HKQuery.predicateForSamples(
             withStart: startDate,
             end: nil,
@@ -149,48 +165,41 @@ final class WorkoutService: AppLifecycleObserver {
         updateTask?.cancel()
         updateTask = Task { [weak self] in
             guard let self = self else { return }
+            debugPrint("[Humango] WorkoutService: live update stream started")
             do {
                 for try await update in stream {
                     self.anchor = update.newAnchor
-
+                    let count = update.addedSamples.count
+                    debugPrint("[Humango] WorkoutService: live stream update — \(count) new workout(s)")
                     for w in update.addedSamples {
-                        debugPrint("Read Workouts: WorkoutService: Live Workout")
-                        debugPrint("Read Workouts: WorkoutService: workout activity type :\(w.workoutActivityType.name)")
-                        print("Workout UUID: \(w.uuid)")
-                        
-                        // Check workoutPlan asynchronously without blocking the stream
-                        // Task {
-                        //     do {
-                        //         let plan = try await w.workoutPlan
-                        //         if let plan = plan {
-                        //             print("✅ WorkoutPlan found - ID: \(plan.id)")
-                        //         } else {
-                        //             print("ℹ️ No WorkoutPlan attached (manual workout)")
-                        //         }
-                        //     } catch {
-                        //         print("⚠️ Error accessing workoutPlan: \(error)")
-                        //     }
-                        // }
-                        
-                        dump(w)
+                        debugPrint("[Humango] WorkoutService: live workout received — uuid=\(w.uuid.uuidString) type=\(w.workoutActivityType.name) start=\(w.startDate) end=\(w.endDate)")
                         self.handleWorkouts(workout: w)
                     }
                 }
+                debugPrint("[Humango] WorkoutService: live update stream ended normally")
             } catch {
-                print("Read Workouts: WorkoutService: Live updates error: \(error)")
+                debugPrint("[Humango] WorkoutService: live update stream error — \(error)")
             }
         }
     }
 
-    func stopLiveUpdates() { updateTask?.cancel(); updateTask = nil }
+    func stopLiveUpdates() {
+        guard updateTask != nil else { return }
+        debugPrint("[Humango] WorkoutService: stopLiveUpdates — cancelling live stream task")
+        updateTask?.cancel()
+        updateTask = nil
+    }
 
-    // MARK: - Initial fetch (anchored query snapshot)
-    
+    // MARK: - Initial / Background Fetch (anchored query snapshot)
+
     private func fetchWorkouts(upToNow: Bool = false) async {
-        guard authorized else { return }
-        
-        // For initial fetch or background wake-ups
+        guard authorized else {
+            debugPrint("[Humango] WorkoutService: fetchWorkouts skipped — not authorized")
+            return
+        }
         let endDate = upToNow ? Date() : Date().addingTimeInterval(-WorkoutService.liveWindowSeconds)
+        debugPrint("[Humango] WorkoutService: fetchWorkouts — querying \(startDate) → \(endDate) (upToNow=\(upToNow))")
+
         let predicate = HKQuery.predicateForSamples(
             withStart: startDate,
             end: endDate,
@@ -205,54 +214,61 @@ final class WorkoutService: AppLifecycleObserver {
         do {
             let result = try await desc.result(for: healthStore)
             self.anchor = result.newAnchor
-            
-            debugPrint("Read Workouts: WorkoutService: fetchWorkouts found \(result.addedSamples.count) workouts")
-            
+            debugPrint("[Humango] WorkoutService: fetchWorkouts — found \(result.addedSamples.count) workout(s)")
             for workout in result.addedSamples {
+                debugPrint("[Humango] WorkoutService: fetchWorkouts — handling uuid=\(workout.uuid.uuidString) type=\(workout.workoutActivityType.name)")
                 handleWorkouts(workout: workout)
             }
         } catch {
-            print("Read Workouts: WorkoutService: fetchWorkouts error: \(error)")
+            debugPrint("[Humango] WorkoutService: fetchWorkouts error — \(error)")
         }
     }
     
 
-    // MARK: - Background observer/wake-ups
+    // MARK: - Background Monitoring (HKObserverQuery)
 
     func startBackgroundMonitoring() {
         guard authorized else {
-               debugPrint("Read Workouts: WorkoutService: startBackgroundMonitoring: not authorized — skipping")
-               return
-           }
+            debugPrint("[Humango] WorkoutService: startBackgroundMonitoring skipped — not authorized")
+            return
+        }
+        debugPrint("[Humango] WorkoutService: startBackgroundMonitoring — enabling background delivery + installing observer")
+        SleepRemoteLogger.log(.info, step: "startBackgroundMonitoring", message: "registering background delivery + observer", subsystem: "WorkoutService")
 
-        // 1) Enable background delivery for workouts and workout routes (async)
-            Task {
-                do {
-                    try await healthStore.enableBackgroundDelivery(for: .workoutType(), frequency: .immediate)
-                    debugPrint("Read Workouts: WorkoutService: enabled background delivery for workoutType (immediate)")
-                } catch {
-                    debugPrint("Read Workouts: WorkoutService: enableBackgroundDelivery(workoutType) failed: \(error)")
-                }
+        Task {
+            do {
+                try await healthStore.enableBackgroundDelivery(for: .workoutType(), frequency: .immediate)
+                debugPrint("[Humango] WorkoutService: enableBackgroundDelivery(workoutType) — success (immediate)")
+                SleepRemoteLogger.log(.info, step: "startBackgroundMonitoring", message: "background delivery enabled", subsystem: "WorkoutService")
+            } catch {
+                debugPrint("[Humango] WorkoutService: enableBackgroundDelivery(workoutType) — failed: \(error)")
+                SleepRemoteLogger.log(.error, step: "startBackgroundMonitoring", message: "enableBackgroundDelivery failed", context: ["error": "\(error)"], subsystem: "WorkoutService")
             }
+        }
 
-        // Use a broad predicate (or nil) so you don’t miss changes
         observer = HKObserverQuery(sampleType: .workoutType(), predicate: nil) { [weak self] _, completion, error in
             guard let self = self else { completion(); return }
             // NOTE: Do NOT use `defer { completion() }` here.
-            // completion() must be called AFTER the async fetch/deliver pipeline finishes
-            // so iOS does not suspend the app mid-delivery.
+            // completion() must be called AFTER the full async fetch → route → delegate
+            // pipeline finishes so iOS does not suspend the app mid-delivery.
 
+            let fireTime = Date()
             if let error = error {
-                debugPrint("Read Workouts: WorkoutService: workout observer error: \(error)")
+                debugPrint("[Humango] WorkoutService: background observer error at \(fireTime) — \(error)")
+                SleepRemoteLogger.log(.error, step: "observer", message: "observer error", context: ["error": "\(error)"], subsystem: "WorkoutService")
                 completion()
                 return
             }
 
-            debugPrint("Read Workouts: WorkoutService: workout observer fired (background) — fetching workouts")
+            debugPrint("[Humango] WorkoutService: background observer fired at \(fireTime) — starting fetch pipeline")
+            SleepRemoteLogger.log(.info, step: "observer_fired", message: "background observer fired — starting fetch", context: [
+                "fireTime": ISO8601DateFormatter().string(from: fireTime),
+            ], subsystem: "WorkoutService")
             Task {
-                // use upToNow: true so predicate end = now (includes newly finished workouts)
                 await self.fetchWorkouts(upToNow: true)
                 self.pruneOldRouteServices()
+                debugPrint("[Humango] WorkoutService: background observer pipeline complete — signalling completion()")
+                SleepRemoteLogger.log(.info, step: "observer_fired", message: "pipeline complete — signalling completion", subsystem: "WorkoutService")
                 // Signal HealthKit AFTER all async work completes so iOS keeps the
                 // app alive for the full fetch → route → delegate pipeline.
                 completion()
@@ -261,79 +277,68 @@ final class WorkoutService: AppLifecycleObserver {
 
         if let q = observer {
             healthStore.execute(q)
-            debugPrint("Read Workouts: WorkoutService: installed workout observer")
+            debugPrint("[Humango] WorkoutService: background observer installed and executing")
         }
     }
 
     func stopBackgroundMonitoring() {
         if let q = observer {
-                healthStore.stop(q)
+            healthStore.stop(q)
             observer = nil
-                debugPrint("Read Workouts: WorkoutService: removed workout observer")
-            }
-      
-        // Disable background delivery per-type (completion-based API)
+            debugPrint("[Humango] WorkoutService: stopBackgroundMonitoring — observer removed")
+        }
         healthStore.disableBackgroundDelivery(for: .workoutType()) { ok, err in
-                if let err {
-                    debugPrint("Read Workouts: WorkoutService: disableBackgroundDelivery(workoutType) error: \(err)")
-                } else {
-                    debugPrint("Read Workouts: WorkoutService: disableBackgroundDelivery(workoutType) ok: \(ok)")
-                }
+            if let err {
+                debugPrint("[Humango] WorkoutService: disableBackgroundDelivery(workoutType) error — \(err)")
+            } else {
+                debugPrint("[Humango] WorkoutService: disableBackgroundDelivery(workoutType) — ok=\(ok)")
             }
+        }
     }
 
     // MARK: - Decide per-workout behavior (one-shot vs retained live)
 
     func handleWorkouts(workout: HKWorkout) {
-        // Defensive: ignore incomplete workouts that don't have a valid completion time.
         if workout.endDate <= workout.startDate {
-            debugPrint("Read Workouts: skipping incomplete workout: \(workout.uuid.uuidString) start:\(workout.startDate) end:\(workout.endDate)")
+            debugPrint("[Humango] WorkoutService: handleWorkouts — skipping incomplete workout uuid=\(workout.uuid.uuidString) start=\(workout.startDate) end=\(workout.endDate)")
             return
         }
 
-        debugPrint("Read Workouts: workout activity type :\(workout.workoutActivityType.name)")
-        // Use workout.endDate (completed time) for recency logic
         let deviceId = workout.uuid.uuidString
-        let now = Date()
-        let ageSinceEnd = now.timeIntervalSince(workout.endDate)
-        let twoHours = WorkoutService.liveWindowSeconds
+        let ageSinceEnd = Date().timeIntervalSince(workout.endDate)
+        let ageMinutes = Int(ageSinceEnd / 60)
+        let isRecent = ageSinceEnd <= WorkoutService.liveWindowSeconds
+        debugPrint("[Humango] WorkoutService: handleWorkouts — uuid=\(deviceId) type=\(workout.workoutActivityType.name) ageMinutes=\(ageMinutes) isRecent=\(isRecent)")
 
-
-        // Run async work in a single Task (keeps this method fast and non-blocking)
         Task {
-            // Create a RouteService for this workout (we'll either retain it or use it for one-shot)
             let routeService = RouteService(workout: workout)
 
-            if ageSinceEnd <= twoHours  {
-                // Recent completion AND already tracked locally -> retain and start listening.
-                // Add to registry (thread-safe)
+            if isRecent {
+                debugPrint("[Humango] WorkoutService: handleWorkouts — recent workout, retaining RouteService for uuid=\(deviceId)")
                 routeServiceQueue.async(flags: .barrier) {
                     self.routeServices[deviceId] = routeService
                 }
 
-                // Fetch snapshot first (so we have any already-available routes)
+                debugPrint("[Humango] WorkoutService: handleWorkouts — fetching initial route snapshot for uuid=\(deviceId)")
                 await routeService.fetchWorkoutRoute()
 
-                // Start the appropriate mode depending on app state (from native lifecycle manager)
                 if AppLifecycleManager.shared.isInForeground {
-                    // App in foreground — start live streaming
                     routeService.startLiveUpdates()
-                    debugPrint("Read Workouts: WorkoutService:  started RouteService live updates for \(deviceId)")
+                    debugPrint("[Humango] WorkoutService: handleWorkouts — RouteService live updates started for uuid=\(deviceId)")
                 } else {
-                    // App in background — enable background monitoring for route updates
                     routeService.startBackgroundMonitoring()
-                    debugPrint("Read Workouts: WorkoutService: started RouteService background monitoring for \(deviceId)")
+                    debugPrint("[Humango] WorkoutService: handleWorkouts — RouteService background monitoring started for uuid=\(deviceId)")
                 }
             } else {
-                // One-shot fetch & push. No live/background listeners retained.
+                debugPrint("[Humango] WorkoutService: handleWorkouts — old workout (ageMinutes=\(ageMinutes)), one-shot fetch for uuid=\(deviceId)")
                 await routeService.fetchWorkoutRoute()
-                debugPrint("Read Workouts: one-shot RouteService fetch complete for \(deviceId)")
+                debugPrint("[Humango] WorkoutService: handleWorkouts — one-shot fetch complete for uuid=\(deviceId)")
             }
         }
     }
 
 
-    // --- cleanup helpers for the route service registry
+    // MARK: - RouteService Registry Cleanup
 
     /// Remove route services whose workout endDate is older than 2 hours + optional grace
     func pruneOldRouteServices(graceMinutes: Int = 5) {
@@ -341,6 +346,9 @@ final class WorkoutService: AppLifecycleObserver {
         routeServiceQueue.async(flags: .barrier) {
             let keysToRemove = self.routeServices.compactMap { (key, rs) -> String? in
                 return rs.workoutEndDate < cutoff ? key : nil
+            }
+            if !keysToRemove.isEmpty {
+                debugPrint("[Humango] WorkoutService: pruneOldRouteServices — removing \(keysToRemove.count) stale RouteService(s): \(keysToRemove)")
             }
             for k in keysToRemove {
                 self.routeServices[k]?.invalidate()
@@ -350,6 +358,7 @@ final class WorkoutService: AppLifecycleObserver {
     }
 
     func removeRouteService(forWorkoutUUID uuidString: String) {
+        debugPrint("[Humango] WorkoutService: removeRouteService — uuid=\(uuidString)")
         routeServiceQueue.async(flags: .barrier) {
             self.routeServices[uuidString]?.invalidate()
             self.routeServices.removeValue(forKey: uuidString)

@@ -332,7 +332,7 @@ private class MockSleepDelegate: NSObject, HumangoHealthDataDelegate {
     var lastJson: String?
     var lastSessionId: String?
 
-    func onSleepSessionReady(json: String, sessionId: String) {
+    func onSleepSessionReady(json: String, sessionId: String) async {
         callCount += 1
         lastJson = json
         lastSessionId = sessionId

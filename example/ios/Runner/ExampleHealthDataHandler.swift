@@ -16,7 +16,7 @@ final class ExampleHealthDataHandler: HumangoHealthDataDelegate {
 
     private let apiBase = "https://humango-api-629346406456.us-central1.run.app"
 
-    func onWorkoutReady(workout: HuWorkout, deviceId: String) {
+    func onWorkoutReady(workout: HuWorkout, deviceId: String) async {
         print("[Example][Delegate] 🏃 Workout ready — deviceId=\(deviceId), sport=\(workout.sport.name), posting to /activities/\(athleteId)")
         guard let dict = workout.toDict(),
               let data = try? JSONSerialization.data(withJSONObject: dict),
@@ -24,17 +24,16 @@ final class ExampleHealthDataHandler: HumangoHealthDataDelegate {
             print("[Example][Delegate] ❌ Failed to serialise HuWorkout for \(deviceId)")
             return
         }
-        Task { await postWorkout(json: json) }
+        await postWorkout(json: json)
     }
 
-    func onSleepSessionReady(json: String, sessionId: String) {
-
+    func onSleepSessionReady(json: String, sessionId: String) async {
         print("[Example][Delegate] 😴 Sleep session ready — sessionId=\(sessionId), posting to /sleep/\(athleteId)")
         logSleepPayload(json: json, sessionId: sessionId)
-        Task { await postSleep(json: json) }
+        await postSleep(json: json)
     }
 
-    func onHealthMetricSamplesReady(json: String, metricType: String, fetchedAt: String) {
+    func onHealthMetricSamplesReady(json: String, metricType: String, fetchedAt: String) async {
         print("[Example][Delegate] 📊 Metric batch — type=\(metricType), fetchedAt=\(fetchedAt) (example logs only; wire upload if needed)")
     }
 

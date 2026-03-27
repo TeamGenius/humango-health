@@ -434,29 +434,33 @@ class WorkoutServiceChannel: NSObject {
     /// Called from HumangoHealthPlugin.startAllBackgroundMonitoring().
     func autoStartIfConfigured() {
         guard UserAuthStateManager.shared.isLoggedIn else {
-            debugPrint("Read Workouts: Auto-start skipped — user not logged in")
-            SleepRemoteLogger.log(.warn, step: "workout.autoStart", message: "skipped — user not logged in")
+            debugPrint("[Humango] WorkoutService: autoStart skipped — user not logged in")
+            SleepRemoteLogger.log(.warn, step: "workout.autoStart", message: "skipped — user not logged in", subsystem: "WorkoutService")
             return
         }
         guard HumangoHealthPlugin.delegate != nil else {
-            debugPrint("Read Workouts: Auto-start skipped — no delegate configured")
-            SleepRemoteLogger.log(.warn, step: "workout.autoStart", message: "skipped — delegate nil")
+            debugPrint("[Humango] WorkoutService: autoStart skipped — no delegate configured")
+            SleepRemoteLogger.log(.warn, step: "workout.autoStart", message: "skipped — delegate nil", subsystem: "WorkoutService")
             return
         }
         guard workoutService == nil else {
-            debugPrint("Read Workouts: Auto-start skipped — monitoring already active")
-            SleepRemoteLogger.log(.info, step: "workout.autoStart", message: "skipped — already active")
+            debugPrint("[Humango] WorkoutService: autoStart skipped — monitoring already active")
+            SleepRemoteLogger.log(.info, step: "workout.autoStart", message: "skipped — already active", subsystem: "WorkoutService")
             return
         }
         
         let startDate = Date().addingTimeInterval(-24 * 60 * 60) // 24h lookback
         let mode = AppLifecycleManager.shared.isInForeground ? "foreground" : "background"
-        SleepRemoteLogger.log(.info, step: "workout.autoStart", message: "starting", context: ["mode": mode])
+        SleepRemoteLogger.log(.info, step: "workout.autoStart", message: "starting", context: ["mode": mode], subsystem: "WorkoutService")
         workoutService = WorkoutService(startDate: startDate)
 
         Task {
             await workoutService?.start()
-            debugPrint("Read Workouts: ✅ Auto-started workout monitoring (\(mode)) from \(startDate)")
+            debugPrint("[Humango] WorkoutService: ✅ Auto-started workout monitoring (\(mode)) from \(startDate)")
+            SleepRemoteLogger.log(.info, step: "workout.autoStart", message: "started", context: [
+                "mode": mode,
+                "startDate": startDate.description,
+            ], subsystem: "WorkoutService")
         }
     }
 
@@ -466,6 +470,7 @@ class WorkoutServiceChannel: NSObject {
         workoutService?.stopLiveUpdates()
         workoutService?.stopBackgroundMonitoring()
         workoutService = nil
-        debugPrint("Read Workouts: ✅ Stopped monitoring on logout")
+        debugPrint("[Humango] WorkoutService: ✅ Stopped monitoring on logout")
+        SleepRemoteLogger.log(.info, step: "workout.stopAll", message: "stopped on logout", subsystem: "WorkoutService")
     }
 }

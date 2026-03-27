@@ -20,11 +20,12 @@ struct SleepRemoteLogger {
         _ level: SleepLogLevel,
         step: String,
         message: String,
-        context: [String: Any] = [:]
+        context: [String: Any] = [:],
+        subsystem: String = "SleepDataManager"
     ) {
         var body: [String: Any] = [
             "platform":  "iOS",
-            "subsystem": "SleepDataManager",
+            "subsystem": subsystem,
             "level":     level.rawValue,
             "step":      step,
             "message":   message,
@@ -34,6 +35,12 @@ struct SleepRemoteLogger {
         // Attach user / app metadata when available
         if let userId = UserAuthStateManager.shared.userId {
             body["userId"] = userId
+        }
+        // athleteId is written by the client app (HumangSessionChannel.saveCredentials)
+        // and lets Cloud Logs identify which athlete each event belongs to.
+        if let athleteId = UserDefaults.standard.string(forKey: "humango.credentials.athleteId"),
+           !athleteId.isEmpty {
+            body["athleteId"] = athleteId
         }
         if let version = Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String {
             body["appVersion"] = version
