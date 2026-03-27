@@ -383,10 +383,7 @@ class _HealthMetricsScreenState extends State<HealthMetricsScreen>
                 const Expanded(
                   child: Text(
                     'Quantity metrics auto-read',
-                    style: TextStyle(
-                      fontWeight: FontWeight.w600,
-                      fontSize: 16,
-                    ),
+                    style: TextStyle(fontWeight: FontWeight.w600, fontSize: 16),
                   ),
                 ),
                 Switch(
@@ -400,12 +397,12 @@ class _HealthMetricsScreenState extends State<HealthMetricsScreen>
             Text(
               _hrvMonitoringActive
                   ? 'Active — iOS delivers batches via '
-                    'HumangoHealthDataDelegate.onHealthMetricSamplesReady.\n'
-                    'Foreground: HKAnchoredObjectQueryDescriptor  ·  '
-                    'Background: HKObserverQuery.'
+                        'HumangoHealthDataDelegate.onHealthMetricSamplesReady.\n'
+                        'Foreground: HKAnchoredObjectQueryDescriptor  ·  '
+                        'Background: HKObserverQuery.'
                   : 'Turn on to observe HRV, heart rate, resting HR, body fat, '
-                    'weight and height. Delivery is through the native delegate '
-                    '— no Flutter stream.',
+                        'weight and height. Delivery is through the native delegate '
+                        '— no Flutter stream.',
               style: TextStyle(fontSize: 12, color: Colors.grey[700]),
             ),
             if (_lastDelegateUpdate != null) ...[

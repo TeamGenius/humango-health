@@ -180,7 +180,7 @@ class HealthMetricsManager {
     DateTime? startDate,
     DateTime? endDate,
     int? limit,
-  }  ) => getMetric(
+  }) => getMetric(
     HealthMetricType.heartRateVariabilitySDNN,
     startDate: startDate,
     endDate: endDate,
@@ -269,7 +269,9 @@ class HealthMetricsManager {
   /// Legacy hook: always `[]`. Background metric batches are delivered to
   /// `HumangoHealthDataDelegate.onHealthMetricSamplesReady` on iOS, not queued here.
   Future<List<Map<String, dynamic>>> getPendingHRVUpdates() async {
-    final result = await _channel.invokeMethod<List<dynamic>>('getPendingHRVUpdates');
+    final result = await _channel.invokeMethod<List<dynamic>>(
+      'getPendingHRVUpdates',
+    );
     if (result == null) return [];
     return result
         .map((e) => Map<String, dynamic>.from(e as Map<dynamic, dynamic>))
