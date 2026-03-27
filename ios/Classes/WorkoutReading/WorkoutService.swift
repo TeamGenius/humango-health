@@ -148,7 +148,7 @@ final class WorkoutService: AppLifecycleObserver {
             debugPrint("[Humango] WorkoutService: startLiveUpdates skipped — not authorized")
             return
         }
-        debugPrint("[Humango] WorkoutService: startLiveUpdates — opening HKAnchoredObjectQueryDescriptor stream from \(startDate)")
+        debugPrint("[Humango] WorkoutService: startLiveUpdates — opening HKAnchoredObjectQueryoror stream from \(startDate)")
 
         let livePredicate = HKQuery.predicateForSamples(
             withStart: startDate,

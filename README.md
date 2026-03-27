@@ -2,7 +2,7 @@
 
 A comprehensive Flutter plugin for integrating iOS HealthKit and WorkoutKit functionalities natively into the Humango platform.
 
-> **Version 0.0.19** — See [CHANGELOG](CHANGELOG.md) for what's new.
+> **Version 0.0.21** — See [CHANGELOG](CHANGELOG.md) for what's new.
 
 ## Table of Contents
 
@@ -32,7 +32,7 @@ A comprehensive Flutter plugin for integrating iOS HealthKit and WorkoutKit func
 | **Workout Scheduling** | Push workouts to Apple Watch via WorkoutKit with native deduplication |
 | **Workout Reading** | Real-time workout monitoring with foreground/background modes; completed workouts delivered via `HumangoHealthDataDelegate.onWorkoutReady(workout:deviceId:)` |
 | **Sleep Data** | Fetch and monitor sleep analysis; foreground (Descriptor) + background (Observer) monitoring; grouping-based `calculateSleepPayload` algorithm (gap ≤ 2 h, span ≥ 3 h); finalized sessions delivered via `HumangoHealthDataDelegate.onSleepSessionReady` |
-| **Health Metrics (HRV, HR, etc.)** | One-shot reads via `HealthMetricsManager`; quantity-metric batches while monitoring use **`hrvUpdates`** in the **foreground** and **`HumangoHealthDataDelegate.onHealthMetricSamplesReady`** when the app is backgrounded or suspended (`getPendingHRVUpdates` is a legacy no-op — always `[]`) |
+| **Health Metrics (HRV, HR, etc.)** | One-shot reads via `HealthMetricsManager`; quantity-metric monitoring uses **`HKAnchoredObjectQueryDescriptor`** in the **foreground** and **`HKObserverQuery`** in the **background/suspended** state; all batches delivered via **`HumangoHealthDataDelegate.onHealthMetricSamplesReady(json:metricType:fetchedAt:)`** — `metricType` is a typed `HealthMetricType` enum (`getPendingHRVUpdates` is a legacy no-op — always `[]`) |
 | **Delegate Delivery** | Workouts, finalized sleep sessions, and quantity-metric batches are pushed through **`HumangoHealthDataDelegate`** — no plugin-owned payload queues or HTTP |
 | **Native Lifecycle Management** | Centralized iOS app lifecycle detection for automatic mode switching |
 
@@ -207,9 +207,9 @@ The plugin delivers **workouts**, **finalized sleep sessions**, and **quantity-m
 ```swift
 // humango_health plugin
 public protocol HumangoHealthDataDelegate: AnyObject {
-    func onWorkoutReady(workout: HuWorkout, deviceId: String)
-    func onSleepSessionReady(json: String, sessionId: String)
-    func onHealthMetricSamplesReady(json: String, metricType: String, fetchedAt: String)
+    func onWorkoutReady(workout: HuWorkout, deviceId: String) async
+    func onSleepSessionReady(json: String, sessionId: String) async
+    func onHealthMetricSamplesReady(json: String, metricType: HealthMetricType, fetchedAt: String) async
 }
 ```
 
@@ -219,7 +219,7 @@ Default implementations in `HumangoHealthDataDelegate.swift` are no-ops so you c
 |----------|------------|----------|
 | `onWorkoutReady(workout:deviceId:)` | A completed workout is detected (foreground or background) | `HuWorkout` struct — call `workout.toDict()` for JSON |
 | `onSleepSessionReady(json:sessionId:)` | A sleep session is ready (HealthKit observer fired, window fetched, payload computed) | Flat aggregated sleep payload JSON |
-| `onHealthMetricSamplesReady(...)` | Quantity-metric observer fired (any app state); always called for batches | Same shape as each `hrvUpdates` event: `metricType`, `unit`, `samples`, `sampleCount`, `fetchedAt` |
+| `onHealthMetricSamplesReady(json:metricType:fetchedAt:)` | Quantity-metric observer fired (any app state); foreground uses descriptor, background uses observer | `metricType` is a typed `HealthMetricType` enum; `json` has shape: `metricType`, `unit`, `samples`, `sampleCount`, `fetchedAt` |
 
 ### Wiring in AppDelegate.swift
 
@@ -278,8 +278,8 @@ final class ExampleHealthDataHandler: HumangoHealthDataDelegate {
         Task { await post(path: "sleep", json: json) }
     }
 
-    func onHealthMetricSamplesReady(json: String, metricType: String, fetchedAt: String) {
-        print("[Delegate] \u{1F4CA} Metric batch \u2014 type=\(metricType), fetchedAt=\(fetchedAt)")
+    func onHealthMetricSamplesReady(json: String, metricType: HealthMetricType, fetchedAt: String) async {
+        print("[Delegate] \u{1F4CA} Metric batch \u2014 type=\(metricType.key), fetchedAt=\(fetchedAt)")
         // Upload or persist when using startHRVMonitoring / quantity observers
     }
 
@@ -1490,13 +1490,18 @@ Read body-composition and vital-sign metrics from HealthKit with a single, gener
 
 ### Supported Metrics
 
-| Metric | HealthKit Identifier | Unit | iOS |
-|--------|---------------------|------|-----|
-| HRV (SDNN) | `heartRateVariabilitySDNN` | ms | 11.0+ |
-| Resting Heart Rate | `restingHeartRate` | bpm | 11.0+ |
-| Body Fat Percentage | `bodyFatPercentage` | % | 8.0+ |
-| Weight (Body Mass) | `bodyMass` | kg | 8.0+ |
-| Height | `height` | cm | 8.0+ |
+| Metric | `HealthMetricType` case | HealthKit Identifier | Unit |
+|--------|------------------------|---------------------|------|
+| HRV (SDNN) | `.heartRateVariabilitySDNN` | `heartRateVariabilitySDNN` | ms |
+| Heart Rate | `.heartRate` | `heartRate` | bpm |
+| Resting Heart Rate | `.restingHeartRate` | `restingHeartRate` | bpm |
+| Body Fat Percentage | `.bodyFatPercentage` | `bodyFatPercentage` | % |
+| Weight (Body Mass) | `.bodyMass` | `bodyMass` | kg |
+| Height | `.height` | `height` | cm |
+
+> **Note:** `HealthMetricType` is a typed enum used in both Dart and Swift. The Swift enum is the single source of truth for HealthKit identifier, unit, unit label, and observer tuning (lookback window, sample cap).
+
+---
 
 ### Quick Start
 
@@ -1506,163 +1511,307 @@ import 'package:humango_health/humango_health.dart';
 final metrics = HealthMetricsManager();
 ```
 
-### Fetching a Single Metric
+---
+
+### 1. One-Shot Reads (Dart)
+
+#### Fetching a Single Metric
 
 ```dart
 // Fetch HRV samples from the last 30 days (default)
 final hrvResponse = await metrics.getHRV();
 
-print('Latest HRV: ${hrvResponse.latestValue} ${hrvResponse.unit}');
-print('Average: ${hrvResponse.statistics.average}');
-print('Samples: ${hrvResponse.sampleCount}');
+print('Latest HRV: ${hrvResponse.latestSample?.value} ${hrvResponse.unit}');
+print('Average:    ${hrvResponse.statistics.average}');
+print('Min / Max:  ${hrvResponse.statistics.min} / ${hrvResponse.statistics.max}');
+print('Samples:    ${hrvResponse.sampleCount}');
 
 for (final sample in hrvResponse.samples) {
-  print('${sample.startDate}: ${sample.value} ${sample.unit}');
+  print('${sample.startDate}: ${sample.value} ${sample.unit}  (${sample.sourceName})');
 }
 ```
 
-### Convenience Methods
+#### Convenience Methods
 
-Each metric has a dedicated convenience method that returns a `HealthMetricResponse`:
+Each metric has a dedicated helper that returns a `HealthMetricResponse`:
 
 ```dart
 final hrv       = await metrics.getHRV();
+final hr        = await metrics.getHeartRate();
 final restingHR = await metrics.getRestingHeartRate();
 final bodyFat   = await metrics.getBodyFatPercentage();
 final weight    = await metrics.getWeight();
 final height    = await metrics.getHeight();
 ```
 
-All convenience methods accept optional `startDate`, `endDate`, and `limit` parameters:
+All accept optional `startDate`, `endDate`, and `limit`:
 
 ```dart
-final recentWeight = await metrics.getWeight(
-  startDate: DateTime.now().subtract(const Duration(days: 7)),
-  endDate: DateTime.now(),
-  limit: 10,
+final today = DateTime.now();
+final startOfDay = DateTime(today.year, today.month, today.day);
+
+// Today's HRV samples only
+final todayHRV = await metrics.getHRV(
+  startDate: startOfDay,
+  endDate: startOfDay.add(const Duration(days: 1)),
 );
+print('Today average HRV: ${todayHRV.statistics.average} ms');
+
+// Today's resting heart rate (avg / min / max)
+final todayRHR = await metrics.getRestingHeartRate(
+  startDate: startOfDay,
+  endDate: startOfDay.add(const Duration(days: 1)),
+);
+print('Today resting HR avg: ${todayRHR.statistics.average} bpm');
+print('Today resting HR min: ${todayRHR.statistics.min} bpm');
+print('Today resting HR max: ${todayRHR.statistics.max} bpm');
 ```
 
-### Fetching the Latest Value
-
-Use `getLatestMetric` to fetch only the most recent sample for any metric type:
+#### Fetching the Latest Value
 
 ```dart
 final latest = await metrics.getLatestMetric(HealthMetricType.bodyMass);
-print('Current weight: ${latest.latestValue} ${latest.unit}');
+print('Current weight: ${latest.latestSample?.value} ${latest.unit}');
 ```
 
-### Fetching All Metrics at Once
+#### Fetching All Metrics at Once
 
-`getAllMetrics` queries all 5 metric types in a single call and returns an `AllHealthMetricsResponse`:
+`getAllMetrics` queries all 6 types in a single call:
 
 ```dart
 final all = await metrics.getAllMetrics(
   startDate: DateTime.now().subtract(const Duration(days: 30)),
 );
 
-// Named convenience getters
-print('HRV: ${all.hrv?.latestValue} ms');
-print('Resting HR: ${all.restingHeartRate?.latestValue} bpm');
-print('Body Fat: ${all.bodyFatPercentage?.latestValue} %');
-print('Weight: ${all.weight?.latestValue} kg');
-print('Height: ${all.height?.latestValue} cm');
+print('HRV:        ${all.hrv?.statistics.average} ms');
+print('Heart Rate: ${all.heartRate?.statistics.average} bpm');
+print('Resting HR: ${all.restingHeartRate?.statistics.average} bpm');
+print('Body Fat:   ${all.bodyFatPercentage?.latestSample?.value} %');
+print('Weight:     ${all.weight?.latestSample?.value} kg');
+print('Height:     ${all.height?.latestSample?.value} cm');
 
-// Check for per-metric errors
 if (all.errors.isNotEmpty) {
-  print('Errors: ${all.errors}');
+  print('Partial errors: ${all.errors}');
 }
 ```
 
-### Response Structure
+---
 
-`HealthMetricResponse` contains:
+### 2. Automatic Monitoring — Foreground & Background
 
-| Field | Type | Description |
-|-------|------|-------------|
-| `metricType` | `String` | The metric key (e.g. `heartRateVariabilitySDNN`) |
-| `unit` | `String` | Display unit (e.g. `ms`, `bpm`, `%`, `kg`, `cm`) |
-| `samples` | `List<HealthMetricSample>` | Individual data points |
-| `sampleCount` | `int` | Number of samples returned |
-| `latestSample` | `HealthMetricSample?` | Most recent sample |
-| `statistics` | `HealthMetricStatistics` | Aggregated avg / min / max / sum |
-| `fetchedFrom` | `DateTime` | Query start date |
-| `fetchedTo` | `DateTime` | Query end date |
+`startHRVMonitoring()` arms HealthKit to wake the app whenever any of the 6 quantity types receive new data. The delivery path is **fully automatic** and switches based on app state — you do not need to call any mode-switch methods.
 
-Each `HealthMetricSample` includes:
+#### Monitoring Architecture
 
-| Field | Type | Description |
-|-------|------|-------------|
-| `uuid` | `String` | HealthKit sample UUID |
-| `value` | `double` | Metric value |
-| `unit` | `String` | Unit string |
-| `startDate` / `endDate` | `DateTime` | Sample time range |
-| `sourceName` | `String?` | Source app name |
-| `sourceBundle` | `String?` | Source bundle identifier |
-| `device` | `HealthMetricDevice?` | Device info (name, model, etc.) |
-| `metadata` | `Map?` | HealthKit metadata dictionary |
+```
+startHRVMonitoring()
+        │
+        ▼
+enableBackgroundDelivery (all 6 types, .immediate)
+        │
+   app state?
+        │
+        ├─ foreground ──→ HKAnchoredObjectQueryDescriptor (per type)
+        │                 Anchor-based async stream.
+        │                 On every addedSamples batch:
+        │                   fetchAndDeliver(lookback window)
+        │                   → HumangoHealthDataDelegate.onHealthMetricSamplesReady(...)
+        │
+        └─ background ──→ HKObserverQuery (per type)
+                          iOS wakes the app briefly.
+                          On every observer fire:
+                            fetchAndDeliver(lookback window)
+                            → HumangoHealthDataDelegate.onHealthMetricSamplesReady(...)
+```
 
-### HRV automatic updates (background / suspended)
+Mode switching is handled **automatically** by `AppLifecycleManager` — `appDidEnterForeground` starts descriptors and stops observers; `appDidEnterBackground` starts observers and cancels descriptors. Anchors are preserved across switches so the descriptor stream resumes without missing samples.
 
-Quantity metrics (HRV, heart rate, resting HR, body fat, weight, height) can be observed so HealthKit writes trigger a batched payload.
+#### Step 1 — Implement the delegate (iOS Runner, Swift)
 
-- **Foreground:** While the app is active and monitoring is started, batches are duplicated to the **`hrvUpdates`** EventChannel stream (one event per metric batch).
-- **Background / suspended:** iOS may wake the app briefly; native code **only** forwards batches to **`HumangoHealthDataDelegate.onHealthMetricSamplesReady`**. The MethodChannel `getPendingHRVUpdates` remains for compatibility but **always returns an empty list** — do not rely on it for uploads.
+```swift
+// ios/Runner/ExampleHealthDataHandler.swift
+import Foundation
+import humango_health
 
-Call `startHRVMonitoring()` once (e.g. after user logs in). Monitoring persistence follows native `UserDefaults` flags; use `stopHRVMonitoring()` to disable. **`HumangoHealthPlugin.delegate`** must be set or background batches are dropped at the delegate step.
+final class ExampleHealthDataHandler: HumangoHealthDataDelegate {
+
+    func onHealthMetricSamplesReady(
+        json: String,
+        metricType: HealthMetricType,   // typed enum — no string parsing needed
+        fetchedAt: String
+    ) async {
+        // metricType is a HealthMetricType enum case — switch directly
+        switch metricType {
+        case .heartRateVariabilitySDNN:
+            print("[HRV] batch received at \(fetchedAt): \(json)")
+            // await yourAPI.uploadHRV(json)
+        case .heartRate:
+            print("[Heart Rate] batch at \(fetchedAt): \(json)")
+        case .restingHeartRate:
+            print("[Resting HR] batch at \(fetchedAt): \(json)")
+        case .bodyFatPercentage:
+            print("[Body Fat] batch at \(fetchedAt): \(json)")
+        case .bodyMass:
+            print("[Weight] batch at \(fetchedAt): \(json)")
+        case .height:
+            print("[Height] batch at \(fetchedAt): \(json)")
+        }
+    }
+}
+```
+
+> **Must be `async`:** The library `await`s `onHealthMetricSamplesReady` before calling HealthKit's `completion()`. Your implementation must `await` any network request directly — do not fire-and-forget a detached `Task`, or iOS will suspend the app mid-upload.
+
+#### Step 2 — Wire the delegate before `super.application(...)` (AppDelegate.swift)
+
+```swift
+import UIKit
+import Flutter
+import humango_health
+
+@main
+class AppDelegate: FlutterAppDelegate {
+
+    private let healthDelegate = ExampleHealthDataHandler()   // keep strong reference
+
+    override func application(
+        _ application: UIApplication,
+        didFinishLaunchingWithOptions launchOptions: [UIApplication.LaunchOptionsKey: Any]?
+    ) -> Bool {
+        // Set delegate BEFORE super so auto-start observers have it immediately
+        HumangoHealthPlugin.delegate = healthDelegate
+        return super.application(application, didFinishLaunchingWithOptions: launchOptions)
+    }
+}
+```
+
+#### Step 3 — Start monitoring from Dart (after login)
 
 ```dart
 final metrics = HealthMetricsManager();
 
+// Call once after the user logs in. Persists across app launches via UserDefaults.
 await metrics.startHRVMonitoring();
 
-metrics.hrvUpdates.listen((update) {
-  print('Metric ${update['metricType']}: ${update['sampleCount']} samples');
-});
-
-// Legacy: always [] — use HumangoHealthDataDelegate for background batches
-final pending = await metrics.getPendingHRVUpdates();
-
+// Check if currently active
 final active = await metrics.isHRVMonitoringActive();
+print('Monitoring active: $active');
+```
+
+#### Step 4 — Stop on logout
+
+```dart
 await metrics.stopHRVMonitoring();
 ```
 
-| Method / getter | Description |
-|-----------------|-------------|
-| `startHRVMonitoring()` | Start observing configured quantity types; enables background delivery |
-| `stopHRVMonitoring()` | Stop observation and background delivery |
-| `hrvUpdates` | Stream of metric batches (**foreground** mirror of native payloads) |
-| `getPendingHRVUpdates()` | **Always `[]`** — use delegate for background/suspended delivery |
-| `isHRVMonitoringActive()` | Whether monitoring is currently enabled |
+Or call the plugin-level logout (stops all subsystems and clears state):
 
-### Error Handling
+```swift
+// iOS Runner — on logout
+HumangoHealthPlugin.shared?.logout()
+```
+
+---
+
+### 3. Delegate Payload Shape
+
+`onHealthMetricSamplesReady` receives a JSON string with this structure (same shape for all 6 types):
+
+```json
+{
+  "metricType":  "heartRateVariabilitySDNN",
+  "unit":        "ms",
+  "sampleCount": 14,
+  "fetchedAt":   "2026-03-27T06:30:00.000Z",
+  "samples": [
+    {
+      "uuid":         "A1B2C3D4-...",
+      "value":        42.7,
+      "unit":         "ms",
+      "startDate":    "2026-03-27T02:14:00.000Z",
+      "endDate":      "2026-03-27T02:14:00.000Z",
+      "sourceName":   "Apple Watch",
+      "sourceBundle": "com.apple.health",
+      "device": { "name": "Apple Watch", "model": "Watch" },
+      "metadata":     {}
+    }
+  ]
+}
+```
+
+> `metricType` in the JSON is the `HealthMetricType.key` string (same as the enum `rawValue`). The `metricType: HealthMetricType` parameter in the delegate is already resolved to the typed enum — parse the JSON payload however suits your upload contract.
+
+---
+
+### 4. Observer Tuning (per type)
+
+The native layer uses these defaults when fetching after an observer or descriptor fires. They are defined in `HealthMetricType.swift` and apply to both foreground and background fetches:
+
+| Metric | Lookback window | Max samples |
+|--------|----------------|-------------|
+| HRV | 7 days | 100 |
+| Heart Rate | 1 day | 500 |
+| Resting Heart Rate | 7 days | 100 |
+| Body Fat % | 30 days | 100 |
+| Body Mass | 30 days | 100 |
+| Height | 365 days | 50 |
+
+---
+
+### 5. Monitoring API Reference
+
+| Method | Description |
+|--------|-------------|
+| `startHRVMonitoring()` | Start observing all 6 types; enables background delivery; selects foreground/background mode automatically |
+| `stopHRVMonitoring()` | Stop all observers/descriptors and disable background delivery |
+| `isHRVMonitoringActive()` | Returns `true` if monitoring is currently started |
+| `getPendingHRVUpdates()` | **Always `[]`** — legacy no-op; use `HumangoHealthDataDelegate` |
+
+---
+
+### 6. Error Handling
 
 ```dart
 try {
   final response = await metrics.getHRV();
 } on HealthMetricsException catch (e) {
-  print('Code: ${e.code}');
-  print('Message: ${e.message}');
-  print('Details: ${e.details}');
+  switch (e.code) {
+    case 'UNKNOWN_METRIC':
+      print('Bad metric key: ${e.message}');
+    case 'FETCH_ERROR':
+      print('HealthKit error: ${e.message}');
+    default:
+      print('${e.code}: ${e.message}');
+  }
 }
 ```
 
-### Permission Requirements
+---
 
-Health Metrics reading requires HealthKit read permissions for the corresponding quantity types. Ensure the following are included in your permission request:
+### 7. Permission Requirements
 
-- `HKQuantityTypeIdentifier.heartRateVariabilitySDNN`
-- `HKQuantityTypeIdentifier.restingHeartRate`
-- `HKQuantityTypeIdentifier.bodyFatPercentage`
-- `HKQuantityTypeIdentifier.bodyMass`
-- `HKQuantityTypeIdentifier.height`
+Ensure the following types are requested via `PermissionManager.requestAuthorization()`:
 
-### Channel
+| Type | `HealthDataType` |
+|------|-----------------|
+| `HKQuantityTypeIdentifierHeartRateVariabilitySDNN` | `hrv` |
+| `HKQuantityTypeIdentifierHeartRate` | `heartRate` |
+| `HKQuantityTypeIdentifierRestingHeartRate` | `restingHeartRate` |
+| `HKQuantityTypeIdentifierBodyFatPercentage` | `bodyFatPercentage` |
+| `HKQuantityTypeIdentifierBodyMass` | `bodyMass` |
+| `HKQuantityTypeIdentifierHeight` | `height` |
+
+All are included in the plugin's fixed permission set — a single `requestAuthorization()` call covers them all.
+
+---
+
+### 8. Channel
 
 | Channel | Type | Purpose |
-|---------|------|--------|
-| `com.humango.health/metrics` | MethodChannel | Health metrics queries |
-| `com.humango.health/metrics/hrv_updates` | EventChannel | Quantity-metric batches while app is **foreground** (same payload shape as delegate; HRV, HR, resting HR, body comp, …) |
+|---------|------|---------|
+| `com.humango.health/metrics` | MethodChannel | One-shot reads and monitoring control |
+
+> There is **no EventChannel** for health metrics. Both foreground (`HKAnchoredObjectQueryDescriptor`) and background (`HKObserverQuery`) batches are delivered exclusively through `HumangoHealthDataDelegate.onHealthMetricSamplesReady`.
 
 ---
 ## Channel Reference
@@ -1677,8 +1826,7 @@ All communication between Flutter and iOS uses these channels:
 | `com.humango.workouts/read` | MethodChannel | Workout reading (one-shot + monitoring control) |
 | `com.humango.health/sleep` | MethodChannel | Sleep data operations |
 | `com.humango.health/session` | MethodChannel | Optional: `saveCredentials` if implemented in your Runner (not registered by the plugin itself) |
-| `com.humango.health/metrics` | MethodChannel | Health metrics (HRV, HR, body comp) |
-| `com.humango.health/metrics/hrv_updates` | EventChannel | Quantity-metric batches while app is **foreground** (same payload shape as delegate; HRV, HR, resting HR, body comp, …) |
+| `com.humango.health/metrics` | MethodChannel | Health metrics (one-shot reads and monitoring control) |
 
 ---
 

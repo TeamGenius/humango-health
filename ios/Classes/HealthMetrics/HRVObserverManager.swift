@@ -3,93 +3,33 @@
 //  humango_health
 //
 //  Observes HealthKit quantity samples (HRV, heart rate, resting HR, body composition, etc.)
-//  and reads new data when it is added. Works in foreground, background, and when the app is
-//  suspended (iOS wakes the app briefly via enableBackgroundDelivery).
+//  and delivers new data to the host app via HumangoHealthDataDelegate.
+//
+//  Foreground:            HKAnchoredObjectQueryDescriptor — anchor-based async stream per type.
+//                         On each batch of added samples, fetches the full lookback window and
+//                         delivers to the delegate.
+//  Background/suspended:  HKObserverQuery — iOS wakes the app via enableBackgroundDelivery;
+//                         on each fire, fetches the lookback window and delivers to the delegate.
+//
+//  No EventChannel / Flutter stream is used. All delivery is through the delegate.
 //
 
 import Foundation
 import HealthKit
-import Flutter
 
 // MARK: - UserDefaults Keys
 
 private struct HRVObserverKeys {
-    static let monitoringEnabled = "com.humango.health.hrvMonitoringEnabled"
-    /// Removed — cleared on start so leftover JSON is not mistaken for live state.
+    static let monitoringEnabled    = "com.humango.health.hrvMonitoringEnabled"
+    /// Legacy keys — cleared on start to avoid stale state.
     static let legacyPendingUpdates = "com.humango.health.hrvPendingUpdates"
-    static let legacyLastAnchor = "com.humango.health.hrvLastAnchor"
+    static let legacyLastAnchor     = "com.humango.health.hrvLastAnchor"
 }
-
-// MARK: - Per-type fetch tuning
-
-/// Keys match `HealthMetricsManager` / Dart `HealthMetricType.key`.
-private struct ObservableQuantityMetric {
-    let metricKey: String
-    let identifier: HKQuantityTypeIdentifier
-    let unit: HKUnit
-    let unitLabel: String
-    /// HealthKit query lookback from now.
-    let lookbackDays: Int
-    let sampleLimit: Int
-}
-
-/// All quantity metrics we push to the host `HumangoHealthDataDelegate` and mirror on the
-/// (foreground-only) EventChannel. No UserDefaults queue — background delivery uses the delegate.
-/// Heart rate is high-volume: short window + higher cap; others use a modest weekly window.
-private let observedQuantityMetrics: [ObservableQuantityMetric] = [
-    ObservableQuantityMetric(
-        metricKey: "heartRateVariabilitySDNN",
-        identifier: .heartRateVariabilitySDNN,
-        unit: HKUnit.secondUnit(with: .milli),
-        unitLabel: "ms",
-        lookbackDays: 7,
-        sampleLimit: 100
-    ),
-    ObservableQuantityMetric(
-        metricKey: "heartRate",
-        identifier: .heartRate,
-        unit: HKUnit.count().unitDivided(by: .minute()),
-        unitLabel: "bpm",
-        lookbackDays: 1,
-        sampleLimit: 500
-    ),
-    ObservableQuantityMetric(
-        metricKey: "restingHeartRate",
-        identifier: .restingHeartRate,
-        unit: HKUnit.count().unitDivided(by: .minute()),
-        unitLabel: "bpm",
-        lookbackDays: 7,
-        sampleLimit: 100
-    ),
-    ObservableQuantityMetric(
-        metricKey: "bodyFatPercentage",
-        identifier: .bodyFatPercentage,
-        unit: HKUnit.percent(),
-        unitLabel: "%",
-        lookbackDays: 30,
-        sampleLimit: 100
-    ),
-    ObservableQuantityMetric(
-        metricKey: "bodyMass",
-        identifier: .bodyMass,
-        unit: HKUnit.gramUnit(with: .kilo),
-        unitLabel: "kg",
-        lookbackDays: 30,
-        sampleLimit: 100
-    ),
-    ObservableQuantityMetric(
-        metricKey: "height",
-        identifier: .height,
-        unit: HKUnit.meterUnit(with: .centi),
-        unitLabel: "cm",
-        lookbackDays: 365,
-        sampleLimit: 50
-    ),
-]
 
 // MARK: - HRVObserverManager
 
-/// Manages HKObserverQuery + background delivery for quantity vitals and body metrics.
+/// Manages HKAnchoredObjectQueryDescriptor (foreground) and HKObserverQuery (background)
+/// for all `HealthMetricType` cases. Switches modes automatically via `AppLifecycleObserver`.
 public class HRVObserverManager: NSObject, AppLifecycleObserver {
     static let shared = HRVObserverManager()
 
@@ -100,9 +40,21 @@ public class HRVObserverManager: NSObject, AppLifecycleObserver {
         return f
     }()
 
-    private var observerQueries: [String: HKObserverQuery] = [:]
-    private var isMonitoring = false
-    private var eventSink: FlutterEventSink?
+    // MARK: - State
+
+    /// HKObserverQuery instances, keyed by metric type — active in background mode.
+    private var observerQueries: [HealthMetricType: HKObserverQuery] = [:]
+
+    /// Async streaming tasks (HKAnchoredObjectQueryDescriptor), keyed by metric type — active in foreground mode.
+    private var liveUpdateTasks: [HealthMetricType: Task<Void, Never>] = [:]
+
+    /// Anchors per type — preserved across foreground/background switches so the
+    /// descriptor resumes from where it left off.
+    private var anchors: [HealthMetricType: HKQueryAnchor] = [:]
+
+    private var isMonitoring           = false
+    private var isLiveStreaming         = false
+    private var isBackgroundMonitoring  = false
 
     private override init() {
         super.init()
@@ -115,18 +67,17 @@ public class HRVObserverManager: NSObject, AppLifecycleObserver {
 
     // MARK: - Public API
 
-    /// Whether metric observation has been started and is persisted (for auto-start on launch).
+    /// Whether monitoring has been started and persisted for auto-restart on next launch.
     var isMonitoringEnabled: Bool {
         get { UserDefaults.standard.bool(forKey: HRVObserverKeys.monitoringEnabled) }
-        set { UserDefaults.standard.set(newValue, forKey: HRVObserverKeys.monitoringEnabled); UserDefaults.standard.synchronize() }
+        set {
+            UserDefaults.standard.set(newValue, forKey: HRVObserverKeys.monitoringEnabled)
+            UserDefaults.standard.synchronize()
+        }
     }
 
-    /// Attach Flutter event sink to stream metric updates when in foreground.
-    func attachEventSink(_ sink: FlutterEventSink?) {
-        self.eventSink = sink
-    }
-
-    /// Start observing all configured quantity types and enable background delivery for each.
+    /// Start observing all `HealthMetricType` cases and enable background delivery for each.
+    /// Selects foreground (descriptor) or background (observer) mode based on current app state.
     func startMonitoring() {
         guard UserAuthStateManager.shared.isLoggedIn else {
             print("📊 [Quantity metrics observer] startMonitoring ignored — user not logged in")
@@ -136,105 +87,75 @@ public class HRVObserverManager: NSObject, AppLifecycleObserver {
             print("📊 [Quantity metrics observer] HealthKit not available")
             return
         }
-
-        if isMonitoring {
+        guard !isMonitoring else {
             print("📊 [Quantity metrics observer] Already monitoring")
             return
         }
 
+        // Clear legacy keys that are no longer used.
         UserDefaults.standard.removeObject(forKey: HRVObserverKeys.legacyPendingUpdates)
         UserDefaults.standard.removeObject(forKey: HRVObserverKeys.legacyLastAnchor)
 
         isMonitoring = true
         isMonitoringEnabled = true
 
+        // Enable background delivery for every type first.
         Task {
-            for config in observedQuantityMetrics {
-                guard let qType = HKQuantityType.quantityType(forIdentifier: config.identifier) else { continue }
+            for type in HealthMetricType.allCases {
+                guard let qType = type.quantityType else { continue }
                 do {
                     try await healthStore.enableBackgroundDelivery(for: qType, frequency: .immediate)
-                    print("📊 [Quantity metrics observer] Enabled background delivery for \(config.metricKey)")
+                    print("📊 [Quantity metrics observer] Enabled background delivery for \(type.key)")
                 } catch {
-                    print("📊 [Quantity metrics observer] enableBackgroundDelivery failed (\(config.metricKey)): \(error)")
+                    print("📊 [Quantity metrics observer] enableBackgroundDelivery failed (\(type.key)): \(error)")
                 }
             }
         }
 
-        let predicate = HKQuery.predicateForSamples(withStart: nil, end: nil, options: .strictStartDate)
-        for config in observedQuantityMetrics {
-            guard let quantityType = HKQuantityType.quantityType(forIdentifier: config.identifier) else {
-                print("📊 [Quantity metrics observer] Type unavailable: \(config.metricKey)")
-                continue
-            }
-            let key = config.metricKey
-            let query = HKObserverQuery(sampleType: quantityType, predicate: predicate) { [weak self] _, completion, error in
-                guard let self = self else { completion(); return }
-                // NOTE: Do NOT use `defer { completion() }` here.
-                // completion() must be called AFTER fetchAndDeliverUpdates finishes
-                // so iOS keeps the app alive for the full fetch → delegate pipeline.
-                if let error = error {
-                    print("📊 [Quantity metrics observer] Observer error (\(key)): \(error)")
-                    completion()
-                    return
-                }
-                print("📊 [Quantity metrics observer] HealthKit changed — \(key)")
-                Task {
-                    await self.fetchAndDeliverUpdates(metricKey: key)
-                    completion()
-                }
-            }
-            healthStore.execute(query)
-            observerQueries[key] = query
-        }
-
-        print("📊 [Quantity metrics observer] Started \(observerQueries.count) observer(s)")
-        Task {
-            for config in observedQuantityMetrics {
-                await fetchAndDeliverUpdates(metricKey: config.metricKey)
-            }
+        // Choose the appropriate monitoring mode for the current app state.
+        if AppLifecycleManager.shared.isInForeground {
+            startLiveUpdates()
+        } else {
+            startBackgroundMonitoring()
         }
     }
 
-    /// Stop observing and disable background delivery for all types.
+    /// Stop all observers, disable background delivery, and clear persisted preference.
     func stopMonitoring() {
-        for (_, query) in observerQueries {
-            healthStore.stop(query)
-        }
-        observerQueries.removeAll()
+        stopLiveUpdates()
+        stopBackgroundMonitoring()
 
-        for config in observedQuantityMetrics {
-            guard let qType = HKQuantityType.quantityType(forIdentifier: config.identifier) else { continue }
+        for type in HealthMetricType.allCases {
+            guard let qType = type.quantityType else { continue }
             healthStore.disableBackgroundDelivery(for: qType) { success, error in
                 if let error = error {
-                    print("📊 [Quantity metrics observer] disableBackgroundDelivery error (\(config.metricKey)): \(error)")
+                    print("📊 [Quantity metrics observer] disableBackgroundDelivery error (\(type.key)): \(error)")
                 } else if success {
-                    print("📊 [Quantity metrics observer] Disabled background delivery for \(config.metricKey)")
+                    print("📊 [Quantity metrics observer] Disabled background delivery for \(type.key)")
                 }
             }
         }
 
         isMonitoring = false
         isMonitoringEnabled = false
-        eventSink = nil
         print("📊 [Quantity metrics observer] Stopped all metric monitoring")
     }
 
-    /// Clear all state (e.g. on logout). Stops monitoring.
+    /// Full reset — stops monitoring and clears all cached state (e.g. on logout).
     func stopAndClearAll() {
         stopMonitoring()
+        anchors.removeAll()
         UserDefaults.standard.removeObject(forKey: HRVObserverKeys.legacyPendingUpdates)
         UserDefaults.standard.removeObject(forKey: HRVObserverKeys.legacyLastAnchor)
         UserDefaults.standard.synchronize()
         print("📊 [Quantity metrics observer] Cleared all state")
     }
 
-    /// Legacy API: pending batches are no longer stored. Use `HumangoHealthDataDelegate`
-    /// (`onHealthMetricSamplesReady`) for background delivery; returns `[]` always.
-    func retrievePendingHRVUpdates() -> [[String: Any]] {
-        []
-    }
+    /// Legacy API: pending batches are no longer stored in UserDefaults.
+    /// Background delivery is exclusively via `HumangoHealthDataDelegate.onHealthMetricSamplesReady`.
+    func retrievePendingHRVUpdates() -> [[String: Any]] { [] }
 
-    /// Auto-start on app launch when the user is logged in and monitoring was left enabled.
+    /// Auto-start on app launch when the user was previously logged in with monitoring enabled.
     func autoStartIfConfigured() {
         guard UserAuthStateManager.shared.isLoggedIn else {
             print("📊 [Quantity metrics observer] Auto-start skipped — user not logged in")
@@ -255,28 +176,145 @@ public class HRVObserverManager: NSObject, AppLifecycleObserver {
     // MARK: - AppLifecycleObserver
 
     public func appDidEnterForeground() {
-        Task {
-            for config in observedQuantityMetrics {
-                await fetchAndDeliverUpdates(metricKey: config.metricKey)
+        guard isMonitoring else { return }
+        switchToForegroundMode()
+    }
+
+    public func appDidEnterBackground() {
+        guard isMonitoring else { return }
+        switchToBackgroundMode()
+    }
+
+    // MARK: - Mode Switching
+
+    private func switchToForegroundMode() {
+        stopBackgroundMonitoring()
+        startLiveUpdates()
+        print("📊 [Quantity metrics observer] → foreground mode")
+    }
+
+    private func switchToBackgroundMode() {
+        stopLiveUpdates()
+        startBackgroundMonitoring()
+        print("📊 [Quantity metrics observer] → background mode")
+    }
+
+    // MARK: - Foreground: HKAnchoredObjectQueryDescriptor
+
+    /// Starts one `HKAnchoredObjectQueryDescriptor` async stream per `HealthMetricType`.
+    /// When new samples arrive the full lookback window is fetched and delivered to the delegate.
+    private func startLiveUpdates() {
+        guard !isLiveStreaming else { return }
+        isLiveStreaming = true
+
+        for type in HealthMetricType.allCases {
+            guard let quantityType = type.quantityType else { continue }
+
+            let predicate = HKQuery.predicateForSamples(withStart: nil, end: nil, options: .strictStartDate)
+            let descriptor = HKAnchoredObjectQueryDescriptor(
+                predicates: [HKSamplePredicate<HKQuantitySample>.quantitySample(
+                    type: quantityType,
+                    predicate: predicate
+                )],
+                anchor: anchors[type]
+            )
+
+            let stream        = descriptor.results(for: healthStore)
+            let capturedType  = type
+
+            let task = Task { [weak self] in
+                guard let self = self else { return }
+                do {
+                    for try await update in stream {
+                        self.anchors[capturedType] = update.newAnchor
+                        guard !update.addedSamples.isEmpty else { continue }
+                        print("📊 [Quantity metrics observer] foreground: \(update.addedSamples.count) new \(capturedType.key) sample(s)")
+                        await self.fetchAndDeliverUpdates(metricType: capturedType)
+                    }
+                } catch {
+                    // Task cancellation is expected during mode switches — only log real errors.
+                    if !Task.isCancelled {
+                        print("📊 [Quantity metrics observer] foreground stream error (\(capturedType.key)): \(error)")
+                    }
+                }
+            }
+            liveUpdateTasks[type] = task
+        }
+
+        print("📊 [Quantity metrics observer] Started foreground descriptor streams (\(HealthMetricType.allCases.count) type(s))")
+
+        // Deliver an initial snapshot for all types when entering foreground.
+        Task { [weak self] in
+            guard let self = self else { return }
+            for type in HealthMetricType.allCases {
+                await self.fetchAndDeliverUpdates(metricType: type)
             }
         }
     }
 
-    public func appDidEnterBackground() {}
+    private func stopLiveUpdates() {
+        liveUpdateTasks.values.forEach { $0.cancel() }
+        liveUpdateTasks.removeAll()
+        isLiveStreaming = false
+        print("📊 [Quantity metrics observer] Stopped foreground descriptor streams")
+    }
+
+    // MARK: - Background: HKObserverQuery
+
+    /// Starts one `HKObserverQuery` per `HealthMetricType`.
+    /// iOS wakes the app when new data arrives; the full lookback window is fetched and delivered.
+    private func startBackgroundMonitoring() {
+        guard !isBackgroundMonitoring else { return }
+        isBackgroundMonitoring = true
+
+        let predicate = HKQuery.predicateForSamples(withStart: nil, end: nil, options: .strictStartDate)
+
+        for type in HealthMetricType.allCases {
+            guard let quantityType = type.quantityType else {
+                print("📊 [Quantity metrics observer] Type unavailable: \(type.key)")
+                continue
+            }
+            let capturedType = type
+
+            let query = HKObserverQuery(sampleType: quantityType, predicate: predicate) { [weak self] _, completion, error in
+                guard let self = self else { completion(); return }
+                // NOTE: Do NOT use `defer { completion() }`.
+                // completion() must be called AFTER fetchAndDeliverUpdates so iOS keeps the
+                // app alive for the full fetch → delegate pipeline.
+                if let error = error {
+                    print("📊 [Quantity metrics observer] Observer error (\(capturedType.key)): \(error)")
+                    completion()
+                    return
+                }
+                print("📊 [Quantity metrics observer] HealthKit changed — \(capturedType.key)")
+                Task {
+                    await self.fetchAndDeliverUpdates(metricType: capturedType)
+                    completion()
+                }
+            }
+            healthStore.execute(query)
+            observerQueries[type] = query
+        }
+
+        print("📊 [Quantity metrics observer] Started \(observerQueries.count) background observer(s)")
+    }
+
+    private func stopBackgroundMonitoring() {
+        observerQueries.values.forEach { healthStore.stop($0) }
+        observerQueries.removeAll()
+        isBackgroundMonitoring = false
+        print("📊 [Quantity metrics observer] Stopped background observers")
+    }
 
     // MARK: - Fetch and Deliver
 
-    private func config(forMetricKey key: String) -> ObservableQuantityMetric? {
-        observedQuantityMetrics.first { $0.metricKey == key }
-    }
+    private func fetchAndDeliverUpdates(metricType: HealthMetricType) async {
+        guard let quantityType = metricType.quantityType else { return }
 
-    private func fetchAndDeliverUpdates(metricKey: String) async {
-        guard let config = config(forMetricKey: metricKey) else { return }
-        guard let quantityType = HKQuantityType.quantityType(forIdentifier: config.identifier) else { return }
+        let endDate   = Date()
+        let startDate = Calendar.current.date(byAdding: .day, value: -metricType.observerLookbackDays, to: endDate) ?? endDate
 
-        let endDate = Date()
-        let startDate = Calendar.current.date(byAdding: .day, value: -config.lookbackDays, to: endDate) ?? endDate
-        let predicate = HKQuery.predicateForSamples(withStart: startDate, end: endDate, options: .strictStartDate)
+        let predicate      = HKQuery.predicateForSamples(withStart: startDate, end: endDate, options: .strictStartDate)
         let sortDescriptor = NSSortDescriptor(key: HKSampleSortIdentifierStartDate, ascending: false)
 
         do {
@@ -284,84 +322,78 @@ public class HRVObserverManager: NSObject, AppLifecycleObserver {
                 let query = HKSampleQuery(
                     sampleType: quantityType,
                     predicate: predicate,
-                    limit: config.sampleLimit,
+                    limit: metricType.observerSampleLimit,
                     sortDescriptors: [sortDescriptor]
                 ) { _, results, error in
-                    if let error = error {
-                        cont.resume(throwing: error)
-                        return
-                    }
+                    if let error = error { cont.resume(throwing: error); return }
                     cont.resume(returning: (results as? [HKQuantitySample]) ?? [])
                 }
                 healthStore.execute(query)
             }
 
-            let sampleDicts = samples.map {
-                convertToDict($0, unit: config.unit, unitLabel: config.unitLabel)
-            }
+            let sampleDicts = samples.map { convertToDict($0, unit: metricType.unit, unitLabel: metricType.unitLabel) }
+            let fetchedAt   = isoFormatter.string(from: Date())
             let payload: [String: Any] = [
-                "metricType": config.metricKey,
-                "unit": config.unitLabel,
-                "samples": sampleDicts,
+                "metricType": metricType.key,
+                "unit":        metricType.unitLabel,
+                "samples":     sampleDicts,
                 "sampleCount": sampleDicts.count,
-                "fetchedAt": isoFormatter.string(from: Date()),
+                "fetchedAt":   fetchedAt,
             ]
 
-            await deliverMetricPayloadToDelegate(payload)
+            await deliverMetricPayloadToDelegate(payload, metricType: metricType, fetchedAt: fetchedAt)
 
-            if AppLifecycleManager.shared.isInForeground, let sink = eventSink {
-                DispatchQueue.main.async { sink(payload) }
-                print("📊 [Quantity metrics observer] Delivered \(sampleDicts.count) sample(s) to Flutter (\(metricKey))")
-            } else {
-                print("📊 [Quantity metrics observer] Background batch (\(metricKey)) — delegated only, count=\(sampleDicts.count)")
-            }
         } catch {
-            print("📊 [Quantity metrics observer] Fetch error (\(metricKey)): \(error)")
+            print("📊 [Quantity metrics observer] Fetch error (\(metricType.key)): \(error)")
         }
     }
 
-    // Made `async` so `fetchAndDeliverUpdates` can `await` it, keeping the full
+    // `async` so `fetchAndDeliverUpdates` can `await` it, keeping the full
     // pipeline synchronous with the HealthKit completion() handler.
-    // Removed DispatchQueue.main.async — the delegate method is now async and
-    // handles any threading requirements internally.
-    private func deliverMetricPayloadToDelegate(_ payload: [String: Any]) async {
+    private func deliverMetricPayloadToDelegate(
+        _ payload: [String: Any],
+        metricType: HealthMetricType,
+        fetchedAt: String
+    ) async {
         guard let delegate = HumangoHealthPlugin.delegate else { return }
-        guard let jsonData = try? JSONSerialization.data(withJSONObject: payload, options: []),
-              let jsonString = String(data: jsonData, encoding: .utf8),
-              let fetchedAt = payload["fetchedAt"] as? String,
-              let metricType = payload["metricType"] as? String else {
+        guard
+            let jsonData   = try? JSONSerialization.data(withJSONObject: payload, options: []),
+            let jsonString = String(data: jsonData, encoding: .utf8)
+        else {
             print("📊 [Quantity metrics observer] Delegate delivery skipped — JSON serialization failed")
             return
         }
         await delegate.onHealthMetricSamplesReady(json: jsonString, metricType: metricType, fetchedAt: fetchedAt)
-        print("📊 [Quantity metrics observer] Delegated batch — metricType=\(metricType), count=\(payload["sampleCount"] ?? 0)")
+        print("📊 [Quantity metrics observer] Delegated batch — metricType=\(metricType.key), count=\(payload["sampleCount"] ?? 0)")
     }
+
+    // MARK: - Sample → Dictionary
 
     private func convertToDict(_ sample: HKQuantitySample, unit: HKUnit, unitLabel: String) -> [String: Any] {
         let value = sample.quantity.doubleValue(for: unit)
         var dict: [String: Any] = [
-            "uuid": sample.uuid.uuidString,
-            "value": value,
-            "unit": unitLabel,
-            "startDate": isoFormatter.string(from: sample.startDate),
-            "endDate": isoFormatter.string(from: sample.endDate),
-            "sourceName": sample.sourceRevision.source.name,
+            "uuid":         sample.uuid.uuidString,
+            "value":        value,
+            "unit":         unitLabel,
+            "startDate":    isoFormatter.string(from: sample.startDate),
+            "endDate":      isoFormatter.string(from: sample.endDate),
+            "sourceName":   sample.sourceRevision.source.name,
             "sourceBundle": sample.sourceRevision.source.bundleIdentifier,
         ]
         if let device = sample.device {
             var deviceDict: [String: Any] = [:]
-            if let name = device.name { deviceDict["name"] = name }
-            if let model = device.model { deviceDict["model"] = model }
+            if let name         = device.name         { deviceDict["name"]         = name }
+            if let model        = device.model        { deviceDict["model"]        = model }
             if let manufacturer = device.manufacturer { deviceDict["manufacturer"] = manufacturer }
             dict["device"] = deviceDict
         }
         if let metadata = sample.metadata, !metadata.isEmpty {
             var meta: [String: Any] = [:]
             for (k, v) in metadata {
-                if let s = v as? String { meta[k] = s }
+                if let s = v as? String        { meta[k] = s }
                 else if let n = v as? NSNumber { meta[k] = n }
-                else if let d = v as? Date { meta[k] = isoFormatter.string(from: d) }
-                else { meta[k] = String(describing: v) }
+                else if let d = v as? Date     { meta[k] = isoFormatter.string(from: d) }
+                else                           { meta[k] = String(describing: v) }
             }
             dict["metadata"] = meta
         }

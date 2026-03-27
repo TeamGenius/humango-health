@@ -80,7 +80,9 @@ public class HumangoHealthPlugin: NSObject, FlutterPlugin {
 
     // Phase 6: Health Metrics (HRV, Resting HR, Body Fat, Weight, Height)
     let healthMetricsMethodChannel = FlutterMethodChannel(name: "com.humango.health/metrics", binaryMessenger: registrar.messenger())
-    let healthMetricsHRVEventChannel = FlutterEventChannel(name: "com.humango.health/metrics/hrv_updates", binaryMessenger: registrar.messenger())
+    // Note: no EventChannel for metrics. Background HKObserverQuery and foreground
+    // HKAnchoredObjectQueryDescriptor deliveries go directly to
+    // HumangoHealthDataDelegate.onHealthMetricSamplesReady(json:metricType:fetchedAt:).
 
     let instance = HumangoHealthPlugin()
     shared = instance
@@ -92,7 +94,6 @@ public class HumangoHealthPlugin: NSObject, FlutterPlugin {
     registrar.addMethodCallDelegate(instance, channel: healthMetricsMethodChannel)
     
     permissionEventChannel.setStreamHandler(PermissionStreamHandler())
-    healthMetricsHRVEventChannel.setStreamHandler(HRVStreamHandler())
     
     // MARK: - Auto-Start Monitoring
     // Workouts / Sleep / HRV: only when user is logged in and the subsystem was armed / enabled.

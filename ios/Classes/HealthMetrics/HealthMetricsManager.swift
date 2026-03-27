@@ -2,55 +2,13 @@
 //  HealthMetricsManager.swift
 //  humango_health
 //
-//  Generic HKQuantityType reader for body metrics and vital signs.
-//  Supports: HRV, heart rate, resting heart rate, body fat %, weight (bodyMass), height
+//  On-demand HKQuantityType reader for body metrics and vital signs.
+//  Metric configuration (identifier, unit, label) is sourced from HealthMetricType.
 //
 
 import Flutter
 import HealthKit
 import Foundation
-
-// MARK: - Supported Metric Types
-
-/// Maps Flutter metric key → (HKQuantityTypeIdentifier, preferred HKUnit, unit label)
-private struct MetricDescriptor {
-    let identifier: HKQuantityTypeIdentifier
-    let unit: HKUnit
-    let unitLabel: String
-}
-
-private let metricDescriptors: [String: MetricDescriptor] = [
-    "heartRateVariabilitySDNN": MetricDescriptor(
-        identifier: .heartRateVariabilitySDNN,
-        unit: HKUnit.secondUnit(with: .milli),
-        unitLabel: "ms"
-    ),
-    "heartRate": MetricDescriptor(
-        identifier: .heartRate,
-        unit: HKUnit.count().unitDivided(by: .minute()),
-        unitLabel: "bpm"
-    ),
-    "restingHeartRate": MetricDescriptor(
-        identifier: .restingHeartRate,
-        unit: HKUnit.count().unitDivided(by: .minute()),
-        unitLabel: "bpm"
-    ),
-    "bodyFatPercentage": MetricDescriptor(
-        identifier: .bodyFatPercentage,
-        unit: HKUnit.percent(),
-        unitLabel: "%"
-    ),
-    "bodyMass": MetricDescriptor(
-        identifier: .bodyMass,
-        unit: HKUnit.gramUnit(with: .kilo),
-        unitLabel: "kg"
-    ),
-    "height": MetricDescriptor(
-        identifier: .height,
-        unit: HKUnit.meterUnit(with: .centi),
-        unitLabel: "cm"
-    ),
-]
 
 // MARK: - HealthMetricsManager
 
@@ -85,26 +43,24 @@ public class HealthMetricsManager: NSObject {
     /// Fetch samples for a single metric type within a date range
     private func handleGetHealthMetric(_ call: FlutterMethodCall, result: @escaping FlutterResult) {
         guard let args = call.arguments as? [String: Any],
-              let metricType = args["metricType"] as? String else {
+              let metricKey = args["metricType"] as? String else {
             result(FlutterError(code: "INVALID_ARGS", message: "metricType is required", details: nil))
             return
         }
-        
-        guard let descriptor = metricDescriptors[metricType] else {
-            result(FlutterError(code: "UNKNOWN_METRIC", message: "Unknown metric type: \(metricType). Supported: \(Array(metricDescriptors.keys))", details: nil))
+
+        guard let metricType = HealthMetricType(key: metricKey) else {
+            let supported = HealthMetricType.allCases.map { $0.key }.joined(separator: ", ")
+            result(FlutterError(code: "UNKNOWN_METRIC", message: "Unknown metric type: \(metricKey). Supported: \(supported)", details: nil))
             return
         }
-        
+
         let startDate = parseDate(args["startDate"] as? String) ?? Calendar.current.date(byAdding: .day, value: -30, to: Date())!
-        let endDate = parseDate(args["endDate"] as? String) ?? Date()
-        let limit = args["limit"] as? Int ?? HKObjectQueryNoLimit
-        
+        let endDate   = parseDate(args["endDate"]   as? String) ?? Date()
+        let limit     = args["limit"] as? Int ?? HKObjectQueryNoLimit
+
         Task {
             do {
                 let response = try await fetchSamples(
-                    identifier: descriptor.identifier,
-                    unit: descriptor.unit,
-                    unitLabel: descriptor.unitLabel,
                     metricType: metricType,
                     startDate: startDate,
                     endDate: endDate,
@@ -123,22 +79,19 @@ public class HealthMetricsManager: NSObject {
     /// Fetch only the latest (most recent) sample for a single metric type
     private func handleGetLatestHealthMetric(_ call: FlutterMethodCall, result: @escaping FlutterResult) {
         guard let args = call.arguments as? [String: Any],
-              let metricType = args["metricType"] as? String else {
+              let metricKey = args["metricType"] as? String else {
             result(FlutterError(code: "INVALID_ARGS", message: "metricType is required", details: nil))
             return
         }
-        
-        guard let descriptor = metricDescriptors[metricType] else {
-            result(FlutterError(code: "UNKNOWN_METRIC", message: "Unknown metric type: \(metricType)", details: nil))
+
+        guard let metricType = HealthMetricType(key: metricKey) else {
+            result(FlutterError(code: "UNKNOWN_METRIC", message: "Unknown metric type: \(metricKey)", details: nil))
             return
         }
-        
+
         Task {
             do {
                 let response = try await fetchSamples(
-                    identifier: descriptor.identifier,
-                    unit: descriptor.unit,
-                    unitLabel: descriptor.unitLabel,
                     metricType: metricType,
                     startDate: Date.distantPast,
                     endDate: Date(),
@@ -158,35 +111,32 @@ public class HealthMetricsManager: NSObject {
     private func handleGetAllHealthMetrics(_ call: FlutterMethodCall, result: @escaping FlutterResult) {
         var startDate: Date?
         var endDate: Date?
-        
+
         if let args = call.arguments as? [String: Any] {
             startDate = parseDate(args["startDate"] as? String)
-            endDate = parseDate(args["endDate"] as? String)
+            endDate   = parseDate(args["endDate"]   as? String)
         }
-        
-        let queryEndDate = endDate ?? Date()
+
+        let queryEndDate   = endDate   ?? Date()
         let queryStartDate = startDate ?? Calendar.current.date(byAdding: .day, value: -30, to: queryEndDate)!
-        
+
         Task {
             var allMetrics: [String: Any] = [:]
-            var errors: [String: String] = [:]
-            
-            for (key, descriptor) in metricDescriptors {
+            var errors: [String: String]  = [:]
+
+            for type in HealthMetricType.allCases {
                 do {
                     let response = try await fetchSamples(
-                        identifier: descriptor.identifier,
-                        unit: descriptor.unit,
-                        unitLabel: descriptor.unitLabel,
-                        metricType: key,
+                        metricType: type,
                         startDate: queryStartDate,
                         endDate: queryEndDate,
                         limit: HKObjectQueryNoLimit,
                         ascending: true
                     )
-                    allMetrics[key] = response
+                    allMetrics[type.key] = response
                 } catch {
-                    errors[key] = error.localizedDescription
-                    print("📊 [Humango Health] Error fetching \(key): \(error.localizedDescription)")
+                    errors[type.key] = error.localizedDescription
+                    print("📊 [Humango Health] Error fetching \(type.key): \(error.localizedDescription)")
                 }
             }
             
@@ -202,12 +152,9 @@ public class HealthMetricsManager: NSObject {
     }
     
     // MARK: - Core HealthKit Query
-    
+
     private func fetchSamples(
-        identifier: HKQuantityTypeIdentifier,
-        unit: HKUnit,
-        unitLabel: String,
-        metricType: String,
+        metricType: HealthMetricType,
         startDate: Date,
         endDate: Date,
         limit: Int,
@@ -218,12 +165,15 @@ public class HealthMetricsManager: NSObject {
                 NSLocalizedDescriptionKey: "HealthKit is not available on this device"
             ])
         }
-        
-        guard let quantityType = HKQuantityType.quantityType(forIdentifier: identifier) else {
+
+        guard let quantityType = metricType.quantityType else {
             throw NSError(domain: "HealthMetrics", code: 2, userInfo: [
-                NSLocalizedDescriptionKey: "Quantity type not available: \(identifier.rawValue)"
+                NSLocalizedDescriptionKey: "Quantity type not available: \(metricType.identifier.rawValue)"
             ])
         }
+
+        let unit      = metricType.unit
+        let unitLabel = metricType.unitLabel
         
         let predicate = HKQuery.predicateForSamples(
             withStart: startDate,
@@ -281,10 +231,10 @@ public class HealthMetricsManager: NSObject {
         // Reset min/max if empty
         if count == 0 { min = 0; max = 0 }
         
-        print("📊 [Humango Health] Fetched \(count) \(metricType) samples")
-        
+        print("📊 [Humango Health] Fetched \(count) \(metricType.key) samples")
+
         return [
-            "metricType": metricType,
+            "metricType": metricType.key,
             "unit": unitLabel,
             "samples": sampleDicts,
             "sampleCount": count,
@@ -344,9 +294,6 @@ public class HealthMetricsManager: NSObject {
             }
             dict["metadata"] = metadataDict
         }
-        
-        // Include raw JSON representation
-        dict["rawJson"] = dict
         
         return dict
     }

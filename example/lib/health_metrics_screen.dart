@@ -1,4 +1,3 @@
-import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:humango_health/humango_health.dart';
 
@@ -22,31 +21,27 @@ class _HealthMetricsScreenState extends State<HealthMetricsScreen>
   DateTime? _customEndDate;
 
   bool _hrvMonitoringActive = false;
-  StreamSubscription<Map<String, dynamic>>? _hrvSubscription;
-  String? _lastHrvUpdate;
+  String? _lastDelegateUpdate;
 
   @override
   void initState() {
     super.initState();
     WidgetsBinding.instance.addObserver(this);
     _fetchAllMetrics();
-    _restoreHrvStreamIfNativeMonitoringActive();
+    _restoreMonitoringState();
   }
 
-  /// One subscription for HRV updates when monitoring is on — not duplicated with [_toggleHRVMonitoring].
-  Future<void> _restoreHrvStreamIfNativeMonitoringActive() async {
+  /// Restore the toggle state if native monitoring was already running
+  /// (e.g. app relaunched after a background delivery wake).
+  Future<void> _restoreMonitoringState() async {
     final active = await _metricsManager.isHRVMonitoringActive();
     if (!mounted) return;
-    if (!active) return;
-    _hrvSubscription = _metricsManager.hrvUpdates.listen(_onHrvUpdate);
-    if (!mounted) return;
-    setState(() => _hrvMonitoringActive = true);
+    setState(() => _hrvMonitoringActive = active);
   }
 
   @override
   void dispose() {
     WidgetsBinding.instance.removeObserver(this);
-    _hrvSubscription?.cancel();
     super.dispose();
   }
 
@@ -85,33 +80,18 @@ class _HealthMetricsScreenState extends State<HealthMetricsScreen>
   Future<void> _toggleHRVMonitoring() async {
     if (_hrvMonitoringActive) {
       await _metricsManager.stopHRVMonitoring();
-      _hrvSubscription?.cancel();
-      _hrvSubscription = null;
       if (mounted) {
         setState(() {
           _hrvMonitoringActive = false;
-          _lastHrvUpdate = null;
+          _lastDelegateUpdate = null;
         });
       }
       return;
     }
     await _metricsManager.startHRVMonitoring();
-    _hrvSubscription?.cancel();
-    _hrvSubscription = _metricsManager.hrvUpdates.listen(_onHrvUpdate);
     if (mounted) {
       setState(() => _hrvMonitoringActive = true);
     }
-  }
-
-  void _onHrvUpdate(Map<String, dynamic> update) {
-    if (!mounted) return;
-    final count = update['sampleCount'] as int? ?? 0;
-    final metricType = update['metricType'] as String? ?? 'metric';
-    setState(() {
-      _lastHrvUpdate =
-          count == 0 ? 'No $metricType data' : '$count sample(s) · $metricType';
-    });
-    _fetchAllMetrics();
   }
 
   Future<void> _fetchAllMetrics() async {
@@ -419,14 +399,19 @@ class _HealthMetricsScreenState extends State<HealthMetricsScreen>
             const SizedBox(height: 4),
             Text(
               _hrvMonitoringActive
-                  ? 'Updates when HealthKit changes HRV, heart rate, resting HR, body fat, weight, or height. Works in background.'
-                  : 'Turn on to observe those quantity types and stream updates to Flutter (and the native delegate).',
+                  ? 'Active — iOS delivers batches via '
+                    'HumangoHealthDataDelegate.onHealthMetricSamplesReady.\n'
+                    'Foreground: HKAnchoredObjectQueryDescriptor  ·  '
+                    'Background: HKObserverQuery.'
+                  : 'Turn on to observe HRV, heart rate, resting HR, body fat, '
+                    'weight and height. Delivery is through the native delegate '
+                    '— no Flutter stream.',
               style: TextStyle(fontSize: 12, color: Colors.grey[700]),
             ),
-            if (_lastHrvUpdate != null) ...[
+            if (_lastDelegateUpdate != null) ...[
               const SizedBox(height: 8),
               Text(
-                'Last update: $_lastHrvUpdate',
+                'Last delegate batch: $_lastDelegateUpdate',
                 style: TextStyle(
                   fontSize: 12,
                   fontWeight: FontWeight.w500,

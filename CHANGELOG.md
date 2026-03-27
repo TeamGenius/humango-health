@@ -1,3 +1,120 @@
+## 0.0.21 — 2026-03-27
+
+### Breaking Changes
+
+#### Health Metrics — `HealthMetricType` Swift enum introduced as single source of truth
+
+A new `HealthMetricType.swift` enum (public, `CaseIterable`) is now the **single source of truth** for all quantity-metric configuration on the iOS side, mirroring the Dart `HealthMetricType` enum exactly (same `rawValue` / channel key).
+
+Each case carries:
+- `identifier: HKQuantityTypeIdentifier`
+- `unit: HKUnit` / `unitLabel: String`
+- `displayName: String`
+- `observerLookbackDays: Int` / `observerSampleLimit: Int`
+- `quantityType: HKQuantityType?` (computed)
+
+The private `MetricDescriptor` struct and `metricDescriptors` dictionary in `HealthMetricsManager.swift` have been removed. The private `ObservableQuantityMetric` struct and `observedQuantityMetrics` array in `HRVObserverManager.swift` have been removed. Both files now iterate `HealthMetricType.allCases` directly.
+
+**Changed in:** `ios/Classes/HealthMetrics/HealthMetricType.swift` *(new)*, `ios/Classes/HealthMetrics/HealthMetricsManager.swift`, `ios/Classes/HealthMetrics/HRVObserverManager.swift`
+
+---
+
+#### Health Metrics — `onHealthMetricSamplesReady` delegate parameter changed from `String` to `HealthMetricType`
+
+The `HumangoHealthDataDelegate.onHealthMetricSamplesReady` signature has changed:
+
+```swift
+// Before
+func onHealthMetricSamplesReady(json: String, metricType: String, fetchedAt: String) async
+
+// After
+func onHealthMetricSamplesReady(json: String, metricType: HealthMetricType, fetchedAt: String) async
+```
+
+The host app now receives a typed `HealthMetricType` enum value instead of a raw string, enabling direct `switch` dispatch without string parsing. The `metricType.key` property returns the original string value if needed.
+
+**Migration:** Update your `HumangoHealthDataDelegate` implementation to accept `metricType: HealthMetricType` instead of `metricType: String`. Use `metricType.key` to recover the string if your upload contract requires it.
+
+**Changed in:** `ios/Classes/HumangoHealthDataDelegate.swift`, `ios/Classes/HealthMetrics/HRVObserverManager.swift`
+
+---
+
+#### Health Metrics — EventChannel and `HRVStreamHandler` removed; `hrvUpdates` Dart stream removed
+
+`HRVStreamHandler.swift` and the `com.humango.health/metrics/hrv_updates` `FlutterEventChannel` have been deleted. The `hrvUpdates` Dart stream getter and the `EventChannel` constant in `HealthMetricsManager` have been removed.
+
+All delivery — foreground and background — now goes exclusively through `HumangoHealthDataDelegate.onHealthMetricSamplesReady`. There is no Flutter-side stream for metrics.
+
+**Removed from iOS:**
+- `ios/Classes/HealthMetrics/HRVStreamHandler.swift` — deleted
+- `HumangoHealthPlugin.swift`: `healthMetricsHRVEventChannel` `FlutterEventChannel` registration and `HRVStreamHandler()` set-up removed
+- `HRVObserverManager.swift`: `eventSink: FlutterEventSink?`, `attachEventSink(_:)`, `Flutter` import removed
+
+**Removed from Dart:**
+- `_hrvEventChannel` `EventChannel` constant — removed from `HealthMetricsManager`
+- `hrvUpdates` stream getter — removed from `HealthMetricsManager`
+- Unused `dart:async` import removed
+
+**Migration:** Remove any `metricsManager.hrvUpdates.listen(...)` subscriptions and `StreamSubscription` state. Implement `HumangoHealthDataDelegate.onHealthMetricSamplesReady(json:metricType:fetchedAt:)` in your iOS Runner to receive metric batches in both foreground and background.
+
+**Changed in:** `ios/Classes/HealthMetrics/HRVStreamHandler.swift` *(deleted)*, `ios/Classes/HumangoHealthPlugin.swift`, `ios/Classes/HealthMetrics/HRVObserverManager.swift`, `lib/src/managers/health_metrics_manager.dart`
+
+---
+
+### Features
+
+#### Health Metrics — Foreground monitoring upgraded to `HKAnchoredObjectQueryDescriptor`
+
+The foreground monitoring path in `HRVObserverManager` has been upgraded from a one-shot initial fetch to a persistent `HKAnchoredObjectQueryDescriptor` async stream per `HealthMetricType`.
+
+**New behaviour:**
+- On `startMonitoring()`, if the app is in the foreground, one `HKAnchoredObjectQueryDescriptor` stream is started per type. Each stream fires whenever HealthKit adds new samples of that type; on each batch the full lookback window is fetched and delivered to the delegate.
+- Anchors per type are stored in memory (`[HealthMetricType: HKQueryAnchor]`) and preserved across foreground/background mode switches — the descriptor resumes without missing samples.
+- An initial snapshot fetch is performed for all types immediately on foreground entry.
+- On `appDidEnterBackground`, descriptor streams are cancelled and `HKObserverQuery` instances are started (previous behaviour). On `appDidEnterForeground`, observers are stopped and descriptor streams are restarted.
+
+**Background path unchanged:** `HKObserverQuery` per type remains the background/suspended delivery mechanism.
+
+| App state | Mechanism | Delivery path |
+|-----------|-----------|---------------|
+| Foreground | `HKAnchoredObjectQueryDescriptor` (per type) | `HumangoHealthDataDelegate.onHealthMetricSamplesReady` |
+| Background / suspended | `HKObserverQuery` (per type) + `enableBackgroundDelivery` | `HumangoHealthDataDelegate.onHealthMetricSamplesReady` |
+
+**Changed in:** `ios/Classes/HealthMetrics/HRVObserverManager.swift`
+
+---
+
+#### Health Metrics — `HealthMetricsManager` circular `rawJson` reference fixed
+
+`convertQuantitySampleToDict` previously set `dict["rawJson"] = dict`, attaching a snapshot of the partially-built dictionary as a nested key. This was unnecessary and confusing. The line has been removed.
+
+**Changed in:** `ios/Classes/HealthMetrics/HealthMetricsManager.swift`
+
+---
+
+### Example App Updates
+
+#### `example/lib/health_metrics_screen.dart` — Removed stream subscription; updated monitoring card
+
+- Removed `dart:async` import, `StreamSubscription _hrvSubscription`, `_lastHrvUpdate`, `_restoreHrvStreamIfNativeMonitoringActive()`, and `_onHrvUpdate()` — no stream to subscribe to.
+- `_toggleHRVMonitoring()` now only calls `startHRVMonitoring()` / `stopHRVMonitoring()`.
+- `initState` now calls `_restoreMonitoringState()` which reads `isHRVMonitoringActive()` and updates the toggle.
+- The auto-read card description updated to explain `HKAnchoredObjectQueryDescriptor` (foreground) / `HKObserverQuery` (background) and delegate-only delivery.
+- Last-update label renamed from `'Last update'` to `'Last delegate batch'` (populated by the host delegate, not a Dart stream).
+
+**Changed in:** `example/lib/health_metrics_screen.dart`
+
+#### `example/ios/Runner/ExampleHealthDataHandler.swift` — Updated delegate signature
+
+- `onHealthMetricSamplesReady` signature updated: `metricType: HealthMetricType` (was `String`).
+- Log output now includes `sampleCount` extracted from the JSON payload.
+- Comment shows the exact `post(path: "metrics/\(metricType.key)", json: json)` pattern to wire upload.
+- `extractSampleCount(from:)` private helper added.
+
+**Changed in:** `example/ios/Runner/ExampleHealthDataHandler.swift`
+
+---
+
 ## 0.0.20 — 2026-03-26
 
 ### Bug Fixes

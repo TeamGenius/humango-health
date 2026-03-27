@@ -4,10 +4,10 @@
 //
 //  Dart manager for reading health quantity metrics from Apple HealthKit.
 //  Supports: HRV, resting heart rate, body fat %, weight (bodyMass), height
-//  Supports automatic HRV updates in foreground, background, and when app is suspended.
+//  Monitoring is handled natively via HKAnchoredObjectQueryDescriptor (foreground)
+//  and HKObserverQuery (background); delivery is through HumangoHealthDataDelegate.
 //
 
-import 'dart:async';
 import 'package:flutter/services.dart';
 import '../models/health_metric_sample.dart';
 
@@ -22,9 +22,10 @@ import '../models/health_metric_sample.dart';
 /// - **Height** – in cm
 ///
 /// Quantity metrics auto-read: Call [startHRVMonitoring] to observe HealthKit for new
-/// samples (HRV, heart rate, resting HR, body fat, weight, height). Foreground updates
-/// use [hrvUpdates]. Background delivery is via iOS `HumangoHealthDataDelegate`
-/// (`onHealthMetricSamplesReady`); [getPendingHRVUpdates] always returns an empty list.
+/// samples (HRV, heart rate, resting HR, body fat, weight, height).
+/// Foreground uses `HKAnchoredObjectQueryDescriptor`; background uses `HKObserverQuery`.
+/// All batches are delivered to `HumangoHealthDataDelegate.onHealthMetricSamplesReady`
+/// on iOS — there is no Dart stream. [getPendingHRVUpdates] always returns an empty list.
 ///
 /// Example usage:
 /// ```dart
@@ -37,19 +38,12 @@ import '../models/health_metric_sample.dart';
 /// );
 /// print('Average HRV: ${hrvResponse.statistics.average} ms');
 ///
-/// // Auto-read HRV when Health app (or any source) writes new data
+/// // Start observing — new data is pushed to HumangoHealthDataDelegate on iOS
 /// await metricsManager.startHRVMonitoring();
-/// metricsManager.hrvUpdates.listen((update) {
-///   print('New HRV: ${update['samples']}');
-/// });
 /// ```
 class HealthMetricsManager {
   static const MethodChannel _channel = MethodChannel(
     'com.humango.health/metrics',
-  );
-
-  static const EventChannel _hrvEventChannel = EventChannel(
-    'com.humango.health/metrics/hrv_updates',
   );
 
   // ---------------------------------------------------------------------------
@@ -257,18 +251,12 @@ class HealthMetricsManager {
   // HRV automatic updates (background / suspended)
   // ---------------------------------------------------------------------------
 
-  /// Stream of quantity-metric updates when new data is written to HealthKit.
-  /// Check `metricType` on each map (`heartRate`, `heartRateVariabilitySDNN`, etc.).
-  /// Only emits while the app is in foreground and [startHRVMonitoring] is active.
-  /// After background, rely on the host delegate or pull via [getMetric] / [getAllMetrics].
-  Stream<Map<String, dynamic>> get hrvUpdates =>
-      _hrvEventChannel.receiveBroadcastStream().cast<Map<dynamic, dynamic>>().map(
-            (m) => Map<String, dynamic>.from(m),
-          );
-
   /// Start observing HealthKit for quantity vitals and body metrics (HRV, heart rate,
-  /// resting HR, body fat, weight, height). Works in foreground, background, and when
-  /// suspended. Call once after login; persists across launches when left enabled.
+  /// resting HR, body fat, weight, height).
+  /// Foreground: uses `HKAnchoredObjectQueryDescriptor` (anchor-based streaming).
+  /// Background / suspended: uses `HKObserverQuery` with background delivery.
+  /// All batches are delivered to `HumangoHealthDataDelegate.onHealthMetricSamplesReady`
+  /// on iOS — there is no Flutter stream. Call once after login; persists across launches.
   Future<void> startHRVMonitoring() async {
     await _channel.invokeMethod('startHRVMonitoring');
   }

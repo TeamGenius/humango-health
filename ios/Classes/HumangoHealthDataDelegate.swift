@@ -36,18 +36,18 @@ public protocol HumangoHealthDataDelegate: AnyObject {
     ///   - sessionId: Stable session identifier derived from `BED_TIME`.
     func onSleepSessionReady(json: String, sessionId: String) async
 
-    /// Called when a quantity-metric batch is ready (same shape as each `hrv_updates` EventChannel event).
+    /// Called when a quantity-metric batch is ready.
     ///
     /// **Must be `async`**: same reasoning — `await` before `completion()`.
     /// - Parameters:
     ///   - json: Serialised dictionary: `metricType`, `unit`, `samples`, `sampleCount`, `fetchedAt`.
-    ///   - metricType: Same value as inside `json` (e.g. `heartRate`, `restingHeartRate`).
+    ///   - metricType: Typed `HealthMetricType` enum value identifying the metric batch.
     ///   - fetchedAt: ISO-8601 batch timestamp; use with `metricType` for deduplication.
-    func onHealthMetricSamplesReady(json: String, metricType: String, fetchedAt: String) async
+    func onHealthMetricSamplesReady(json: String, metricType: HealthMetricType, fetchedAt: String) async
 }
 
 public extension HumangoHealthDataDelegate {
     func onWorkoutReady(workout: HuWorkout, deviceId: String) async {}
     func onSleepSessionReady(json: String, sessionId: String) async {}
-    func onHealthMetricSamplesReady(json: String, metricType: String, fetchedAt: String) async {}
+    func onHealthMetricSamplesReady(json: String, metricType: HealthMetricType, fetchedAt: String) async {}
 }
