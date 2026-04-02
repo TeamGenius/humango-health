@@ -192,7 +192,8 @@ class WorkoutServiceChannel: NSObject {
         // Build metadata
         var dictMetaData = workout.metadata ?? [:]
         dictMetaData["dataSource"] = workout.sourceRevision.source.name
-        dictMetaData["iosVersion"] = UIDevice.current.systemVersion
+        let systemVersion = await MainActor.run { UIDevice.current.systemVersion }
+        dictMetaData["iosVersion"] = systemVersion
         
         debugPrint("Read Workouts: Creating HuWorkout with \(locations.count) locations and \(series.reduce(0) { $0 + $1.count }) samples")
         
