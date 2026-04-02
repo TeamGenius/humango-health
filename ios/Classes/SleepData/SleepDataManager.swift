@@ -555,11 +555,11 @@ public class SleepDataManager: NSObject, AppLifecycleObserver {
             return
         }
 
-        let totalMin  = (payload["TOTAL_SLEEP"] as? Int ?? 0) / 60
+        let totalSec  = payload["TOTAL_SLEEP"] as? Double ?? 0
         let source    = payload["SOURCE"] as? String ?? ""
         SleepRemoteLogger.log(.info, step: "payload", message: "built", context: [
             "source":    source,
-            "totalMin":  "\(totalMin)",
+            "totalSec":  "\(totalSec)",
             "bedTime":   payload["BED_TIME"]  as? String ?? "",
             "wakeTime":  payload["WAKE_TIME"] as? String ?? "",
         ])
@@ -605,13 +605,31 @@ public class SleepDataManager: NSObject, AppLifecycleObserver {
     // MARK: - 6PM Query Window
 
     /// Returns the query window: 6:00 PM yesterday → now.
-    /// Matches the humango-mobile SleepStatisticsManager query window.
+    /// Computes the HealthKit query window based on the time the observer fires:
+    ///
+    ///  • Before noon  (00:00 – 11:59) : start = yesterday 18:00  → overnight sleep window
+    ///  • Noon – 18:00 (12:00 – 17:59) : start = yesterday 18:00  → late-delivery of last night's sleep
+    ///  • After 18:00  (18:00 – 23:59) : start = today     18:00  → new sleep session starting tonight
+    ///
+    /// In all cases end = now.
     private func sixPMWindow() -> (start: Date, end: Date) {
-        var cal = Calendar.current
+        let cal = Calendar.current
         let now = Date()
+        let hour = cal.component(.hour, from: now)
         let today = cal.startOfDay(for: now)
-        // 6:00 PM yesterday = today's start minus 6 hours
-        let windowStart = cal.date(byAdding: .hour, value: -6, to: today)!
+
+        let windowStart: Date
+        if hour >= 18 {
+            // After 6 PM today — new overnight window starts now
+            windowStart = cal.date(byAdding: .hour, value: 18, to: today)!
+        } else {
+            // Before 6 PM (includes both overnight/morning and noon–6 PM transitions)
+            // → look back to yesterday 6 PM to capture last night's sleep
+            let yesterday = cal.date(byAdding: .day, value: -1, to: today)!
+            windowStart = cal.date(byAdding: .hour, value: 18, to: yesterday)!
+        }
+
+        debugPrint("🛏️ [SleepDataManager] sixPMWindow: hour=\(hour) → [\(isoFormatter.string(from: windowStart)), now]")
         return (windowStart, now)
     }
 
@@ -701,7 +719,7 @@ public class SleepDataManager: NSObject, AppLifecycleObserver {
         guard totalSleep > 0 else { return nil }
 
         if stats.count > 1 {
-            debugPrint("🛏️ [SleepDataManager] \(stats.count) sources — winner: \(winnerName) (\(Int(totalSleep/60))m). Dropped: \(stats.keys.filter { $0 != winnerName }.joined(separator: ", "))")
+            debugPrint("🛏️ [SleepDataManager] \(stats.count) sources — winner: \(winnerName) (\(totalSleep)s). Dropped: \(stats.keys.filter { $0 != winnerName }.joined(separator: ", "))")
         }
 
         return [
