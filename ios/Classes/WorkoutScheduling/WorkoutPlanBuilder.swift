@@ -18,8 +18,8 @@ class WorkoutPlanBuilder {
     // MARK: - Public entry point
 
     /// Converts decoded JSON workouts into `ScheduledWorkoutItem` objects.
-    /// • Try `CustomWorkout` first for all non-multisport activities (including swimming)
-    /// • Fallback to `SingleGoalWorkout` when `CustomWorkout` is unsupported
+    /// • SWIMMING  → `SingleGoalWorkout`  (WorkoutKit limitation pre-watchOS 11)
+    /// • Everything else → `CustomWorkout` wrapped in StateError handling
     func createCustomWorkouts(
         workouts: [WorkoutInstanceModelElement]
     ) -> [ScheduledWorkoutItem] {
@@ -33,15 +33,19 @@ class WorkoutPlanBuilder {
                 // ── Multisport: requires SwimBikeRunWorkout builder (not yet implemented) ──
                 print("⚠️ [Humango Health] MULTISPORT not yet supported for scheduling — skipping")
                 continue
+
+            } else if workout.sport.isSwimmingType {
+                // ── Swimming variants: route to SingleGoalWorkout ────────────
+                let item = buildSingleGoalItem(from: workout)
+                if item != nil {
+                    scheduledItems.append(item!)
+                }
+               
             } else {
-                // ── Non-multisport: CustomWorkout first, then SingleGoal fallback ─
+                // ── All other sports: CustomWorkout, with SingleGoal fallback ─
                 let item = try buildCustomWorkoutItem(from: workout)
                 if let item = item {
                     scheduledItems.append(item)
-                } else if workout.sport.isSwimmingType,
-                          let swimFallback = buildSingleGoalItem(from: workout) {
-                    print("  ↩️ CustomWorkout failed — falling back to SingleGoalWorkout for swimming")
-                    scheduledItems.append(swimFallback)
                 } else if let fallback = buildGenericSingleGoalItem(from: workout) {
                     print("  ↩️ CustomWorkout failed — falling back to SingleGoalWorkout for \(workout.sport.rawValue)")
                     scheduledItems.append(fallback)
@@ -186,12 +190,12 @@ class WorkoutPlanBuilder {
 
         let sport    = workout.sport.rawValue
         let activity = workout.sport.hkWorkoutType
-        let location = resolvedLocation(for: workout)
+        let location = workout.summary?.indoorOutdoor?.hkLocationType ?? .unknown
         let allBlocks = workout.blocks ?? []
         // Top-level unit preference: all incoming distances are meters; this drives the
         // WorkoutKit goal/display unit (e.g. "mile", "km"). Per-block measurement_unit
         // still decides whether a step goal is time-based or distance-based.
-        let workoutUnit = preferredWorkoutUnit(for: workout)
+        let workoutUnit = workout.unit
 
         // ── Split by type ────────────────────────────────────────────────
         let warmupBlocksList   = allBlocks.filter { $0.type?.uppercased() == "WARMUP"   }
@@ -271,23 +275,6 @@ class WorkoutPlanBuilder {
         } catch {
            // throw error
         }
-    }
-
-    private func resolvedLocation(for workout: WorkoutInstanceModelElement) -> HKWorkoutSessionLocationType {
-        if let implied = workout.sport.impliedLocation {
-            return implied
-        }
-        if workout.sport.isSwimmingType, workout.poolSize != nil {
-            return WorkoutLocation.indoor.hkLocationType
-        }
-        return workout.summary?.indoorOutdoor?.hkLocationType ?? .unknown
-    }
-
-    private func preferredWorkoutUnit(for workout: WorkoutInstanceModelElement) -> String? {
-        if workout.sport.isSwimmingType, let ps = workout.poolSize {
-            return (!ps.isEmpty && !ps.lowercased().contains("m")) ? "yard" : "meter"
-        }
-        return workout.unit
     }
 
     // MARK: - StateError handler

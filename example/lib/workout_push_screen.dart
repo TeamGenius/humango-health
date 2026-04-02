@@ -38,417 +38,6 @@ class _WorkoutPushScreenState extends State<WorkoutPushScreen> {
   final WorkoutPushManager _pushManager = WorkoutPushManager();
   final TextEditingController _jsonController = TextEditingController();
 
-  Map<String, dynamic> get _swimmingDetailsTestWorkout =>
-      Map<String, dynamic>.from(
-        jsonDecode('''
-{
-  "distance": 2400,
-  "blocks": [
-    {
-      "description": "Add a variety of strokes for this warm up including kick",
-      "sport": "SWIMMING",
-      "target_range": {
-        "low": 1499,
-        "high": 1364
-      },
-      "zone_unit": "PACE",
-      "measurement_unit": "meter",
-      "type": "WARMUP",
-      "training_load": 7,
-      "zone_target": {
-        "zone": "ENDURANCE"
-      },
-      "stroke_type": "MIXED",
-      "duration": 640,
-      "distance": 400,
-      "equipment_type": ""
-    },
-    {
-      "distance": 0,
-      "measurement_unit": "second",
-      "sport": "SWIMMING",
-      "equipment_type": "",
-      "duration": 40,
-      "target_range": {
-        "low": 0,
-        "high": 0
-      },
-      "training_load": 0,
-      "type": "REST",
-      "zone_target": {
-        "range": {}
-      },
-      "zone_unit": "PACE"
-    },
-    {
-      "repeat": 12,
-      "blocks": [
-        {
-          "zone_unit": "PACE",
-          "distance": 100,
-          "measurement_unit": "meter",
-          "sport": "SWIMMING",
-          "equipment_type": "",
-          "duration": 138,
-          "target_range": {
-            "low": 1363,
-            "high": 1277
-          },
-          "description": "Aim to keep each of these efforts the same pace",
-          "training_load": 2,
-          "type": "INTERVAL",
-          "zone_target": {
-            "zone": "TEMPO"
-          }
-        },
-        {
-          "distance": 0,
-          "measurement_unit": "second",
-          "sport": "SWIMMING",
-          "equipment_type": "",
-          "duration": 20,
-          "target_range": {
-            "low": 0,
-            "high": 0
-          },
-          "training_load": 0,
-          "type": "REST",
-          "zone_target": {
-            "range": {}
-          },
-          "zone_unit": "PACE"
-        }
-      ],
-      "training_load": 30,
-      "type": "REPEAT",
-      "distance": 1200,
-      "duration": 1896
-    },
-    {
-      "zone_unit": "PACE",
-      "distance": 400,
-      "measurement_unit": "meter",
-      "sport": "SWIMMING",
-      "equipment_type": "SWIM_PULL_BUOY",
-      "duration": 552,
-      "target_range": {
-        "low": 1363,
-        "high": 1277
-      },
-      "description": "Focus on streamline position",
-      "training_load": 10,
-      "type": "INTERVAL",
-      "zone_target": {
-        "zone": "TEMPO"
-      }
-    },
-    {
-      "repeat": 2,
-      "blocks": [
-        {
-          "description": "Each 100 as; 25 3/4 catch up, 50 free DPS, 25 3/4 catch up",
-          "sport": "SWIMMING",
-          "target_range": {
-            "low": 1363,
-            "high": 1277
-          },
-          "zone_unit": "PACE",
-          "measurement_unit": "meter",
-          "type": "INTERVAL",
-          "training_load": 2,
-          "zone_target": {
-            "zone": "TEMPO"
-          },
-          "stroke_type": "FREESTYLE",
-          "duration": 138,
-          "distance": 100,
-          "equipment_type": ""
-        },
-        {
-          "distance": 0,
-          "measurement_unit": "second",
-          "sport": "SWIMMING",
-          "equipment_type": "",
-          "duration": 10,
-          "target_range": {
-            "low": 0,
-            "high": 0
-          },
-          "training_load": 0,
-          "type": "REST",
-          "zone_target": {
-            "range": {}
-          },
-          "zone_unit": "PACE"
-        }
-      ],
-      "training_load": 5,
-      "type": "REPEAT",
-      "distance": 200,
-      "duration": 296
-    },
-    {
-      "distance": 200,
-      "measurement_unit": "meter",
-      "sport": "SWIMMING",
-      "equipment_type": "",
-      "duration": 320,
-      "target_range": {
-        "low": 1499,
-        "high": 1364
-      },
-      "training_load": 3,
-      "type": "COOLDOWN",
-      "zone_target": {
-        "zone": "ENDURANCE"
-      },
-      "zone_unit": "PACE"
-    }
-  ],
-  "average_intensity": 82,
-  "duration_ri_adjusted": 0,
-  "schedule_id": "d24bed52-19f8-47e1-8f3e-86b68c7ee7c0",
-  "training_load": 48,
-  "distance_ri_adjusted": 2868.97,
-  "zone_target": "TEMPO",
-  "id": 15875,
-  "tiz": [
-    0,
-    960,
-    2484,
-    0,
-    0,
-    0,
-    0
-  ],
-  "workout_chart": [
-    {
-      "value": 1431.5,
-      "intensity": 75,
-      "sport": "SWIMMING",
-      "duration": 640
-    },
-    {
-      "value": 0,
-      "intensity": 0,
-      "sport": "SWIMMING",
-      "duration": 40
-    },
-    [
-      {
-        "value": 1320,
-        "intensity": 87,
-        "sport": "SWIMMING",
-        "duration": 138
-      },
-      {
-        "value": 0,
-        "intensity": 0,
-        "sport": "SWIMMING",
-        "duration": 20
-      },
-      {
-        "value": 1320,
-        "intensity": 87,
-        "sport": "SWIMMING",
-        "duration": 138
-      },
-      {
-        "value": 0,
-        "intensity": 0,
-        "sport": "SWIMMING",
-        "duration": 20
-      },
-      {
-        "value": 1320,
-        "intensity": 87,
-        "sport": "SWIMMING",
-        "duration": 138
-      },
-      {
-        "value": 0,
-        "intensity": 0,
-        "sport": "SWIMMING",
-        "duration": 20
-      },
-      {
-        "value": 1320,
-        "intensity": 87,
-        "sport": "SWIMMING",
-        "duration": 138
-      },
-      {
-        "value": 0,
-        "intensity": 0,
-        "sport": "SWIMMING",
-        "duration": 20
-      },
-      {
-        "value": 1320,
-        "intensity": 87,
-        "sport": "SWIMMING",
-        "duration": 138
-      },
-      {
-        "value": 0,
-        "intensity": 0,
-        "sport": "SWIMMING",
-        "duration": 20
-      },
-      {
-        "value": 1320,
-        "intensity": 87,
-        "sport": "SWIMMING",
-        "duration": 138
-      },
-      {
-        "value": 0,
-        "intensity": 0,
-        "sport": "SWIMMING",
-        "duration": 20
-      },
-      {
-        "value": 1320,
-        "intensity": 87,
-        "sport": "SWIMMING",
-        "duration": 138
-      },
-      {
-        "value": 0,
-        "intensity": 0,
-        "sport": "SWIMMING",
-        "duration": 20
-      },
-      {
-        "value": 1320,
-        "intensity": 87,
-        "sport": "SWIMMING",
-        "duration": 138
-      },
-      {
-        "value": 0,
-        "intensity": 0,
-        "sport": "SWIMMING",
-        "duration": 20
-      },
-      {
-        "value": 1320,
-        "intensity": 87,
-        "sport": "SWIMMING",
-        "duration": 138
-      },
-      {
-        "value": 0,
-        "intensity": 0,
-        "sport": "SWIMMING",
-        "duration": 20
-      },
-      {
-        "value": 1320,
-        "intensity": 87,
-        "sport": "SWIMMING",
-        "duration": 138
-      },
-      {
-        "value": 0,
-        "intensity": 0,
-        "sport": "SWIMMING",
-        "duration": 20
-      },
-      {
-        "value": 1320,
-        "intensity": 87,
-        "sport": "SWIMMING",
-        "duration": 138
-      },
-      {
-        "value": 0,
-        "intensity": 0,
-        "sport": "SWIMMING",
-        "duration": 20
-      },
-      {
-        "value": 1320,
-        "intensity": 87,
-        "sport": "SWIMMING",
-        "duration": 138
-      },
-      {
-        "value": 0,
-        "intensity": 0,
-        "sport": "SWIMMING",
-        "duration": 20
-      }
-    ],
-    {
-      "value": 1320,
-      "intensity": 87,
-      "sport": "SWIMMING",
-      "duration": 552
-    },
-    [
-      {
-        "value": 1320,
-        "intensity": 87,
-        "sport": "SWIMMING",
-        "duration": 138
-      },
-      {
-        "value": 0,
-        "intensity": 0,
-        "sport": "SWIMMING",
-        "duration": 10
-      },
-      {
-        "value": 1320,
-        "intensity": 87,
-        "sport": "SWIMMING",
-        "duration": 138
-      },
-      {
-        "value": 0,
-        "intensity": 0,
-        "sport": "SWIMMING",
-        "duration": 10
-      }
-    ],
-    {
-      "value": 1431.5,
-      "intensity": 75,
-      "sport": "SWIMMING",
-      "duration": 320
-    }
-  ],
-  "summary": {
-    "form": false,
-    "name": "100 's tempo pacing and form",
-    "sport": "SWIMMING",
-    "measurement_unit": "meter",
-    "tags": "endurance, form",
-    "test_workout": false,
-    "zone_unit": "PACE",
-    "description": {
-      "purpose": "",
-      "fueling": "",
-      "execution": "",
-      "general": "Zero in on your aerobic pacing. Adding in some 3/4 catch up and distance per stroke drills as you settle into the second half of this pacing and form session.",
-      "tips": ""
-    },
-    "index_max": 2,
-    "brick": false
-  },
-  "priority": 0,
-  "duration": 3744,
-  "brick_summaries": [],
-  "index": 0,
-  "workout_id": 113588,
-  "date": "2026-04-01T03:51:27Z",
-  "sport": "SWIMMING"
-}
-''')
-            as Map,
-      );
-
   bool _isPushing = false;
   WorkoutPushResponse? _lastResponse;
   String? _errorMessage;
@@ -532,10 +121,46 @@ class _WorkoutPushScreenState extends State<WorkoutPushScreen> {
       ],
     ),
     _Scenario(
-      label: 'Swimming — Watch Details Test JSON',
+      label: 'Swimming — 25 m Pool (meters)',
       icon: Icons.pool,
       color: Colors.cyan,
-      workouts: [_swimmingDetailsTestWorkout],
+      workouts: [
+        {
+          'schedule_id': 'swim-25m-test-001',
+          'sport': 'SWIMMING',
+          'distance': 1500.0,
+          'duration': 2700,
+          'pool_size': '25m',
+          'summary': {
+            'name': 'Test: 25 m Pool Swim',
+            'sport': 'SWIMMING',
+            'indoor_outdoor': 'INDOOR',
+            'measurement_unit': 'meter',
+          },
+          'blocks': [
+            {
+              'type': 'WARMUP',
+              'duration': 300,
+              'distance': 200.0,
+              'measurement_unit': 'meter',
+            },
+            {
+              'type': 'INTERVAL',
+              'duration': 1800,
+              'distance': 1000.0,
+              'measurement_unit': 'meter',
+              'zone_unit': 'HR',
+              'target_range': {'low': 130, 'high': 160},
+            },
+            {
+              'type': 'COOLDOWN',
+              'duration': 600,
+              'distance': 300.0,
+              'measurement_unit': 'meter',
+            },
+          ],
+        },
+      ],
     ),
     _Scenario(
       label: 'Swimming — 25 yd Pool (yards)',
