@@ -69,19 +69,19 @@ public class SleepDataManager: NSObject, AppLifecycleObserver {
         guard UserAuthStateManager.shared.isLoggedIn else {
             debugPrint("🛍️ [SleepDataManager] autoStart skipped — user not logged in")
             // Remote-log so Cloud Logs show WHY monitoring never starts on background relaunch.
-            SleepRemoteLogger.log(.warn, step: "autoStart", message: "skipped — user not logged in")
+            SleepRemoteLogger.log(.warn, step: "autoStart", message: "skipped — user not logged in", context: ["class": "SleepDataManager", "method": "autoStartIfConfigured"])
             return
         }
         guard HumangoHealthPlugin.delegate != nil else {
             debugPrint("🛍️ [SleepDataManager] autoStart skipped — no delegate configured")
             // Remote-log: delegate nil means onSleepSessionReady will never be called even if
             // the observer fires. This is the most common silent failure on cold background launch.
-            SleepRemoteLogger.log(.warn, step: "autoStart", message: "skipped — delegate nil (set HumangoHealthPlugin.delegate before calling startAllBackgroundMonitoring)")
+            SleepRemoteLogger.log(.warn, step: "autoStart", message: "skipped — delegate nil (set HumangoHealthPlugin.delegate before calling startAllBackgroundMonitoring)", context: ["class": "SleepDataManager", "method": "autoStartIfConfigured"])
             return
         }
         guard monitorStartDate == nil else {
             debugPrint("🛏️ [SleepDataManager] autoStart skipped — monitoring already active")
-            SleepRemoteLogger.log(.info, step: "autoStart", message: "skipped — already active")
+            SleepRemoteLogger.log(.info, step: "autoStart", message: "skipped — already active", context: ["class": "SleepDataManager", "method": "autoStartIfConfigured"])
             return
         }
 
@@ -90,6 +90,8 @@ public class SleepDataManager: NSObject, AppLifecycleObserver {
 
         let mode = AppLifecycleManager.shared.isInForeground ? "foreground" : "background"
         SleepRemoteLogger.log(.info, step: "autoStart", message: "starting", context: [
+            "class":     "SleepDataManager",
+            "method":    "autoStartIfConfigured",
             "mode":      mode,
             "startDate": isoFormatter.string(from: startDate),
         ])
@@ -455,16 +457,16 @@ public class SleepDataManager: NSObject, AppLifecycleObserver {
         }
 
         isBackgroundMonitoring = true
-        SleepRemoteLogger.log(.info, step: "startBackgroundMonitoring", message: "registering observer query")
+        SleepRemoteLogger.log(.info, step: "startBackgroundMonitoring", message: "registering observer query", context: ["class": "SleepDataManager", "method": "startBackgroundMonitoring"])
 
         Task {
             do {
                 try await healthStore.enableBackgroundDelivery(for: sleepType, frequency: .immediate)
                 debugPrint("🛏️ [SleepDataManager] background delivery enabled")
-                SleepRemoteLogger.log(.info, step: "startBackgroundMonitoring", message: "background delivery enabled")
+                SleepRemoteLogger.log(.info, step: "startBackgroundMonitoring", message: "background delivery enabled", context: ["class": "SleepDataManager", "method": "startBackgroundMonitoring"])
             } catch {
                 debugPrint("🛏️ [SleepDataManager] enableBackgroundDelivery failed: \(error)")
-                SleepRemoteLogger.log(.error, step: "startBackgroundMonitoring", message: "enableBackgroundDelivery failed", context: ["error": "\(error)"])
+                SleepRemoteLogger.log(.error, step: "startBackgroundMonitoring", message: "enableBackgroundDelivery failed", context: ["class": "SleepDataManager", "method": "startBackgroundMonitoring", "error": "\(error)"])
             }
         }
 
@@ -479,20 +481,20 @@ public class SleepDataManager: NSObject, AppLifecycleObserver {
 
             if let error = error {
                 debugPrint("🛏️ [SleepDataManager] observer error at \(fireTime): \(error)")
-                SleepRemoteLogger.log(.error, step: "observer", message: "observer error", context: ["error": "\(error)"])
+                SleepRemoteLogger.log(.error, step: "observer", message: "observer error", context: ["class": "SleepDataManager", "method": "startBackgroundMonitoring", "error": "\(error)"])
                 completion()
                 return
             }
 
             guard UserAuthStateManager.shared.isLoggedIn else {
                 debugPrint("🛏️ [SleepDataManager] observer fired at \(fireTime) — skipped (user not logged in)")
-                SleepRemoteLogger.log(.warn, step: "observer", message: "skipped — user not logged in")
+                SleepRemoteLogger.log(.warn, step: "observer", message: "skipped — user not logged in", context: ["class": "SleepDataManager", "method": "startBackgroundMonitoring"])
                 completion()
                 return
             }
 
             debugPrint("🛏️ [SleepDataManager] observer fired at \(fireTime) — processing (userId=\(UserAuthStateManager.shared.userId ?? "?"))")
-            SleepRemoteLogger.log(.info, step: "observer_fired", message: "processing", context: ["fireTime": fireTime])
+            SleepRemoteLogger.log(.info, step: "observer_fired", message: "processing", context: ["class": "SleepDataManager", "method": "startBackgroundMonitoring", "fireTime": fireTime])
             Task {
                 await self.handleBackgroundObserverFired()
                 // Signal HealthKit AFTER all async work is complete so iOS keeps
@@ -525,8 +527,10 @@ public class SleepDataManager: NSObject, AppLifecycleObserver {
         let (queryStart, queryEnd) = sixPMWindow()
 
         SleepRemoteLogger.log(.info, step: "fetch", message: "fetching 6PM window", context: [
+            "class":       "SleepDataManager",
+            "method":      "handleBackgroundObserverFired",
             "windowStart": isoFormatter.string(from: queryStart),
-            "windowEnd": isoFormatter.string(from: queryEnd),
+            "windowEnd":   isoFormatter.string(from: queryEnd),
         ])
 
         let rawSamples: [HKCategorySample]
@@ -534,16 +538,16 @@ public class SleepDataManager: NSObject, AppLifecycleObserver {
             rawSamples = try await fetchSleepSamples(from: queryStart, to: queryEnd)
         } catch {
             debugPrint("🛏️ [SleepDataManager] background fetch failed: \(error)")
-            SleepRemoteLogger.log(.error, step: "fetch", message: "HealthKit fetch failed", context: ["error": "\(error)"])
+            SleepRemoteLogger.log(.error, step: "fetch", message: "HealthKit fetch failed", context: ["class": "SleepDataManager", "method": "handleBackgroundObserverFired", "error": "\(error)"])
             return
         }
 
         guard !rawSamples.isEmpty else {
-            SleepRemoteLogger.log(.info, step: "fetch", message: "no samples in window")
+            SleepRemoteLogger.log(.info, step: "fetch", message: "no samples in window", context: ["class": "SleepDataManager", "method": "handleBackgroundObserverFired"])
             return
         }
 
-        SleepRemoteLogger.log(.info, step: "fetch", message: "fetched \(rawSamples.count) samples")
+        SleepRemoteLogger.log(.info, step: "fetch", message: "fetched \(rawSamples.count) samples", context: ["class": "SleepDataManager", "method": "handleBackgroundObserverFired"])
         await deliverPayload(samples: rawSamples, queryStart: queryStart, queryEnd: queryEnd)
     }
 
@@ -551,13 +555,15 @@ public class SleepDataManager: NSObject, AppLifecycleObserver {
 
     func deliverPayload(samples: [HKCategorySample], queryStart: Date, queryEnd: Date) async {
         guard let payload = calculateSleepPayload(from: samples) else {
-            SleepRemoteLogger.log(.info, step: "payload", message: "calculateSleepPayload returned nil (no valid groups)")
+            SleepRemoteLogger.log(.info, step: "payload", message: "calculateSleepPayload returned nil (no valid groups)", context: ["class": "SleepDataManager", "method": "deliverPayload"])
             return
         }
 
         let totalSec  = payload["TOTAL_SLEEP"] as? Double ?? 0
         let source    = payload["SOURCE"] as? String ?? ""
         SleepRemoteLogger.log(.info, step: "payload", message: "built", context: [
+            "class":     "SleepDataManager",
+            "method":    "deliverPayload",
             "source":    source,
             "totalSec":  "\(totalSec)",
             "bedTime":   payload["BED_TIME"]  as? String ?? "",
@@ -567,7 +573,7 @@ public class SleepDataManager: NSObject, AppLifecycleObserver {
         guard let jsonData = try? JSONSerialization.data(withJSONObject: payload, options: []),
               let jsonString = String(data: jsonData, encoding: .utf8) else {
             debugPrint("🛏️ [SleepDataManager] deliverPayload: serialization failed")
-            SleepRemoteLogger.log(.error, step: "deliver", message: "JSON serialization failed")
+            SleepRemoteLogger.log(.error, step: "deliver", message: "JSON serialization failed", context: ["class": "SleepDataManager", "method": "deliverPayload"])
             return
         }
 
@@ -578,6 +584,8 @@ public class SleepDataManager: NSObject, AppLifecycleObserver {
         // Re-deliver when wakeTime advances so incremental Watch updates propagate to the API.
         if sessionId == lastDeliveredSessionId && wakeTime == lastDeliveredWakeTime {
             SleepRemoteLogger.log(.info, step: "deliver", message: "skipped — identical session already delivered", context: [
+                "class":     "SleepDataManager",
+                "method":    "deliverPayload",
                 "sessionId": sessionId,
                 "wakeTime":  wakeTime,
             ])
@@ -592,13 +600,16 @@ public class SleepDataManager: NSObject, AppLifecycleObserver {
             // the app alive for the full fetch → compute → upload pipeline.
             await delegate.onSleepSessionReady(json: jsonString, sessionId: sessionId)
             SleepRemoteLogger.log(.info, step: "deliver", message: "onSleepSessionReady delivered", context: [
+                "class":     "SleepDataManager",
+                "method":    "deliverPayload",
                 "sessionId": sessionId,
                 "wakeTime":  wakeTime,
                 "jsonBytes":  jsonData.count,
+                "payload":   payload,
             ])
         } else {
             debugPrint("⚠️ [SleepDataManager] delegate is nil — sleep session \(sessionId) not delivered")
-            SleepRemoteLogger.log(.warn, step: "deliver", message: "delegate is nil — not delivered", context: ["sessionId": sessionId])
+            SleepRemoteLogger.log(.warn, step: "deliver", message: "delegate is nil — not delivered", context: ["class": "SleepDataManager", "method": "deliverPayload", "sessionId": sessionId])
         }
     }
 

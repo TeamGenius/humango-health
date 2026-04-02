@@ -1,3 +1,39 @@
+## 0.0.23 — 2026-04-02
+
+### Bug Fixes
+
+#### Health Metrics — All 6 quantity types now auto-arm on login (HRV, HR, RHR, BodyFat, Weight, Height)
+
+`HRVObserverManager.autoStartIfConfigured()` previously required a persisted `isMonitoringEnabled` flag (`com.humango.health.hrvMonitoringEnabled`) that was only written when `startHRVMonitoring` was explicitly called from the Dart/UI layer. This meant that on every fresh login the health metrics `HKObserverQuery` / `HKAnchoredObjectQueryDescriptor` observers were never installed, so no HealthKit change for any quantity type (weight, HRV, heart rate, resting HR, body fat, height) triggered `onHealthMetricSamplesReady`.
+
+**Fix:** Removed the `guard isMonitoringEnabled` gate from `autoStartIfConfigured`. The method now mirrors the same pattern used by `SleepDataManager` and `WorkoutServiceChannel`: starts immediately whenever `isLoggedIn == true` and `HumangoHealthPlugin.delegate != nil`. The `isMonitoringEnabled` flag and `isHRVMonitoringActive()` Dart API are still updated by `startMonitoring` / `stopMonitoring` and continue to work correctly.
+
+**All 6 types affected:** `heartRateVariabilitySDNN`, `heartRate`, `restingHeartRate`, `bodyFatPercentage`, `bodyMass`, `height`.
+
+**Changed in:** `ios/Classes/HealthMetrics/HRVObserverManager.swift` (`autoStartIfConfigured`)
+
+---
+
+### Features
+
+#### Health Metrics — HRV observer delivers unrounded daily average
+
+When the HRV (`heartRateVariabilitySDNN`) observer fires, the fetch window is now scoped to the **full current calendar day in local time** (today `00:00:00` → tomorrow `00:00:00`) instead of a rolling lookback. All samples recorded today are fetched and a daily average is computed using raw `Double` arithmetic — no rounding or truncation is applied at any step.
+
+Three new keys are added to the `onHealthMetricSamplesReady` payload **for HRV only**:
+
+| Key | Type | Description |
+|-----|------|-------------|
+| `dailyAverage` | `Double` | Unrounded mean of all HRV samples today (ms) |
+| `windowStart` | `String` (ISO 8601) | Today at `00:00:00` local time |
+| `windowEnd` | `String` (ISO 8601) | Tomorrow at `00:00:00` local time (exclusive bound) |
+
+All other metric types (HR, RHR, BodyFat, Weight, Height) are unaffected and continue to use their configured `observerLookbackDays` window with no average calculation.
+
+**Changed in:** `ios/Classes/HealthMetrics/HRVObserverManager.swift` (`fetchAndDeliverUpdates`)
+
+---
+
 ## 0.0.22 — 2026-04-02
 
 ### Improvements

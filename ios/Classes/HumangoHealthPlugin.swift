@@ -17,7 +17,7 @@ public class HumangoHealthPlugin: NSObject, FlutterPlugin {
   /// provided they have been previously configured/armed. Safe to call after login.
   public func startAllBackgroundMonitoring() {
       guard guardMonitoringPreconditions("startAllBackgroundMonitoring") else { return }
-      SleepRemoteLogger.log(.info, step: "startAllBackgroundMonitoring", message: "starting all subsystems")
+      SleepRemoteLogger.log(.info, step: "startAllBackgroundMonitoring", message: "starting all subsystems", context: ["class": "HumangoHealthPlugin", "method": "startAllBackgroundMonitoring"])
       workoutReadChannel.autoStartIfConfigured()
       SleepDataManager.shared.autoStartIfConfigured()
       HRVObserverManager.shared.autoStartIfConfigured()
@@ -27,7 +27,7 @@ public class HumangoHealthPlugin: NSObject, FlutterPlugin {
   /// Requires the user to be logged in and `HumangoHealthPlugin.delegate` to be set.
   public func startActivityBackgroundMonitoring() {
       guard guardMonitoringPreconditions("startActivityBackgroundMonitoring") else { return }
-      SleepRemoteLogger.log(.info, step: "startActivityBackgroundMonitoring", message: "starting activity subsystem")
+      SleepRemoteLogger.log(.info, step: "startActivityBackgroundMonitoring", message: "starting activity subsystem", context: ["class": "HumangoHealthPlugin", "method": "startActivityBackgroundMonitoring"])
       workoutReadChannel.autoStartIfConfigured()
   }
 
@@ -35,7 +35,7 @@ public class HumangoHealthPlugin: NSObject, FlutterPlugin {
   /// Requires the user to be logged in and `HumangoHealthPlugin.delegate` to be set.
   public func startSleepBackgroundMonitoring() {
       guard guardMonitoringPreconditions("startSleepBackgroundMonitoring") else { return }
-      SleepRemoteLogger.log(.info, step: "startSleepBackgroundMonitoring", message: "starting sleep subsystem")
+      SleepRemoteLogger.log(.info, step: "startSleepBackgroundMonitoring", message: "starting sleep subsystem", context: ["class": "HumangoHealthPlugin", "method": "startSleepBackgroundMonitoring"])
       SleepDataManager.shared.autoStartIfConfigured()
   }
 
@@ -43,7 +43,7 @@ public class HumangoHealthPlugin: NSObject, FlutterPlugin {
   /// Requires the user to be logged in and `HumangoHealthPlugin.delegate` to be set.
   public func startHealthMetricsBackgroundMonitoring() {
       guard guardMonitoringPreconditions("startHealthMetricsBackgroundMonitoring") else { return }
-      SleepRemoteLogger.log(.info, step: "startHealthMetricsBackgroundMonitoring", message: "starting health metrics subsystem")
+      SleepRemoteLogger.log(.info, step: "startHealthMetricsBackgroundMonitoring", message: "starting health metrics subsystem", context: ["class": "HumangoHealthPlugin", "method": "startHealthMetricsBackgroundMonitoring"])
       HRVObserverManager.shared.autoStartIfConfigured()
   }
 
@@ -51,12 +51,12 @@ public class HumangoHealthPlugin: NSObject, FlutterPlugin {
   private func guardMonitoringPreconditions(_ caller: String) -> Bool {
       guard UserAuthStateManager.shared.isLoggedIn else {
           debugPrint("🔐 [HumangoHealth] \(caller) skipped — user not logged in")
-          SleepRemoteLogger.log(.warn, step: caller, message: "skipped — user not logged in")
+          SleepRemoteLogger.log(.warn, step: caller, message: "skipped — user not logged in", context: ["class": "HumangoHealthPlugin", "method": "guardMonitoringPreconditions"])
           return false
       }
       guard HumangoHealthPlugin.delegate != nil else {
           debugPrint("🔐 [HumangoHealth] \(caller) skipped — delegate not set. Assign HumangoHealthPlugin.delegate before starting monitoring.")
-          SleepRemoteLogger.log(.warn, step: caller, message: "skipped — delegate nil")
+          SleepRemoteLogger.log(.warn, step: caller, message: "skipped — delegate nil", context: ["class": "HumangoHealthPlugin", "method": "guardMonitoringPreconditions"])
           return false
       }
       return true

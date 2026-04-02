@@ -98,7 +98,7 @@ public class HRVObserverManager: NSObject, AppLifecycleObserver {
 
         isMonitoring = true
         isMonitoringEnabled = true
-        SleepRemoteLogger.log(.info, step: "startMonitoring", message: "Health metrics monitoring started", subsystem: "HealthMetricsObserver")
+        SleepRemoteLogger.log(.info, step: "startMonitoring", message: "Health metrics monitoring started", context: ["class": "HRVObserverManager", "method": "startMonitoring"], subsystem: "HealthMetricsObserver")
 
         // Enable background delivery for every type first.
         Task {
@@ -107,10 +107,10 @@ public class HRVObserverManager: NSObject, AppLifecycleObserver {
                 do {
                     try await healthStore.enableBackgroundDelivery(for: qType, frequency: .immediate)
                     print("📊 [Quantity metrics observer] Enabled background delivery for \(type.key)")
-                    SleepRemoteLogger.log(.info, step: "enableBackgroundDelivery", message: "Enabled for \(type.key)", context: ["metricType": type.key], subsystem: "HealthMetricsObserver")
+                    SleepRemoteLogger.log(.info, step: "enableBackgroundDelivery", message: "Enabled for \(type.key)", context: ["class": "HRVObserverManager", "method": "startMonitoring", "metricType": type.key], subsystem: "HealthMetricsObserver")
                 } catch {
                     print("📊 [Quantity metrics observer] enableBackgroundDelivery failed (\(type.key)): \(error)")
-                    SleepRemoteLogger.log(.error, step: "enableBackgroundDelivery", message: "Failed for \(type.key): \(error.localizedDescription)", context: ["metricType": type.key], subsystem: "HealthMetricsObserver")
+                    SleepRemoteLogger.log(.error, step: "enableBackgroundDelivery", message: "Failed for \(type.key): \(error.localizedDescription)", context: ["class": "HRVObserverManager", "method": "startMonitoring", "metricType": type.key], subsystem: "HealthMetricsObserver")
                 }
             }
         }
@@ -158,22 +158,24 @@ public class HRVObserverManager: NSObject, AppLifecycleObserver {
     /// Background delivery is exclusively via `HumangoHealthDataDelegate.onHealthMetricSamplesReady`.
     func retrievePendingHRVUpdates() -> [[String: Any]] { [] }
 
-    /// Auto-start on app launch when the user was previously logged in with monitoring enabled.
+    /// Auto-start on app launch / login whenever the user is logged in and a delegate is set.
+    /// Matches the same unconditional pattern used by SleepDataManager and WorkoutServiceChannel
+    /// — no persisted "monitoring enabled" flag required.
     func autoStartIfConfigured() {
         guard UserAuthStateManager.shared.isLoggedIn else {
             print("📊 [Quantity metrics observer] Auto-start skipped — user not logged in")
+            return
+        }
+        guard HumangoHealthPlugin.delegate != nil else {
+            print("📊 [Quantity metrics observer] Auto-start skipped — delegate not set")
             return
         }
         guard !isMonitoring else {
             print("📊 [Quantity metrics observer] Auto-start skipped — already monitoring")
             return
         }
-        guard isMonitoringEnabled else {
-            print("📊 [Quantity metrics observer] Auto-start skipped — monitoring not enabled")
-            return
-        }
         startMonitoring()
-        print("📊 [Quantity metrics observer] Auto-started from persisted preference")
+        print("📊 [Quantity metrics observer] Auto-started")
     }
 
     // MARK: - AppLifecycleObserver
@@ -194,14 +196,14 @@ public class HRVObserverManager: NSObject, AppLifecycleObserver {
         stopBackgroundMonitoring()
         startLiveUpdates()
         print("📊 [Quantity metrics observer] → foreground mode")
-        SleepRemoteLogger.log(.info, step: "modeSwitch", message: "Switched to foreground mode", subsystem: "HealthMetricsObserver")
+        SleepRemoteLogger.log(.info, step: "modeSwitch", message: "Switched to foreground mode", context: ["class": "HRVObserverManager", "method": "switchToForegroundMode"], subsystem: "HealthMetricsObserver")
     }
 
     private func switchToBackgroundMode() {
         stopLiveUpdates()
         startBackgroundMonitoring()
         print("📊 [Quantity metrics observer] → background mode")
-        SleepRemoteLogger.log(.info, step: "modeSwitch", message: "Switched to background mode", subsystem: "HealthMetricsObserver")
+        SleepRemoteLogger.log(.info, step: "modeSwitch", message: "Switched to background mode", context: ["class": "HRVObserverManager", "method": "switchToBackgroundMode"], subsystem: "HealthMetricsObserver")
     }
 
     // MARK: - Foreground: HKAnchoredObjectQueryDescriptor
@@ -234,14 +236,14 @@ public class HRVObserverManager: NSObject, AppLifecycleObserver {
                         self.anchors[capturedType] = update.newAnchor
                         guard !update.addedSamples.isEmpty else { continue }
                         print("📊 [Quantity metrics observer] foreground: \(update.addedSamples.count) new \(capturedType.key) sample(s)")
-                        SleepRemoteLogger.log(.info, step: "foregroundUpdate", message: "New samples received for \(capturedType.key)", context: ["metricType": capturedType.key, "count": update.addedSamples.count], subsystem: "HealthMetricsObserver")
+                        SleepRemoteLogger.log(.info, step: "foregroundUpdate", message: "New samples received for \(capturedType.key)", context: ["class": "HRVObserverManager", "method": "startLiveUpdates", "metricType": capturedType.key, "count": update.addedSamples.count], subsystem: "HealthMetricsObserver")
                         await self.fetchAndDeliverUpdates(metricType: capturedType)
                     }
                 } catch {
                     // Task cancellation is expected during mode switches — only log real errors.
                     if !Task.isCancelled {
                         print("📊 [Quantity metrics observer] foreground stream error (\(capturedType.key)): \(error)")
-                        SleepRemoteLogger.log(.error, step: "foregroundStreamError", message: "Stream error for \(capturedType.key): \(error.localizedDescription)", context: ["metricType": capturedType.key], subsystem: "HealthMetricsObserver")
+                        SleepRemoteLogger.log(.error, step: "foregroundStreamError", message: "Stream error for \(capturedType.key): \(error.localizedDescription)", context: ["class": "HRVObserverManager", "method": "startLiveUpdates", "metricType": capturedType.key], subsystem: "HealthMetricsObserver")
                     }
                 }
             }
@@ -290,12 +292,12 @@ public class HRVObserverManager: NSObject, AppLifecycleObserver {
                 // app alive for the full fetch → delegate pipeline.
                 if let error = error {
                     print("📊 [Quantity metrics observer] Observer error (\(capturedType.key)): \(error)")
-                    SleepRemoteLogger.log(.error, step: "observerFired", message: "Observer error for \(capturedType.key): \(error.localizedDescription)", context: ["metricType": capturedType.key], subsystem: "HealthMetricsObserver")
+                    SleepRemoteLogger.log(.error, step: "observerFired", message: "Observer error for \(capturedType.key): \(error.localizedDescription)", context: ["class": "HRVObserverManager", "method": "startBackgroundMonitoring", "metricType": capturedType.key], subsystem: "HealthMetricsObserver")
                     completion()
                     return
                 }
                 print("📊 [Quantity metrics observer] HealthKit changed — \(capturedType.key)")
-                SleepRemoteLogger.log(.info, step: "observerFired", message: "Background observer fired for \(capturedType.key)", context: ["metricType": capturedType.key], subsystem: "HealthMetricsObserver")
+                SleepRemoteLogger.log(.info, step: "observerFired", message: "Background observer fired for \(capturedType.key)", context: ["class": "HRVObserverManager", "method": "startBackgroundMonitoring", "metricType": capturedType.key], subsystem: "HealthMetricsObserver")
                 Task {
                     await self.fetchAndDeliverUpdates(metricType: capturedType)
                     completion()
@@ -320,8 +322,20 @@ public class HRVObserverManager: NSObject, AppLifecycleObserver {
     private func fetchAndDeliverUpdates(metricType: HealthMetricType) async {
         guard let quantityType = metricType.quantityType else { return }
 
-        let endDate   = Date()
-        let startDate = Calendar.current.date(byAdding: .day, value: -metricType.observerLookbackDays, to: endDate) ?? endDate
+        // HRV: query the full current calendar day in local time (00:00:00 → start of tomorrow)
+        // so the daily average reflects every reading recorded today, regardless of when the
+        // observer fires. All other types keep their configured lookback window.
+        let startDate: Date
+        let endDate: Date
+        if metricType == .heartRateVariabilitySDNN {
+            let cal   = Calendar.current
+            let now   = Date()
+            startDate = cal.startOfDay(for: now)
+            endDate   = cal.date(byAdding: .day, value: 1, to: startDate) ?? now
+        } else {
+            endDate   = Date()
+            startDate = Calendar.current.date(byAdding: .day, value: -metricType.observerLookbackDays, to: endDate) ?? endDate
+        }
 
         let predicate      = HKQuery.predicateForSamples(withStart: startDate, end: endDate, options: .strictStartDate)
         let sortDescriptor = NSSortDescriptor(key: HKSampleSortIdentifierStartDate, ascending: false)
@@ -341,9 +355,9 @@ public class HRVObserverManager: NSObject, AppLifecycleObserver {
             }
 
             let sampleDicts = samples.map { convertToDict($0, unit: metricType.unit, unitLabel: metricType.unitLabel) }
-            SleepRemoteLogger.log(.info, step: "fetchComplete", message: "Fetched \(samples.count) \(metricType.key) sample(s)", context: ["metricType": metricType.key, "count": samples.count, "samples": sampleDicts], subsystem: "HealthMetricsObserver")
             let fetchedAt   = isoFormatter.string(from: Date())
-            let payload: [String: Any] = [
+
+            var payload: [String: Any] = [
                 "metricType": metricType.key,
                 "unit":        metricType.unitLabel,
                 "samples":     sampleDicts,
@@ -351,11 +365,24 @@ public class HRVObserverManager: NSObject, AppLifecycleObserver {
                 "fetchedAt":   fetchedAt,
             ]
 
+            // HRV only: compute the unrounded daily average across all samples for today.
+            // No rounding or truncation is applied at any step — raw Double arithmetic only.
+            if metricType == .heartRateVariabilitySDNN, !samples.isEmpty {
+                let sum: Double = samples.reduce(0.0) { $0 + $1.quantity.doubleValue(for: metricType.unit) }
+                let dailyAverage: Double = sum / Double(samples.count)
+                payload["dailyAverage"] = dailyAverage
+                payload["windowStart"]  = isoFormatter.string(from: startDate)
+                payload["windowEnd"]    = isoFormatter.string(from: endDate)
+                print("📊 [Quantity metrics observer] HRV daily average: \(dailyAverage) ms from \(samples.count) sample(s) [\(isoFormatter.string(from: startDate)) → \(isoFormatter.string(from: endDate))]")
+            }
+
+            SleepRemoteLogger.log(.info, step: "fetchComplete", message: "Fetched \(samples.count) \(metricType.key) sample(s)", context: ["class": "HRVObserverManager", "method": "fetchAndDeliverUpdates", "metricType": metricType.key, "count": samples.count, "samples": sampleDicts], subsystem: "HealthMetricsObserver")
+
             await deliverMetricPayloadToDelegate(payload, metricType: metricType, fetchedAt: fetchedAt)
 
         } catch {
             print("📊 [Quantity metrics observer] Fetch error (\(metricType.key)): \(error)")
-            SleepRemoteLogger.log(.error, step: "fetchError", message: "Fetch error for \(metricType.key): \(error.localizedDescription)", context: ["metricType": metricType.key], subsystem: "HealthMetricsObserver")
+            SleepRemoteLogger.log(.error, step: "fetchError", message: "Fetch error for \(metricType.key): \(error.localizedDescription)", context: ["class": "HRVObserverManager", "method": "fetchAndDeliverUpdates", "metricType": metricType.key], subsystem: "HealthMetricsObserver")
         }
     }
 
@@ -372,12 +399,12 @@ public class HRVObserverManager: NSObject, AppLifecycleObserver {
             let jsonString = String(data: jsonData, encoding: .utf8)
         else {
             print("📊 [Quantity metrics observer] Delegate delivery skipped — JSON serialization failed")
-            SleepRemoteLogger.log(.error, step: "deliverDelegate", message: "JSON serialization failed for \(metricType.key)", context: ["metricType": metricType.key], subsystem: "HealthMetricsObserver")
+            SleepRemoteLogger.log(.error, step: "deliverDelegate", message: "JSON serialization failed for \(metricType.key)", context: ["class": "HRVObserverManager", "method": "deliverMetricPayloadToDelegate", "metricType": metricType.key], subsystem: "HealthMetricsObserver")
             return
         }
         await delegate.onHealthMetricSamplesReady(json: jsonString, metricType: metricType, fetchedAt: fetchedAt)
         print("📊 [Quantity metrics observer] Delegated batch — metricType=\(metricType.key), count=\(payload["sampleCount"] ?? 0)")
-        SleepRemoteLogger.log(.info, step: "deliverDelegate", message: "Delivered to delegate: \(metricType.key), count=\(payload["sampleCount"] ?? 0)", context: ["metricType": metricType.key, "count": payload["sampleCount"] as? Int ?? 0, "fetchedAt": fetchedAt, "samples": payload["samples"] as? [[String: Any]] ?? []], subsystem: "HealthMetricsObserver")
+        SleepRemoteLogger.log(.info, step: "deliverDelegate", message: "Delivered to delegate: \(metricType.key), count=\(payload["sampleCount"] ?? 0)", context: ["class": "HRVObserverManager", "method": "deliverMetricPayloadToDelegate", "metricType": metricType.key, "count": payload["sampleCount"] as? Int ?? 0, "fetchedAt": fetchedAt, "payload": payload], subsystem: "HealthMetricsObserver")
     }
 
     // MARK: - Sample → Dictionary
