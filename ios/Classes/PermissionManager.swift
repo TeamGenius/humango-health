@@ -13,10 +13,6 @@ public class PermissionManager {
     
     // MARK: - EventChannel sink (holds the live stream connection to Flutter)
     var healthKitEventSink: FlutterEventSink?
-
-    // Tracks the last payload emitted to EventChannel so stream updates are change-only.
-    private let eventSnapshotLock = NSLock()
-    private var lastEmittedEventSnapshot: [String: String] = [:]
     
     /// Guards against applicationDidBecomeActive emitting stale snapshot data
     /// during a fresh requestAuthorization flow.
@@ -26,38 +22,11 @@ public class PermissionManager {
     
     /// Emits a status map to the EventChannel and logs any changes from the previous emission.
     func emitPermissionStatus(_ status: [String: Any]) {
-        let currentSnapshot = eventSnapshot(from: status)
-        var previousSnapshot: [String: String] = [:]
-        var hasChanges = false
-
-        eventSnapshotLock.lock()
-        previousSnapshot = lastEmittedEventSnapshot
-        hasChanges = previousSnapshot != currentSnapshot
-        if hasChanges {
-            lastEmittedEventSnapshot = currentSnapshot
-        }
-        eventSnapshotLock.unlock()
-
-        logPermissionChanges(previous: previousSnapshot, current: status)
-
-        guard hasChanges else {
-            return
-        }
+        let previous = loadAuthSnapshot()
+        logPermissionChanges(previous: previous, current: status)
         DispatchQueue.main.async {
             self.healthKitEventSink?(status)
         }
-    }
-
-    private func eventSnapshot(from status: [String: Any]) -> [String: String] {
-        var snapshot: [String: String] = [:]
-        for (key, value) in status {
-            if let stringValue = value as? String {
-                snapshot[key] = stringValue
-            } else if let boolValue = value as? Bool {
-                snapshot[key] = boolValue ? "true" : "false"
-            }
-        }
-        return snapshot
     }
     
     private func logPermissionChanges(previous: [String: String], current: [String: Any]) {

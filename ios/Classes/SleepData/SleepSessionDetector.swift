@@ -28,25 +28,25 @@ struct SleepSessionConfig {
     /// Freeze window end hour in local time (exclusive). Default: 12 (noon)
     let freezeWindowEndHour: Int
     
-    /// Minimum accumulated sleep duration (seconds) before a session can be declared ended.
+    /// Minimum accumulated sleep duration (minutes) before a session can be declared ended.
     /// Based on data: shortest session was 6.3 hrs. Using 4 hrs as safe minimum.
-    let minimumSleepSeconds: Double
+    let minimumSleepMinutes: Double
     
-    /// Seconds of no new segments before considering session stale (outside freeze).
+    /// Minutes of no new segments before considering session stale (outside freeze).
     /// Within freeze window, staleness alone does not end a session.
-    let stalenessThresholdSeconds: Double
+    let stalenessThresholdMinutes: Double
     
-    /// Seconds to look back for deep sleep absence. If no deep sleep in this window,
+    /// Minutes to look back for deep sleep absence. If no deep sleep in this window,
     /// it's a signal that the user is in the latter half of their sleep.
-    let deepSleepAbsenceWindowSeconds: Double
+    let deepSleepAbsenceWindowMinutes: Double
     
     /// Default configuration based on real Apple Watch sleep data analysis.
     static let `default` = SleepSessionConfig(
         freezeWindowStartHour: 0,
         freezeWindowEndHour: 12,
-        minimumSleepSeconds: 14400, // 4 hours
-        stalenessThresholdSeconds: 3600,
-        deepSleepAbsenceWindowSeconds: 5400
+        minimumSleepMinutes: 240, // 4 hours
+        stalenessThresholdMinutes: 60,
+        deepSleepAbsenceWindowMinutes: 90
     )
 }
 
@@ -60,11 +60,11 @@ struct SleepSessionState: Codable {
     /// ISO8601 date string of the latest segment's endDate
     var latestSegmentEndDate: String?
     
-    /// Total accumulated sleep seconds (excluding inBed and awake)
-    var totalSleepSeconds: Double
+    /// Total accumulated sleep minutes (excluding inBed and awake)
+    var totalSleepMinutes: Double
     
-    /// Total accumulated awake seconds
-    var totalAwakeSeconds: Double
+    /// Total accumulated awake minutes
+    var totalAwakeMinutes: Double
     
     /// Number of segments received so far
     var segmentCount: Int
@@ -96,8 +96,8 @@ struct SleepSessionState: Codable {
     static let empty = SleepSessionState(
         sessionStartDate: nil,
         latestSegmentEndDate: nil,
-        totalSleepSeconds: 0,
-        totalAwakeSeconds: 0,
+        totalSleepMinutes: 0,
+        totalAwakeMinutes: 0,
         segmentCount: 0,
         hasRecentDeepSleep: false,
         lastDeepSleepEndDate: nil,
@@ -211,19 +211,19 @@ class SleepSessionDetector {
         if let inBedEndStr = state.latestInBedEndDate,
            let inBedEnd = isoFormatter.date(from: inBedEndStr),
            !isAppleWatchSource(state.latestInBedSourceBundle),
-           state.totalSleepSeconds >= config.minimumSleepSeconds {
-            let secondsSinceInBedEnd = currentTime.timeIntervalSince(inBedEnd)
-            if secondsSinceInBedEnd >= config.stalenessThresholdSeconds {
+           state.totalSleepMinutes >= config.minimumSleepMinutes {
+            let minutesSinceInBedEnd = currentTime.timeIntervalSince(inBedEnd) / 60.0
+            if minutesSinceInBedEnd >= config.stalenessThresholdMinutes {
                 let source = state.latestInBedSourceBundle ?? "unknown"
-                    print("🛏️ [SleepDetector] Factor 0: inBed end from retroactive source (\(source)) — confirmed wake \(secondsSinceInBedEnd)s ago")
-                    return .ended(reason: "inBed_end_confirmed_wake, source=\(source), stale_\(secondsSinceInBedEnd)s")
+                print("🛏️ [SleepDetector] Factor 0: inBed end from retroactive source (\(source)) — confirmed wake \(String(format: "%.0f", minutesSinceInBedEnd))m ago")
+                return .ended(reason: "inBed_end_confirmed_wake, source=\(source), stale_\(String(format: "%.0f", minutesSinceInBedEnd))m")
             }
         }
         
         let isInFreeze = isInFreezeWindow(at: currentTime)
         
         // OUTSIDE freeze window (after 12 PM): auto-finalize any accumulated session
-        if !isInFreeze && state.totalSleepSeconds > 0 {
+        if !isInFreeze && state.totalSleepMinutes > 0 {
             return .freezeExpired
         }
         
@@ -248,8 +248,8 @@ class SleepSessionDetector {
     ) -> SleepSessionStatus {
         
         // Factor 1: Minimum sleep duration
-        guard state.totalSleepSeconds >= config.minimumSleepSeconds else {
-            print("🛏️ [SleepDetector] Still accumulating: \(state.totalSleepSeconds)s < \(config.minimumSleepSeconds)s minimum")
+        guard state.totalSleepMinutes >= config.minimumSleepMinutes else {
+            print("🛏️ [SleepDetector] Still accumulating: \(String(format: "%.0f", state.totalSleepMinutes))m < \(String(format: "%.0f", config.minimumSleepMinutes))m minimum")
             return .active
         }
         
@@ -264,16 +264,16 @@ class SleepSessionDetector {
             return .active
         }
         
-        let secondsSinceLastSegment = currentTime.timeIntervalSince(latestEnd)
-        guard secondsSinceLastSegment >= config.stalenessThresholdSeconds else {
-            print("🛏️ [SleepDetector] Recent data (\(secondsSinceLastSegment)s ago) — session still active")
+        let minutesSinceLastSegment = currentTime.timeIntervalSince(latestEnd) / 60.0
+        guard minutesSinceLastSegment >= config.stalenessThresholdMinutes else {
+            print("🛏️ [SleepDetector] Recent data (\(String(format: "%.0f", minutesSinceLastSegment))m ago) — session still active")
             return .active
         }
         
         // All factors met
-        let reason = "sleep>=\(state.totalSleepSeconds)s, " +
+        let reason = "sleep>=\(String(format: "%.0f", state.totalSleepMinutes))m, " +
                      "no_deep_sleep_recently, " +
-                 "stale_\(secondsSinceLastSegment)s"
+                     "stale_\(String(format: "%.0f", minutesSinceLastSegment))m"
         
         print("🛏️ [SleepDetector] Session ended: \(reason)")
         return .ended(reason: reason)
@@ -296,21 +296,7 @@ class SleepSessionDetector {
             state.sampleUUIDs.append(uuid)
             
             let sleepStage = sample["sleepStage"] as? String ?? "unknown"
-            let durationSeconds: Double = {
-                if let value = sample["durationSeconds"] as? Double {
-                    return value
-                }
-                if let value = sample["durationSeconds"] as? Int {
-                    return Double(value)
-                }
-                if let value = sample["durationMinutes"] as? Double {
-                    return value * 60.0
-                }
-                if let value = sample["durationMinutes"] as? Int {
-                    return Double(value) * 60.0
-                }
-                return 0
-            }()
+            let durationMinutes = sample["durationMinutes"] as? Double ?? 0
             let endDateStr = sample["endDate"] as? String
             let startDateStr = sample["startDate"] as? String
             
@@ -348,7 +334,7 @@ class SleepSessionDetector {
             
             switch sleepStage {
             case "awake":
-                state.totalAwakeSeconds += durationSeconds
+                state.totalAwakeMinutes += durationMinutes
             case "inBed":
                 // Track latest inBed endDate and its source on every sample arrival.
                 // Apple Watch updates inBed continuously throughout the night (endDate advances live).
@@ -369,7 +355,7 @@ class SleepSessionDetector {
                     }
                 }
             default:
-                state.totalSleepSeconds += durationSeconds
+                state.totalSleepMinutes += durationMinutes
             }
             
             // Track deep sleep recency
@@ -392,8 +378,8 @@ class SleepSessionDetector {
             return false
         }
         
-        let secondsSinceDeep = latestEnd.timeIntervalSince(lastDeep)
-        return secondsSinceDeep < config.deepSleepAbsenceWindowSeconds
+        let minutesSinceDeep = latestEnd.timeIntervalSince(lastDeep) / 60.0
+        return minutesSinceDeep < config.deepSleepAbsenceWindowMinutes
     }
     
     // MARK: - State retention (memory only)
@@ -403,7 +389,7 @@ class SleepSessionDetector {
         stateLock.lock()
         memoryBackedSessionState = state
         stateLock.unlock()
-        print("🛏️ [SleepDetector] Saved session state: \(state.segmentCount) segments, \(state.totalSleepSeconds)s sleep")
+        print("🛏️ [SleepDetector] Saved session state: \(state.segmentCount) segments, \(String(format: "%.0f", state.totalSleepMinutes))m sleep")
     }
 
     func loadState() -> SleepSessionState {

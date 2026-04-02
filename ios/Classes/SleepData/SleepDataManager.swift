@@ -363,14 +363,13 @@ public class SleepDataManager: NSObject, AppLifecycleObserver {
             sleepSamples.append(sampleDict)
 
             // Convert start/end to integer seconds (epoch) to eliminate
-            // sub-second floating-point noise.
+            // sub-second floating-point noise, then round to nearest minute.
             // Segments < 60 s are Watch algorithm micro-artifacts and
-            // contribute 0. Keep surviving segment durations in raw seconds
-            // so totals match Apple Health aggregate math more closely.
+            // contribute 0 — matching Apple Health's displayed totals.
             let startSec        = Int(sample.startDate.timeIntervalSince1970)
             let endSec          = Int(sample.endDate.timeIntervalSince1970)
             let intSec          = endSec - startSec
-            let durationSeconds = intSec < 60 ? 0.0 : Double(intSec)
+            let durationSeconds = intSec < 60 ? 0.0 : Double((intSec + 30) / 60 * 60)
             let stageName = sleepStageString(from: sample.value)
             
             // Accumulate totals (exclude "inBed" and "awake" from total sleep)
@@ -682,14 +681,13 @@ public class SleepDataManager: NSObject, AppLifecycleObserver {
 
             for sample in list {
                 // Convert start/end to integer seconds (epoch) to eliminate
-                // sub-second floating-point noise.
+                // sub-second floating-point noise, then round to nearest minute.
                 // Segments < 60 s are Watch algorithm micro-artifacts and
-                // contribute 0. Keep surviving segments in raw seconds so
-                // aggregate stage totals better align with Apple Health.
+                // contribute 0 — matching Apple Health's displayed totals.
                 let startSec  = Int(sample.startDate.timeIntervalSince1970)
                 let endSec    = Int(sample.endDate.timeIntervalSince1970)
                 let intSec    = endSec - startSec
-                let dur = intSec < 60 ? 0.0 : Double(intSec)
+                let dur = intSec < 60 ? 0.0 : Double((intSec + 30) / 60 * 60)
                 switch HKCategoryValueSleepAnalysis(rawValue: sample.value) {
                 case .inBed:             s.inBed        += dur
                 case .asleepUnspecified: s.unspecified  += dur
