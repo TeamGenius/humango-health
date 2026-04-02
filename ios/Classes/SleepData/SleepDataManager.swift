@@ -362,15 +362,8 @@ public class SleepDataManager: NSObject, AppLifecycleObserver {
             let sampleDict = convertSampleToDict(sample)
             sleepSamples.append(sampleDict)
 
-            // Convert start/end to integer seconds (epoch) to eliminate
-            // sub-second floating-point noise.
-            // Segments < 60 s are Watch algorithm micro-artifacts and
-            // contribute 0. Keep surviving segment durations in raw seconds
-            // so totals match Apple Health aggregate math more closely.
-            let startSec        = Int(sample.startDate.timeIntervalSince1970)
-            let endSec          = Int(sample.endDate.timeIntervalSince1970)
-            let intSec          = endSec - startSec
-            let durationSeconds = intSec < 60 ? 0.0 : Double(intSec)
+            // Keep raw duration as provided by HealthKit with no library-side rounding.
+            let durationSeconds = sample.endDate.timeIntervalSince(sample.startDate)
             let stageName = sleepStageString(from: sample.value)
             
             // Accumulate totals (exclude "inBed" and "awake" from total sleep)
@@ -681,15 +674,9 @@ public class SleepDataManager: NSObject, AppLifecycleObserver {
             s.timezone = list.compactMap { ($0.metadata?[HKMetadataKeyTimeZone] as? String) }.first
 
             for sample in list {
-                // Convert start/end to integer seconds (epoch) to eliminate
-                // sub-second floating-point noise.
-                // Segments < 60 s are Watch algorithm micro-artifacts and
-                // contribute 0. Keep surviving segments in raw seconds so
-                // aggregate stage totals better align with Apple Health.
-                let startSec  = Int(sample.startDate.timeIntervalSince1970)
-                let endSec    = Int(sample.endDate.timeIntervalSince1970)
-                let intSec    = endSec - startSec
-                let dur = intSec < 60 ? 0.0 : Double(intSec)
+                // Use raw segment duration in seconds from HealthKit with no
+                // library-side rounding/truncation so downstream can decide display policy.
+                let dur = sample.endDate.timeIntervalSince(sample.startDate)
                 switch HKCategoryValueSleepAnalysis(rawValue: sample.value) {
                 case .inBed:             s.inBed        += dur
                 case .asleepUnspecified: s.unspecified  += dur
@@ -721,13 +708,13 @@ public class SleepDataManager: NSObject, AppLifecycleObserver {
             "SOURCE":            winnerName,
             "SOURCE_BUNDLE":     winner.bundle,
             "TIMEZONE":          winner.timezone ?? TimeZone.current.identifier,
-            "TOTAL_SLEEP":       Int(totalSleep),
-            "SLEEP_IN_BED":      Int(winner.inBed),
-            "SLEEP_LIGHT":       Int(winner.core),
-            "SLEEP_DEEP":        Int(winner.deep),
-            "SLEEP_REM":         Int(winner.rem),
-            "SLEEP_UNSPECIFIED": Int(winner.unspecified),
-            "SLEEP_AWAKE":       Int(winner.awake),
+            "TOTAL_SLEEP":       totalSleep,
+            "SLEEP_IN_BED":      winner.inBed,
+            "SLEEP_LIGHT":       winner.core,
+            "SLEEP_DEEP":        winner.deep,
+            "SLEEP_REM":         winner.rem,
+            "SLEEP_UNSPECIFIED": winner.unspecified,
+            "SLEEP_AWAKE":       winner.awake,
             "BED_TIME":          winner.minStart.map { isoFormatter.string(from: $0) } as Any,
             "WAKE_TIME":         winner.maxEnd.map   { isoFormatter.string(from: $0) } as Any,
             "START_DATE":        isoFormatter.string(from: queryStart),

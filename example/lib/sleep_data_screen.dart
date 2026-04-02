@@ -872,7 +872,7 @@ class _SleepDataScreenState extends State<SleepDataScreen> {
               ],
             ),
             Text(
-              'Groups samples (gap ≤ 2h) → drops sessions < 3h → ceiling-rounds durations.',
+              'Groups samples (gap ≤ 2h) → drops sessions < 3h → keeps raw-second durations.',
               style: TextStyle(fontSize: 11, color: Colors.grey.shade600),
             ),
             if (_calcError != null) ...[
