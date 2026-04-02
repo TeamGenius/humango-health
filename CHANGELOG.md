@@ -1,3 +1,53 @@
+## 0.0.22 — 2026-04-02
+
+### Improvements
+
+#### Sleep Data — Transition from minute-based to second-based precision
+
+Sleep duration calculations and session tracking have been optimized to use **raw seconds** instead of minutes, eliminating accumulated rounding errors and improving precision when interfacing with HealthKit's native `timeIntervalSince` API.
+
+**Key changes:**
+
+- **Sleep duration storage and calculation** — All sleep segment durations now use raw seconds (e.g., `Double` from `timeIntervalSince`) rather than integer-truncated minutes. This preserves sub-minute precision from HealthKit.
+- **Session state refactored** — `SleepSessionState` properties changed: `totalSleepMinutes` → `totalSleepSeconds`, `totalAwakeMinutes` → `totalAwakeSeconds`. Session detection thresholds (`minimumSleepMinutes`, `stalenessThresholdMinutes`, `deepSleepAbsenceWindowMinutes`) are now expressed in seconds.
+- **Payload output unchanged (for now)** — Sleep metric payloads still deliver `TOTAL_SLEEP`, `SLEEP_LIGHT`, etc. as raw seconds (no conversion); clients must decide display policy (hours/minutes/seconds) based on their UI requirements.
+- **Logging improvements** — Debug logs now display durations in seconds (e.g., `stale_3600s` instead of `stale_60m`) for clarity.
+- **Internal config** — `SleepSessionConfig.default` updated: `minimumSleepSeconds: 14400` (4 hours), `stalenessThresholdSeconds: 3600`, `deepSleepAbsenceWindowSeconds: 5400` (90 minutes).
+
+**Changed in:** `ios/Classes/SleepData/SleepDataManager.swift`, `ios/Classes/SleepData/SleepSessionDetector.swift`
+
+---
+
+#### Sleep Data — Optimized 6 PM query window with hourly time logic
+
+The sleep HealthKit query window calculation (6 PM yesterday → now) has been rewritten to handle overnight and late-delivery scenarios more intuitively.
+
+**Previous logic:** Always set `windowStart = today_00:00 - 6_hours = yesterday_18:00`, which was opaque.
+
+**New logic:** Compute the window based on the current **hour of day**:
+
+```
+Before noon  (00:00 – 11:59) : start = yesterday 18:00  → overnight sleep window
+Noon – 18:00 (12:00 – 17:59) : start = yesterday 18:00  → late-delivery of last night's sleep
+After 18:00  (18:00 – 23:59) : start = today     18:00  → new sleep session starting tonight
+```
+
+In all cases, `end = now`. This makes the query window semantically clearer and easier to debug (queries are logged with hour and window range). The behavior is identical to the previous version but more maintainable.
+
+**Changed in:** `ios/Classes/SleepData/SleepDataManager.swift` (`sixPMWindow()` method refactored)
+
+---
+
+### Example App Updates
+
+#### `example/lib/sleep_data_screen.dart` — Updated algorithm description text
+
+- Sleep calculation description updated: `'ceiling-round durations'` → `'keeps raw-second durations'` to reflect the new second-based precision.
+
+**Changed in:** `example/lib/sleep_data_screen.dart`
+
+---
+
 ## 0.0.21 — 2026-03-27
 
 ### Breaking Changes

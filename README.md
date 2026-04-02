@@ -2,7 +2,7 @@
 
 A comprehensive Flutter plugin for integrating iOS HealthKit and WorkoutKit functionalities natively into the Humango platform.
 
-> **Version 0.0.21** — See [CHANGELOG](CHANGELOG.md) for what's new.
+> **Version 0.0.22** — See [CHANGELOG](CHANGELOG.md) for what's new.
 
 ## Table of Contents
 
@@ -31,7 +31,7 @@ A comprehensive Flutter plugin for integrating iOS HealthKit and WorkoutKit func
 | **Permission Handling** | Request, verify, and continuously monitor HealthKit permissions |
 | **Workout Scheduling** | Push workouts to Apple Watch via WorkoutKit with native deduplication |
 | **Workout Reading** | Real-time workout monitoring with foreground/background modes; completed workouts delivered via `HumangoHealthDataDelegate.onWorkoutReady(workout:deviceId:)` |
-| **Sleep Data** | Fetch and monitor sleep analysis; foreground (Descriptor) + background (Observer) monitoring; grouping-based `calculateSleepPayload` algorithm (gap ≤ 2 h, span ≥ 3 h); finalized sessions delivered via `HumangoHealthDataDelegate.onSleepSessionReady` |
+| **Sleep Data** | Fetch and monitor sleep analysis; foreground (Descriptor) + background (Observer) monitoring; grouping-based `calculateSleepPayload` algorithm (gap ≤ 2 h, span ≥ 3 h); second-based precision for all durations; optimized 6 PM HealthKit query window; finalized sessions delivered via `HumangoHealthDataDelegate.onSleepSessionReady` |
 | **Health Metrics (HRV, HR, etc.)** | One-shot reads via `HealthMetricsManager`; quantity-metric monitoring uses **`HKAnchoredObjectQueryDescriptor`** in the **foreground** and **`HKObserverQuery`** in the **background/suspended** state; all batches delivered via **`HumangoHealthDataDelegate.onHealthMetricSamplesReady(json:metricType:fetchedAt:)`** — `metricType` is a typed `HealthMetricType` enum (`getPendingHRVUpdates` is a legacy no-op — always `[]`) |
 | **Delegate Delivery** | Workouts, finalized sleep sessions, and quantity-metric batches are pushed through **`HumangoHealthDataDelegate`** — no plugin-owned payload queues or HTTP |
 | **Native Lifecycle Management** | Centralized iOS app lifecycle detection for automatic mode switching |
