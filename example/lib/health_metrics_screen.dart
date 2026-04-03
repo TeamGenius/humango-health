@@ -20,23 +20,11 @@ class _HealthMetricsScreenState extends State<HealthMetricsScreen>
   DateTime? _customStartDate;
   DateTime? _customEndDate;
 
-  bool _hrvMonitoringActive = false;
-  String? _lastDelegateUpdate;
-
   @override
   void initState() {
     super.initState();
     WidgetsBinding.instance.addObserver(this);
     _fetchAllMetrics();
-    _restoreMonitoringState();
-  }
-
-  /// Restore the toggle state if native monitoring was already running
-  /// (e.g. app relaunched after a background delivery wake).
-  Future<void> _restoreMonitoringState() async {
-    final active = await _metricsManager.isHRVMonitoringActive();
-    if (!mounted) return;
-    setState(() => _hrvMonitoringActive = active);
   }
 
   @override
@@ -75,23 +63,6 @@ class _HealthMetricsScreenState extends State<HealthMetricsScreen>
       return _customEndDate!;
     }
     return DateTime.now();
-  }
-
-  Future<void> _toggleHRVMonitoring() async {
-    if (_hrvMonitoringActive) {
-      await _metricsManager.stopHRVMonitoring();
-      if (mounted) {
-        setState(() {
-          _hrvMonitoringActive = false;
-          _lastDelegateUpdate = null;
-        });
-      }
-      return;
-    }
-    await _metricsManager.startHRVMonitoring();
-    if (mounted) {
-      setState(() => _hrvMonitoringActive = true);
-    }
   }
 
   Future<void> _fetchAllMetrics() async {
@@ -301,18 +272,11 @@ class _HealthMetricsScreenState extends State<HealthMetricsScreen>
       child: ListView(
         padding: const EdgeInsets.all(16),
         children: [
-          _buildHRVAutoReadCard(),
           _buildMetricCard(
             HealthMetricType.heartRateVariabilitySDNN,
             _allMetrics!.hrv,
             Icons.monitor_heart,
             Colors.purple,
-          ),
-          _buildMetricCard(
-            HealthMetricType.heartRate,
-            _allMetrics!.heartRate,
-            Icons.favorite_border,
-            Colors.pink,
           ),
           _buildMetricCard(
             HealthMetricType.restingHeartRate,
@@ -363,61 +327,6 @@ class _HealthMetricsScreenState extends State<HealthMetricsScreen>
             ),
           ],
         ],
-      ),
-    );
-  }
-
-  Widget _buildHRVAutoReadCard() {
-    return Card(
-      margin: const EdgeInsets.only(bottom: 12),
-      color: Colors.purple.shade50,
-      child: Padding(
-        padding: const EdgeInsets.all(16),
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            Row(
-              children: [
-                Icon(Icons.autorenew, color: Colors.purple.shade700),
-                const SizedBox(width: 12),
-                const Expanded(
-                  child: Text(
-                    'Quantity metrics auto-read',
-                    style: TextStyle(fontWeight: FontWeight.w600, fontSize: 16),
-                  ),
-                ),
-                Switch(
-                  value: _hrvMonitoringActive,
-                  onChanged: (_) => _toggleHRVMonitoring(),
-                  activeColor: Colors.purple,
-                ),
-              ],
-            ),
-            const SizedBox(height: 4),
-            Text(
-              _hrvMonitoringActive
-                  ? 'Active — iOS delivers batches via '
-                        'HumangoHealthDataDelegate.onHealthMetricSamplesReady.\n'
-                        'Foreground: HKAnchoredObjectQueryDescriptor  ·  '
-                        'Background: HKObserverQuery.'
-                  : 'Turn on to observe HRV, heart rate, resting HR, body fat, '
-                        'weight and height. Delivery is through the native delegate '
-                        '— no Flutter stream.',
-              style: TextStyle(fontSize: 12, color: Colors.grey[700]),
-            ),
-            if (_lastDelegateUpdate != null) ...[
-              const SizedBox(height: 8),
-              Text(
-                'Last delegate batch: $_lastDelegateUpdate',
-                style: TextStyle(
-                  fontSize: 12,
-                  fontWeight: FontWeight.w500,
-                  color: Colors.purple.shade700,
-                ),
-              ),
-            ],
-          ],
-        ),
       ),
     );
   }

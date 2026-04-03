@@ -22,7 +22,6 @@ class HealthKitAuthorizationResult {
       'sleepStatus': HealthDataType.sleepAnalysis,
       'hrvStatus': HealthDataType.hrv,
       'restingHeartRateStatus': HealthDataType.restingHeartRate,
-      'heartRateStatus': HealthDataType.heartRate,
       'bodyMassStatus': HealthDataType.bodyMass,
       'heightStatus': HealthDataType.height,
       'bodyFatStatus': HealthDataType.bodyFatPercentage,

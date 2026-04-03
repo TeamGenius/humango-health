@@ -1,5 +1,4 @@
 enum HealthDataType {
-  heartRate,
   hrv,
   restingHeartRate,
   sleepAnalysis,
@@ -18,8 +17,6 @@ enum HealthDataType {
 extension HealthDataTypeExtension on HealthDataType {
   String get identifier {
     switch (this) {
-      case HealthDataType.heartRate:
-        return 'HKQuantityTypeIdentifierHeartRate';
       case HealthDataType.hrv:
         return 'HKQuantityTypeIdentifierHeartRateVariabilitySDNN';
       case HealthDataType.restingHeartRate:

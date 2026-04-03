@@ -6,6 +6,7 @@ import 'workout_push_screen.dart' as workouts;
 import 'workout_read_screen.dart' as readworkouts;
 import 'sleep_data_screen.dart' as sleep;
 import 'health_metrics_screen.dart';
+import 'sleep_raw_samples_screen.dart' as rawsamples;
 import 'package:humango_health/humango_health.dart';
 
 void main() {
@@ -237,6 +238,7 @@ class _AppTabsScreenState extends State<_AppTabsScreen> {
     const readworkouts.WorkoutReadScreen(),
     const sleep.SleepDataScreen(),
     const HealthMetricsScreen(),
+    const rawsamples.SleepRawSamplesScreen(),
   ];
 
   @override
@@ -261,6 +263,10 @@ class _AppTabsScreenState extends State<_AppTabsScreen> {
           BottomNavigationBarItem(
             icon: Icon(Icons.monitor_heart),
             label: 'Metrics',
+          ),
+          BottomNavigationBarItem(
+            icon: Icon(Icons.list_alt),
+            label: 'Raw',
           ),
         ],
       ),

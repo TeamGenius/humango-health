@@ -37,7 +37,150 @@ public class HealthMetricsManager: NSObject {
             result(FlutterMethodNotImplemented)
         }
     }
-    
+
+    // MARK: - Native iOS Query API
+
+    /// Query a single metric type for the provided date range.
+    public func queryMetric(
+        _ metricType: HealthMetricType,
+        startDate: Date,
+        endDate: Date,
+        limit: Int = HKObjectQueryNoLimit
+    ) async throws -> [String: Any] {
+        try await fetchSamples(
+            metricType: metricType,
+            startDate: startDate,
+            endDate: endDate,
+            limit: limit,
+            ascending: true
+        )
+    }
+
+    /// Query the most recent sample for a single metric type.
+    public func queryLatestMetric(_ metricType: HealthMetricType) async throws -> [String: Any] {
+        try await fetchSamples(
+            metricType: metricType,
+            startDate: Date.distantPast,
+            endDate: Date(),
+            limit: 1,
+            ascending: false
+        )
+    }
+
+    /// Query all supported metric types for the provided date range.
+    public func queryAllMetrics(
+        startDate: Date,
+        endDate: Date
+    ) async throws -> [String: Any] {
+        var allMetrics: [String: Any] = [:]
+        var errors: [String: String] = [:]
+
+        for type in HealthMetricType.allCases {
+            do {
+                let response = try await fetchSamples(
+                    metricType: type,
+                    startDate: startDate,
+                    endDate: endDate,
+                    limit: HKObjectQueryNoLimit,
+                    ascending: true
+                )
+                allMetrics[type.key] = response
+            } catch {
+                errors[type.key] = error.localizedDescription
+                print("📊 [Humango Health] Error fetching \(type.key): \(error.localizedDescription)")
+            }
+        }
+
+        return [
+            "metrics": allMetrics,
+            "errors": errors,
+            "fetchedFrom": isoFormatter.string(from: startDate),
+            "fetchedTo": isoFormatter.string(from: endDate),
+        ]
+    }
+
+    // MARK: - Per-Metric Convenience API
+
+    // ── HRV (Heart Rate Variability SDNN) ──────────────────────────────────
+
+    /// Query HRV (SDNN) samples within a date range.
+    public func queryHRV(
+        startDate: Date,
+        endDate: Date,
+        limit: Int = HKObjectQueryNoLimit
+    ) async throws -> [String: Any] {
+        try await queryMetric(.heartRateVariabilitySDNN, startDate: startDate, endDate: endDate, limit: limit)
+    }
+
+    /// Query the most recent HRV (SDNN) sample.
+    public func queryLatestHRV() async throws -> [String: Any] {
+        try await queryLatestMetric(.heartRateVariabilitySDNN)
+    }
+
+    // ── Resting Heart Rate ─────────────────────────────────────────────────
+
+    /// Query resting heart rate samples within a date range.
+    public func queryRestingHeartRate(
+        startDate: Date,
+        endDate: Date,
+        limit: Int = HKObjectQueryNoLimit
+    ) async throws -> [String: Any] {
+        try await queryMetric(.restingHeartRate, startDate: startDate, endDate: endDate, limit: limit)
+    }
+
+    /// Query the most recent resting heart rate sample.
+    public func queryLatestRestingHeartRate() async throws -> [String: Any] {
+        try await queryLatestMetric(.restingHeartRate)
+    }
+
+    // ── Body Fat Percentage ────────────────────────────────────────────────
+
+    /// Query body fat percentage samples within a date range.
+    public func queryBodyFatPercentage(
+        startDate: Date,
+        endDate: Date,
+        limit: Int = HKObjectQueryNoLimit
+    ) async throws -> [String: Any] {
+        try await queryMetric(.bodyFatPercentage, startDate: startDate, endDate: endDate, limit: limit)
+    }
+
+    /// Query the most recent body fat percentage sample.
+    public func queryLatestBodyFatPercentage() async throws -> [String: Any] {
+        try await queryLatestMetric(.bodyFatPercentage)
+    }
+
+    // ── Weight (Body Mass) ─────────────────────────────────────────────────
+
+    /// Query weight (body mass, in kg) samples within a date range.
+    public func queryWeight(
+        startDate: Date,
+        endDate: Date,
+        limit: Int = HKObjectQueryNoLimit
+    ) async throws -> [String: Any] {
+        try await queryMetric(.bodyMass, startDate: startDate, endDate: endDate, limit: limit)
+    }
+
+    /// Query the most recent weight sample.
+    public func queryLatestWeight() async throws -> [String: Any] {
+        try await queryLatestMetric(.bodyMass)
+    }
+
+    // ── Height ─────────────────────────────────────────────────────────────
+
+    /// Query height (in cm) samples within a date range.
+    public func queryHeight(
+        startDate: Date,
+        endDate: Date,
+        limit: Int = HKObjectQueryNoLimit
+    ) async throws -> [String: Any] {
+        try await queryMetric(.height, startDate: startDate, endDate: endDate, limit: limit)
+    }
+
+    /// Query the most recent height sample.
+    public func queryLatestHeight() async throws -> [String: Any] {
+        try await queryLatestMetric(.height)
+    }
+
     // MARK: - Method Handlers
     
     /// Fetch samples for a single metric type within a date range

@@ -33,21 +33,6 @@ final class ExampleHealthDataHandler: HumangoHealthDataDelegate {
         await postSleep(json: json)
     }
 
-    func onHealthMetricSamplesReady(json: String, metricType: HealthMetricType, fetchedAt: String) async {
-        print("[Example][Delegate] 📊 Metric batch — type=\(metricType.key), count=\(extractSampleCount(from: json)), fetchedAt=\(fetchedAt)")
-        // Wire upload here if needed:
-        // await post(path: "metrics/\(metricType.key)", json: json)
-    }
-
-    // MARK: - Helper
-
-    private func extractSampleCount(from json: String) -> Int {
-        guard let data = json.data(using: .utf8),
-              let dict = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
-              let count = dict["sampleCount"] as? Int else { return 0 }
-        return count
-    }
-
     // MARK: - Remote Log
 
     private func logSleepPayload(json: String, sessionId: String) {

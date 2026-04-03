@@ -13,14 +13,13 @@ public class HumangoHealthPlugin: NSObject, FlutterPlugin {
 
   // MARK: - Background Monitoring
 
-  /// Triggers all subsystems to auto-start background monitoring (workouts, sleep, HRV)
+    /// Triggers monitoring-capable subsystems to auto-start background monitoring (workouts, sleep)
   /// provided they have been previously configured/armed. Safe to call after login.
   public func startAllBackgroundMonitoring() {
       guard guardMonitoringPreconditions("startAllBackgroundMonitoring") else { return }
       SleepRemoteLogger.log(.info, step: "startAllBackgroundMonitoring", message: "starting all subsystems", context: ["class": "HumangoHealthPlugin", "method": "startAllBackgroundMonitoring"])
       workoutReadChannel.autoStartIfConfigured()
       SleepDataManager.shared.autoStartIfConfigured()
-      HRVObserverManager.shared.autoStartIfConfigured()
   }
 
   /// Starts background monitoring for **activity/workout reading** only.
@@ -37,14 +36,6 @@ public class HumangoHealthPlugin: NSObject, FlutterPlugin {
       guard guardMonitoringPreconditions("startSleepBackgroundMonitoring") else { return }
       SleepRemoteLogger.log(.info, step: "startSleepBackgroundMonitoring", message: "starting sleep subsystem", context: ["class": "HumangoHealthPlugin", "method": "startSleepBackgroundMonitoring"])
       SleepDataManager.shared.autoStartIfConfigured()
-  }
-
-  /// Starts background monitoring for **health metrics** (HRV, resting HR, etc.) only.
-  /// Requires the user to be logged in and `HumangoHealthPlugin.delegate` to be set.
-  public func startHealthMetricsBackgroundMonitoring() {
-      guard guardMonitoringPreconditions("startHealthMetricsBackgroundMonitoring") else { return }
-      SleepRemoteLogger.log(.info, step: "startHealthMetricsBackgroundMonitoring", message: "starting health metrics subsystem", context: ["class": "HumangoHealthPlugin", "method": "startHealthMetricsBackgroundMonitoring"])
-      HRVObserverManager.shared.autoStartIfConfigured()
   }
 
   /// Shared precondition check for all monitoring entry points.
@@ -80,9 +71,8 @@ public class HumangoHealthPlugin: NSObject, FlutterPlugin {
 
     // Phase 6: Health Metrics (HRV, Resting HR, Body Fat, Weight, Height)
     let healthMetricsMethodChannel = FlutterMethodChannel(name: "com.humango.health/metrics", binaryMessenger: registrar.messenger())
-    // Note: no EventChannel for metrics. Background HKObserverQuery and foreground
-    // HKAnchoredObjectQueryDescriptor deliveries go directly to
-    // HumangoHealthDataDelegate.onHealthMetricSamplesReady(json:metricType:fetchedAt:).
+    // Note: metrics are query-only. Both Flutter and native iOS clients request
+    // data explicitly with start / end date ranges.
 
     let instance = HumangoHealthPlugin()
     shared = instance
@@ -96,7 +86,7 @@ public class HumangoHealthPlugin: NSObject, FlutterPlugin {
     permissionEventChannel.setStreamHandler(PermissionStreamHandler())
     
     // MARK: - Auto-Start Monitoring
-    // Workouts / Sleep / HRV: only when user is logged in and the subsystem was armed / enabled.
+        // Workouts / Sleep: only when user is logged in and the subsystem was armed / enabled.
     instance.startAllBackgroundMonitoring()
   }
 
@@ -114,38 +104,7 @@ public class HumangoHealthPlugin: NSObject, FlutterPlugin {
           SleepDataManager.shared.handle(call, result: result)
       } else if ["getHealthMetric", "getLatestHealthMetric", "getAllHealthMetrics"].contains(call.method) {
           HealthMetricsManager.shared.handle(call, result: result)
-      } else if ["startHRVMonitoring", "stopHRVMonitoring", "getPendingHRVUpdates", "isHRVMonitoringActive"].contains(call.method) {
-          handleHRVMonitoring(call, result: result)
       } else {
-          result(FlutterMethodNotImplemented)
-      }
-  }
-
-  // MARK: - HRV Auto-Read (background / suspended)
-
-  private func handleHRVMonitoring(_ call: FlutterMethodCall, result: @escaping FlutterResult) {
-      switch call.method {
-      case "startHRVMonitoring":
-          guard UserAuthStateManager.shared.guardLoggedInForHealthData(result: result) else { return }
-          HRVObserverManager.shared.startMonitoring()
-          result(nil)
-      case "stopHRVMonitoring":
-          HRVObserverManager.shared.stopMonitoring()
-          result(nil)
-      case "getPendingHRVUpdates":
-          guard UserAuthStateManager.shared.isLoggedIn else {
-              result([])
-              return
-          }
-          let pending = HRVObserverManager.shared.retrievePendingHRVUpdates()
-          result(pending)
-      case "isHRVMonitoringActive":
-          guard UserAuthStateManager.shared.isLoggedIn else {
-              result(false)
-              return
-          }
-          result(HRVObserverManager.shared.isMonitoringEnabled)
-      default:
           result(FlutterMethodNotImplemented)
       }
   }
@@ -168,9 +127,6 @@ public class HumangoHealthPlugin: NSObject, FlutterPlugin {
 
       // Clear scheduled workouts stored in Apple Watch
       ScheduledWorkoutStore.shared.clearAll()
-
-      // Stop HRV observer and clear pending data
-      HRVObserverManager.shared.stopAndClearAll()
 
       debugPrint("🔐 [HumangoHealth] ✅ All data cleared on logout")
 

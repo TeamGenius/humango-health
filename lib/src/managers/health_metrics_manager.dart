@@ -3,9 +3,8 @@
 //  humango_health
 //
 //  Dart manager for reading health quantity metrics from Apple HealthKit.
-//  Supports: HRV, resting heart rate, body fat %, weight (bodyMass), height
-//  Monitoring is handled natively via HKAnchoredObjectQueryDescriptor (foreground)
-//  and HKObserverQuery (background); delivery is through HumangoHealthDataDelegate.
+//  Supports: HRV, resting heart rate, body fat %, weight (bodyMass), height.
+//  Access is query-only through explicit date-range reads.
 //
 
 import 'package:flutter/services.dart';
@@ -15,17 +14,13 @@ import '../models/health_metric_sample.dart';
 ///
 /// Provides typed access to:
 /// - **HRV** (heartRateVariabilitySDNN) – standard deviation of heartbeat intervals in ms
-/// - **Heart Rate** – beat-to-beat / timed HR samples in bpm
 /// - **Resting Heart Rate** – estimated lowest resting HR in bpm
 /// - **Body Fat %** – body fat percentage (0-1 from HealthKit, displayed as %)
 /// - **Weight** (bodyMass) – in kg
 /// - **Height** – in cm
 ///
-/// Quantity metrics auto-read: Call [startHRVMonitoring] to observe HealthKit for new
-/// samples (HRV, heart rate, resting HR, body fat, weight, height).
-/// Foreground uses `HKAnchoredObjectQueryDescriptor`; background uses `HKObserverQuery`.
-/// All batches are delivered to `HumangoHealthDataDelegate.onHealthMetricSamplesReady`
-/// on iOS — there is no Dart stream. [getPendingHRVUpdates] always returns an empty list.
+/// Quantity metrics are query-only. Use [getMetric], [getLatestMetric], or
+/// [getAllMetrics] with explicit date ranges to read HealthKit data.
 ///
 /// Example usage:
 /// ```dart
@@ -38,8 +33,6 @@ import '../models/health_metric_sample.dart';
 /// );
 /// print('Average HRV: ${hrvResponse.statistics.average} ms');
 ///
-/// // Start observing — new data is pushed to HumangoHealthDataDelegate on iOS
-/// await metricsManager.startHRVMonitoring();
 /// ```
 class HealthMetricsManager {
   static const MethodChannel _channel = MethodChannel(
@@ -63,15 +56,20 @@ class HealthMetricsManager {
     final effectiveEndDate = endDate ?? DateTime.now();
     final effectiveStartDate =
         startDate ?? effectiveEndDate.subtract(const Duration(days: 30));
+    final arguments = <String, dynamic>{
+      'metricType': metricType.key,
+      'startDate': effectiveStartDate.toUtc().toIso8601String(),
+      'endDate': effectiveEndDate.toUtc().toIso8601String(),
+    };
+    if (limit != null) {
+      arguments['limit'] = limit;
+    }
 
     try {
-      final result = await _channel
-          .invokeMethod<Map<dynamic, dynamic>>('getHealthMetric', {
-            'metricType': metricType.key,
-            'startDate': effectiveStartDate.toUtc().toIso8601String(),
-            'endDate': effectiveEndDate.toUtc().toIso8601String(),
-            if (limit != null) 'limit': limit,
-          });
+      final result = await _channel.invokeMethod<Map<dynamic, dynamic>>(
+        'getHealthMetric',
+        arguments,
+      );
 
       if (result != null) {
         return HealthMetricResponse.fromMap(Map<String, dynamic>.from(result));
@@ -187,18 +185,6 @@ class HealthMetricsManager {
     limit: limit,
   );
 
-  /// Fetch heart rate samples (not the same as resting heart rate).
-  Future<HealthMetricResponse> getHeartRate({
-    DateTime? startDate,
-    DateTime? endDate,
-    int? limit,
-  }) => getMetric(
-    HealthMetricType.heartRate,
-    startDate: startDate,
-    endDate: endDate,
-    limit: limit,
-  );
-
   /// Fetch resting heart rate samples.
   Future<HealthMetricResponse> getRestingHeartRate({
     DateTime? startDate,
@@ -246,43 +232,6 @@ class HealthMetricsManager {
     endDate: endDate,
     limit: limit,
   );
-
-  // ---------------------------------------------------------------------------
-  // HRV automatic updates (background / suspended)
-  // ---------------------------------------------------------------------------
-
-  /// Start observing HealthKit for quantity vitals and body metrics (HRV, heart rate,
-  /// resting HR, body fat, weight, height).
-  /// Foreground: uses `HKAnchoredObjectQueryDescriptor` (anchor-based streaming).
-  /// Background / suspended: uses `HKObserverQuery` with background delivery.
-  /// All batches are delivered to `HumangoHealthDataDelegate.onHealthMetricSamplesReady`
-  /// on iOS — there is no Flutter stream. Call once after login; persists across launches.
-  Future<void> startHRVMonitoring() async {
-    await _channel.invokeMethod('startHRVMonitoring');
-  }
-
-  /// Stop quantity-metric observation and background delivery for all observed types.
-  Future<void> stopHRVMonitoring() async {
-    await _channel.invokeMethod('stopHRVMonitoring');
-  }
-
-  /// Legacy hook: always `[]`. Background metric batches are delivered to
-  /// `HumangoHealthDataDelegate.onHealthMetricSamplesReady` on iOS, not queued here.
-  Future<List<Map<String, dynamic>>> getPendingHRVUpdates() async {
-    final result = await _channel.invokeMethod<List<dynamic>>(
-      'getPendingHRVUpdates',
-    );
-    if (result == null) return [];
-    return result
-        .map((e) => Map<String, dynamic>.from(e as Map<dynamic, dynamic>))
-        .toList();
-  }
-
-  /// Whether HRV monitoring is currently enabled (started and not stopped).
-  Future<bool> isHRVMonitoringActive() async {
-    final result = await _channel.invokeMethod<bool>('isHRVMonitoringActive');
-    return result ?? false;
-  }
 
   // ---------------------------------------------------------------------------
   // Helpers

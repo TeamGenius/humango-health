@@ -113,7 +113,6 @@ public class PermissionManager {
         if let t = HKObjectType.categoryType(forIdentifier: .sleepAnalysis)           { items.append(("sleepStatus", t)) }
         if let t = HKObjectType.quantityType(forIdentifier: .heartRateVariabilitySDNN) { items.append(("hrvStatus", t)) }
         if let t = HKObjectType.quantityType(forIdentifier: .restingHeartRate)         { items.append(("restingHeartRateStatus", t)) }
-        if let t = HKObjectType.quantityType(forIdentifier: .heartRate)                { items.append(("heartRateStatus", t)) }
         if let t = HKObjectType.quantityType(forIdentifier: .bodyMass)                 { items.append(("bodyMassStatus", t)) }
         if let t = HKObjectType.quantityType(forIdentifier: .height)                   { items.append(("heightStatus", t)) }
         if let t = HKObjectType.quantityType(forIdentifier: .bodyFatPercentage)        { items.append(("bodyFatStatus", t)) }

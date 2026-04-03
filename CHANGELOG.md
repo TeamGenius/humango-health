@@ -1,3 +1,59 @@
+## 0.0.25 — 2026-04-03
+
+### Breaking Changes
+
+#### Health Metrics — monitoring removed; query-only API on Flutter and native iOS
+
+Health metrics are now **query-only**. The plugin no longer installs HealthKit metric observers or delivers metric batches through `HumangoHealthDataDelegate`.
+
+**Removed:**
+
+- **iOS**: `HRVObserverManager.swift` deleted
+- **iOS**: `HumangoHealthDataDelegate.onHealthMetricSamplesReady(json:metricType:fetchedAt:)` removed
+- **Flutter**: `HealthMetricsManager.startHRVMonitoring()` removed
+- **Flutter**: `HealthMetricsManager.stopHRVMonitoring()` removed
+- **Flutter**: `HealthMetricsManager.getPendingHRVUpdates()` removed
+- **Flutter**: `HealthMetricsManager.isHRVMonitoringActive()` removed
+- **iOS plugin**: `HumangoHealthPlugin.startHealthMetricsBackgroundMonitoring()` removed
+
+**Added:**
+
+- **iOS**: `HealthMetricsManager.queryMetric(_:startDate:endDate:limit:)`
+- **iOS**: `HealthMetricsManager.queryLatestMetric(_:)`
+- **iOS**: `HealthMetricsManager.queryAllMetrics(startDate:endDate:)`
+
+**Client migration:**
+
+- **Flutter clients** must use `getMetric`, `getLatestMetric`, or `getAllMetrics` with explicit `startDate` / `endDate`
+- **Native iOS clients** must query `HealthMetricsManager.shared` directly instead of implementing a metric delegate callback
+- Any client code still referencing `startHRVMonitoring`, `getPendingHRVUpdates`, or `onHealthMetricSamplesReady` must be updated
+
+**Changed in:** `ios/Classes/HealthMetrics/HealthMetricsManager.swift`, `ios/Classes/HumangoHealthPlugin.swift`, `ios/Classes/HumangoHealthDataDelegate.swift`, `lib/src/managers/health_metrics_manager.dart`
+
+---
+
+## 0.0.24 — 2026-04-03
+
+### Breaking Changes
+
+#### Health Metrics — `heartRate` metric removed
+
+Standalone heart rate monitoring and sample fetching have been removed. The `heartRate` case no longer exists in:
+
+- **Dart**: `HealthMetricType` enum (`lib/src/models/health_metric_sample.dart`) — `heartRate` case, `displayName`, `defaultUnit` all removed
+- **Dart**: `HealthDataType` enum (`lib/src/models/health_data_type.dart`) — `heartRate` case and `HKQuantityTypeIdentifierHeartRate` identifier mapping removed
+- **Dart**: `HealthKitAuthorizationResult` — `heartRateStatus` key no longer mapped; the `statuses` map will no longer contain a `HealthDataType.heartRate` entry
+- **Dart**: `AllHealthMetricsResponse` — `.heartRate` convenience getter removed
+- **Dart**: `HealthMetricsManager` — `getHeartRate()` method removed; callers must migrate to `getRestingHeartRate()` or `getHRV()` as appropriate
+- **iOS**: `HealthMetricType.swift` — `heartRate` case fully removed (done in 0.0.23 patch)
+- **iOS**: `PermissionManager.swift` — `heartRateStatus` removed from `typesToCheck`; `.heartRate` is still requested in the authorization set because it is required for workout heart rate statistics (avgHeartRate / maxHeartRate)
+
+**Remaining metrics:** `heartRateVariabilitySDNN`, `restingHeartRate`, `bodyFatPercentage`, `bodyMass`, `height`.
+
+**Workout heart rate statistics are unaffected** — `WorkoutData.avgHeartRate` and `WorkoutData.maxHeartRate` continue to be populated from workout-session samples via the workout reading subsystem.
+
+---
+
 ## 0.0.23 — 2026-04-02
 
 ### Bug Fixes

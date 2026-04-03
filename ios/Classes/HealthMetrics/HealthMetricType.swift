@@ -13,7 +13,6 @@ import HealthKit
 /// Mirrors the Dart `HealthMetricType` enum (case names are identical to the Dart enum `.name` / `.key`).
 public enum HealthMetricType: String, CaseIterable {
     case heartRateVariabilitySDNN
-    case heartRate
     case restingHeartRate
     case bodyFatPercentage
     case bodyMass
@@ -28,7 +27,6 @@ public enum HealthMetricType: String, CaseIterable {
     public var displayName: String {
         switch self {
         case .heartRateVariabilitySDNN: return "HRV (SDNN)"
-        case .heartRate:                return "Heart Rate"
         case .restingHeartRate:         return "Resting Heart Rate"
         case .bodyFatPercentage:        return "Body Fat %"
         case .bodyMass:                 return "Weight"
@@ -42,7 +40,6 @@ public enum HealthMetricType: String, CaseIterable {
     public var identifier: HKQuantityTypeIdentifier {
         switch self {
         case .heartRateVariabilitySDNN: return .heartRateVariabilitySDNN
-        case .heartRate:                return .heartRate
         case .restingHeartRate:         return .restingHeartRate
         case .bodyFatPercentage:        return .bodyFatPercentage
         case .bodyMass:                 return .bodyMass
@@ -54,7 +51,6 @@ public enum HealthMetricType: String, CaseIterable {
     public var unit: HKUnit {
         switch self {
         case .heartRateVariabilitySDNN: return HKUnit.secondUnit(with: .milli)
-        case .heartRate:                return HKUnit.count().unitDivided(by: .minute())
         case .restingHeartRate:         return HKUnit.count().unitDivided(by: .minute())
         case .bodyFatPercentage:        return HKUnit.percent()
         case .bodyMass:                 return HKUnit.gramUnit(with: .kilo)
@@ -66,7 +62,6 @@ public enum HealthMetricType: String, CaseIterable {
     public var unitLabel: String {
         switch self {
         case .heartRateVariabilitySDNN: return "ms"
-        case .heartRate:                return "bpm"
         case .restingHeartRate:         return "bpm"
         case .bodyFatPercentage:        return "%"
         case .bodyMass:                 return "kg"
@@ -86,7 +81,6 @@ public enum HealthMetricType: String, CaseIterable {
     var observerLookbackDays: Int {
         switch self {
         case .heartRateVariabilitySDNN: return 7
-        case .heartRate:                return 1
         case .restingHeartRate:         return 7
         case .bodyFatPercentage:        return 30
         case .bodyMass:                 return 30
@@ -98,7 +92,6 @@ public enum HealthMetricType: String, CaseIterable {
     var observerSampleLimit: Int {
         switch self {
         case .heartRateVariabilitySDNN: return 100
-        case .heartRate:                return 500
         case .restingHeartRate:         return 100
         case .bodyFatPercentage:        return 100
         case .bodyMass:                 return 100
