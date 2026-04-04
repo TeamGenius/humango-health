@@ -95,7 +95,8 @@ public class HumangoHealthPlugin: NSObject, FlutterPlugin {
       if call.method == "verifyAuthorization" {
           PermissionManager.shared.verifyAuthorization(result: result)
       } else if call.method == "requestAuthorization" {
-          PermissionManager.shared.requestAuthorization(result: result)
+          let types = (call.arguments as? [String: Any])?["types"] as? [String]
+          PermissionManager.shared.requestAuthorization(typeIdentifiers: types, result: result)
       } else if ["readWorkouts", "startWorkoutMonitoring", "stopWorkoutMonitoring", "setImportPreferences", "fetchAllWorkouts"].contains(call.method) {
           // Workout read channel
           workoutReadChannel.handle(call, result: result)

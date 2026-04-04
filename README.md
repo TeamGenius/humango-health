@@ -2,7 +2,7 @@
 
 A comprehensive Flutter plugin for integrating iOS HealthKit and WorkoutKit functionalities natively into the Humango platform.
 
-> **Version 0.0.25** — See [CHANGELOG](CHANGELOG.md) for what's new.
+> **Version 0.0.27** — See [CHANGELOG](CHANGELOG.md) for what's new.
 
 ## Table of Contents
 
@@ -393,6 +393,8 @@ The plugin tracks a **fixed, hardcoded** set of HealthKit types — types are no
 
 Call this once on first launch. It shows Apple's native HealthKit permission sheet (fire-and-forget — iOS displays the modal independently). Subsequent calls are silently ignored by iOS if the prompt has already been shown.
 
+**Full set (default)** — requests all tracked types at once:
+
 ```dart
 import 'package:humango_health/humango_health.dart';
 
@@ -404,6 +406,51 @@ void requestPermissions() async {
   // Subscribe to permissionStream to react to the result.
 }
 ```
+
+**Selective request** — pass a `readTypes` list to request only the types your feature needs. On iOS, `HealthDataType.workout` automatically expands to all workout-ancillary types (see table below).
+
+```dart
+// Workout only (expands to all ancillary workout types on iOS)
+await permissionManager.requestAuthorization(
+  readTypes: [HealthDataType.workout],
+);
+
+// Sleep only
+await permissionManager.requestAuthorization(
+  readTypes: [HealthDataType.sleepAnalysis],
+);
+
+// Workout + health metrics
+await permissionManager.requestAuthorization(
+  readTypes: [
+    HealthDataType.workout,
+    HealthDataType.hrv,
+    HealthDataType.restingHeartRate,
+  ],
+);
+```
+
+**Workout type expansion** — when `HealthDataType.workout` is included in `readTypes`, iOS automatically requests these ancillary types as part of the same permission sheet:
+
+| Ancillary type | HealthKit identifier |
+|---|---|
+| Heart Rate | `HKQuantityTypeIdentifierHeartRate` |
+| Step Count | `HKQuantityTypeIdentifierStepCount` |
+| Distance Cycling | `HKQuantityTypeIdentifierDistanceCycling` |
+| Swimming Stroke Count | `HKQuantityTypeIdentifierSwimmingStrokeCount` |
+| Distance Swimming | `HKQuantityTypeIdentifierDistanceSwimming` |
+| VO2 Max | `HKQuantityTypeIdentifierVO2Max` |
+| Distance Walking/Running | `HKQuantityTypeIdentifierDistanceWalkingRunning` |
+| Active Energy Burned | `HKQuantityTypeIdentifierActiveEnergyBurned` |
+| Body Mass Index | `HKQuantityTypeIdentifierBodyMassIndex` |
+| Running Ground Contact Time | `HKQuantityTypeIdentifierRunningGroundContactTime` |
+| Running Power | `HKQuantityTypeIdentifierRunningPower` |
+| Running Speed | `HKQuantityTypeIdentifierRunningSpeed` |
+| Running Stride Length | `HKQuantityTypeIdentifierRunningStrideLength` |
+| Running Vertical Oscillation | `HKQuantityTypeIdentifierRunningVerticalOscillation` |
+| Cycling Cadence | `HKQuantityTypeIdentifierCyclingCadence` |
+| Cycling Power | `HKQuantityTypeIdentifierCyclingPower` |
+| Workout Route | `HKSeriesTypeWorkoutRoute` |
 
 ### 2. Verification
 

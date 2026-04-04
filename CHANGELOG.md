@@ -1,5 +1,36 @@
 ## 0.0.27 — 2026-04-04
 
+### Features
+
+#### Permissions — Selective `requestAuthorization` by type
+
+`PermissionManager.requestAuthorization()` now accepts an optional `readTypes` parameter so callers can request only the HealthKit types their feature requires, rather than always prompting the full fixed set.
+
+**Dart (`lib/src/managers/permission_manager.dart`):**
+- `requestAuthorization({List<HealthDataType>? readTypes})` — when `readTypes` is `null` the existing full-set behavior is preserved (fully backward-compatible). When provided, only the specified types are requested on iOS.
+
+**iOS (`ios/Classes/PermissionManager.swift`):**
+- Added `workoutSupportingQuantityIdentifiers` — the 16 ancillary quantity identifiers (heartRate, stepCount, distanceCycling, swimmingStrokeCount, distanceSwimming, vo2Max, distanceWalkingRunning, activeEnergyBurned, bodyMassIndex, runningGroundContactTime, runningPower, runningSpeed, runningStrideLength, runningVerticalOscillation, cyclingCadence, cyclingPower).
+- Added `filteredReadTypes(for identifiers: [String]?)` — resolves the `HKObjectType` read set from the Dart-side identifier strings. `"HKWorkoutType"` expands automatically to `workoutType + workoutRoute + workoutSupportingQuantityIdentifiers`. All other identifiers are resolved to their `HKQuantityType` or `HKCategoryType` by identifier string.
+- `requestAuthorization` signature changed to `requestAuthorization(typeIdentifiers: [String]? = nil, result:)`. Default value keeps it backward-compatible with all existing call sites.
+
+**iOS (`ios/Classes/HumangoHealthPlugin.swift`):**
+- `handle(_:result:)` now extracts `types` from `call.arguments` and forwards it to `PermissionManager.shared.requestAuthorization(typeIdentifiers:result:)`.
+
+**Example app (`example/lib/health_permissions_provider.dart`):**
+- Added `requestWorkoutPermissions()` — requests `[HealthDataType.workout]` only.
+- Added `requestSleepPermissions()` — requests `[HealthDataType.sleepAnalysis]` only.
+- Added `requestPermissionsForTypes(List<HealthDataType>)` — requests an arbitrary caller-defined subset.
+- Existing `requestPermissions()` unchanged (requests full set).
+
+**Note:** `verifyAuthorization()` and `permissionStream` are unaffected — they always return statuses for all tracked types regardless of what was requested.
+
+**Changed in:** `lib/src/managers/permission_manager.dart`, `ios/Classes/PermissionManager.swift`, `ios/Classes/HumangoHealthPlugin.swift`, `example/lib/health_permissions_provider.dart`
+
+---
+
+## 0.0.27 — 2026-04-04
+
 ### Bug Fixes
 
 #### WorkoutScheduler — crash on `requestAuthorization` (`NSInvalidArgumentException` SIGABRT)

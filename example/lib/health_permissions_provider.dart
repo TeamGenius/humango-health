@@ -51,11 +51,52 @@ class HealthPermissionsProvider with ChangeNotifier {
     }
   }
 
+  /// Requests the full fixed HealthKit type set (all tracked types).
   Future<void> requestPermissions() async {
     try {
       await _permissionManager.requestAuthorization();
       // Statuses will be updated implicitly when the
       // EventChannel stream fires upon returning from Settings!
+    } catch (e) {
+      _streamError = "Error requesting permissions: $e";
+      notifyListeners();
+    }
+  }
+
+  /// Requests only workout-related permissions.
+  /// On iOS, [HealthDataType.workout] automatically expands to all ancillary
+  /// types: heartRate, stepCount, distanceCycling, swimmingStrokeCount,
+  /// distanceSwimming, vo2Max, distanceWalkingRunning, activeEnergyBurned,
+  /// bodyMassIndex, running/cycling biomechanics, and workoutRoute.
+  Future<void> requestWorkoutPermissions() async {
+    try {
+      await _permissionManager.requestAuthorization(
+        readTypes: [HealthDataType.workout],
+      );
+    } catch (e) {
+      _streamError = "Error requesting workout permissions: $e";
+      notifyListeners();
+    }
+  }
+
+  /// Requests only sleep-related permissions.
+  Future<void> requestSleepPermissions() async {
+    try {
+      await _permissionManager.requestAuthorization(
+        readTypes: [HealthDataType.sleepAnalysis],
+      );
+    } catch (e) {
+      _streamError = "Error requesting sleep permissions: $e";
+      notifyListeners();
+    }
+  }
+
+  /// Requests permissions for a custom set of [HealthDataType] values.
+  Future<void> requestPermissionsForTypes(
+    List<HealthDataType> readTypes,
+  ) async {
+    try {
+      await _permissionManager.requestAuthorization(readTypes: readTypes);
     } catch (e) {
       _streamError = "Error requesting permissions: $e";
       notifyListeners();

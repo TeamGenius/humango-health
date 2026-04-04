@@ -109,7 +109,65 @@ public class PermissionManager {
     private var writeTypes: Set<HKSampleType> {
         return [HKObjectType.workoutType()]
     }
-    
+
+    // MARK: - Workout group expansion
+    //
+    // When the caller requests HealthDataType.workout (identifier "HKWorkoutType"),
+    // iOS must also request all ancillary quantity types that workout analysis
+    // depends on, plus workoutRoute. These are intentionally separate from
+    // HealthMetricType (HRV, resting HR, body composition) which have their
+    // own logical group.
+
+    private var workoutSupportingQuantityIdentifiers: [HKQuantityTypeIdentifier] {
+        return [
+            .heartRate,
+            .stepCount,
+            .distanceCycling,
+            .swimmingStrokeCount,
+            .distanceSwimming,
+            .vo2Max,
+            .distanceWalkingRunning,
+            .activeEnergyBurned,
+            .bodyMassIndex,
+            .runningGroundContactTime,
+            .runningPower,
+            .runningSpeed,
+            .runningStrideLength,
+            .runningVerticalOscillation,
+            .cyclingCadence,
+            .cyclingPower,
+        ]
+    }
+
+    /// Builds the HKObjectType read set for the given Dart-side HK identifier strings.
+    /// - `nil`  → returns the full fixed `readTypes` set (default / backward-compatible path).
+    /// - `["HKWorkoutType"]` → workout + workoutRoute + all `workoutSupportingQuantityIdentifiers`.
+    /// - Any other identifier string → resolved to its HKQuantityType or HKCategoryType.
+    private func filteredReadTypes(for identifiers: [String]?) -> Set<HKObjectType> {
+        guard let identifiers = identifiers, !identifiers.isEmpty else {
+            return readTypes
+        }
+        var types = Set<HKObjectType>()
+        let idSet = Set(identifiers)
+
+        if idSet.contains("HKWorkoutType") {
+            types.insert(HKObjectType.workoutType())
+            types.insert(HKSeriesType.workoutRoute())
+            for id in workoutSupportingQuantityIdentifiers {
+                if let q = HKObjectType.quantityType(forIdentifier: id) { types.insert(q) }
+            }
+        }
+
+        for identifier in idSet where identifier != "HKWorkoutType" {
+            if let q = HKObjectType.quantityType(forIdentifier: HKQuantityTypeIdentifier(rawValue: identifier)) {
+                types.insert(q)
+            } else if let c = HKObjectType.categoryType(forIdentifier: HKCategoryTypeIdentifier(rawValue: identifier)) {
+                types.insert(c)
+            }
+        }
+        return types
+    }
+
     // MARK: - Type-to-key mapping (safe, no force unwraps)
     
     private var typesToCheck: [(key: String, type: HKObjectType)] {
@@ -178,7 +236,12 @@ public class PermissionManager {
     
     // MARK: - Public API
     
-    public func requestAuthorization(result: @escaping FlutterResult) {
+    /// Requests HealthKit authorization.
+    /// - `typeIdentifiers`: Optional list of Dart-side HK identifier strings (e.g.
+    ///   `"HKWorkoutType"`, `"HKCategoryTypeIdentifierSleepAnalysis"`). When nil,
+    ///   the full fixed type set is requested (default / backward-compatible path).
+    ///   `"HKWorkoutType"` automatically expands to all workout-ancillary types.
+    public func requestAuthorization(typeIdentifiers: [String]? = nil, result: @escaping FlutterResult) {
         guard HKHealthStore.isHealthDataAvailable() else {
             result(FlutterError(code: "NOT_AVAILABLE", message: "HealthKit is not available on this device", details: nil))
             return
@@ -189,8 +252,10 @@ public class PermissionManager {
         // snapshot and won't falsely mark no-data types as "denied".
         self.isFreshAuthInProgress = true
         self.clearAuthSnapshot()
-        
-        healthStore.requestAuthorization(toShare: writeTypes, read: readTypes) { [weak self] success, error in
+
+        let requestReadTypes = filteredReadTypes(for: typeIdentifiers)
+
+        healthStore.requestAuthorization(toShare: writeTypes, read: requestReadTypes) { [weak self] success, error in
             guard let self = self else { return }
             DispatchQueue.main.async {
                 if let error = error {

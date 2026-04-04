@@ -1,4 +1,5 @@
 import 'package:flutter/services.dart';
+import '../models/health_data_type.dart';
 import '../models/health_kit_authorization_result.dart';
 
 class PermissionManager {
@@ -18,10 +19,19 @@ class PermissionManager {
     return _permissionStream!;
   }
 
-  /// Request authorization because we will not get correct authorization here only by subscribing to stream and listening is one way and by verifying authorization
-  Future<void> requestAuthorization() async {
+  /// Request authorization for the given [readTypes].
+  /// When [readTypes] is null, requests the full fixed type set (default behaviour).
+  /// When provided, only those types are requested; on iOS, [HealthDataType.workout]
+  /// automatically expands to all workout-ancillary types (heartRate, stepCount,
+  /// distanceCycling, swimmingStrokeCount, distanceSwimming, vo2Max,
+  /// distanceWalkingRunning, activeEnergyBurned, bodyMassIndex, running/cycling
+  /// biomechanics, workoutRoute).
+  Future<void> requestAuthorization({List<HealthDataType>? readTypes}) async {
     try {
-      await _methodChannel.invokeMethod('requestAuthorization');
+      final args = readTypes != null
+          ? {'types': readTypes.map((t) => t.identifier).toList()}
+          : null;
+      await _methodChannel.invokeMethod('requestAuthorization', args);
     } catch (e) {
       return;
     }
