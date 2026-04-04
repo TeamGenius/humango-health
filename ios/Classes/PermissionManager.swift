@@ -65,31 +65,35 @@ public class PermissionManager {
     private let authSnapshotLock = NSLock()
     private var inMemoryAuthSnapshot: [String: String] = [:]
     
-    // Comprehensive quantity identifiers for all workout and health data types
-    // Hard-coded authorization regardless of user workout preferences
-    private let quantityIdentifiers: [HKQuantityTypeIdentifier] = [
-        .heartRate,
-        .stepCount,
-        .distanceCycling,
-        .swimmingStrokeCount,
-        .distanceSwimming,
-        .vo2Max,
-        .distanceWalkingRunning,
-        .activeEnergyBurned,
-        .bodyMass,
-        .height,
-        .restingHeartRate,
-        .heartRateVariabilitySDNN,
-        .bodyMassIndex,
-        .bodyFatPercentage,
-        .runningGroundContactTime,
-        .runningPower,
-        .runningSpeed,
-        .runningStrideLength,
-        .runningVerticalOscillation,
-        .cyclingCadence,
-        .cyclingPower
-    ]
+    // Comprehensive quantity identifiers for all workout and health data types.
+    // Health-metric identifiers are derived from HealthMetricType.allCases so
+    // PermissionManager and HealthMetricType stay in sync automatically.
+    private var quantityIdentifiers: [HKQuantityTypeIdentifier] {
+        var ids: [HKQuantityTypeIdentifier] = [
+            .heartRate,
+            .stepCount,
+            .distanceCycling,
+            .swimmingStrokeCount,
+            .distanceSwimming,
+            .vo2Max,
+            .distanceWalkingRunning,
+            .activeEnergyBurned,
+        ]
+        // Health metrics — driven by HealthMetricType enum to keep coupling explicit
+        ids += HealthMetricType.allCases.map { $0.identifier }
+        // Additional workout-science identifiers not covered by HealthMetricType
+        ids += [
+            .bodyMassIndex,
+            .runningGroundContactTime,
+            .runningPower,
+            .runningSpeed,
+            .runningStrideLength,
+            .runningVerticalOscillation,
+            .cyclingCadence,
+            .cyclingPower,
+        ]
+        return ids
+    }
 
     private var readTypes: Set<HKObjectType> {
         var types = Set<HKObjectType>()

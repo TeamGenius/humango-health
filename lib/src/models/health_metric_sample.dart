@@ -209,8 +209,7 @@ class HealthMetricStatistics {
 // Response for a single metric type
 // ---------------------------------------------------------------------------
 
-/// Response returned from [HealthMetricsManager.getMetric] or
-/// [HealthMetricsManager.getLatestMetric].
+/// Response returned from [HealthMetricsManager.fetchHealthMetric].
 class HealthMetricResponse {
   final String metricType;
   final String unit;
@@ -276,7 +275,8 @@ class HealthMetricResponse {
 // Combined response (all metrics at once)
 // ---------------------------------------------------------------------------
 
-/// Response from [HealthMetricsManager.getAllMetrics] – one entry per metric type.
+/// Response from [HealthMetricsManager.fetchHealthMetric] for all metric types
+/// aggregated into one structure — one entry per metric type.
 class AllHealthMetricsResponse {
   final Map<String, HealthMetricResponse> metrics;
   final Map<String, String> errors;

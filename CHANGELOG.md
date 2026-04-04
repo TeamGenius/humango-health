@@ -1,3 +1,45 @@
+## 0.0.26 — 2026-04-04
+
+### Features
+
+#### Health Metrics — Per-metric background monitoring + native iOS fetch API
+
+The `HealthMetricsManager` now supports **per-metric HealthKit monitoring** started and stopped entirely from native iOS. A new `HealthMetricMonitor` class (mirrors the `WorkoutService` / `SleepDataManager` pattern) installs an `HKAnchoredObjectQueryDescriptor` stream in the foreground and an `HKObserverQuery` + `enableBackgroundDelivery(.immediate)` in the background; mode switching follows `AppLifecycleManager`.
+
+**Added — iOS:**
+- `ios/Classes/HealthMetrics/HealthMetricMonitor.swift` — new `@available(iOS 17.0, *)` class; `AppLifecycleObserver` conformance; `fetchAndDeliverCurrentDay()` re-fetches midnight→now on every HealthKit notification (not a delta)
+- `HumangoHealthDataDelegate.onHealthMetricReady(payload:metricType:)` — new async protocol method; default no-op in extension
+- `HealthMetricsManager.startMonitoring(_:)` / `stopMonitoring(_:)` / `stopAllMonitoring()` — idempotent monitor registry protected by a concurrent barrier queue
+- `HealthMetricsManager.fetchMetric(_:startDate:endDate:)` / `fetchLatestMetric(_:)` / `fetchAllMetrics(startDate:endDate:)` — native iOS fetch API
+- `HumangoHealthPlugin.shared.startMetricsMonitoring(for:)` / `stopMetricsMonitoring(for:)` — public host-app entry points for monitoring
+- `HumangoHealthPlugin.shared.fetchHealthMetric(_:startDate:endDate:)` / `fetchLatestHealthMetric(_:)` / `fetchAllHealthMetrics(startDate:endDate:)` — public host-app generic fetch
+- 10 per-type convenience wrappers on `HumangoHealthPlugin.shared`: `fetchHRV`, `fetchLatestHRV`, `fetchRestingHeartRate`, `fetchLatestRestingHeartRate`, `fetchBodyFatPercentage`, `fetchLatestBodyFatPercentage`, `fetchWeight`, `fetchLatestWeight`, `fetchHeight`, `fetchLatestHeight`
+- `PermissionManager.quantityIdentifiers` converted to a computed `var` driven by `HealthMetricType.allCases`
+- `clearAllDataOnLogout()` now calls `HealthMetricsManager.shared.stopAllMonitoring()`
+
+**Added — Flutter channel (4 methods on `com.humango.health/metrics`):**
+- `fetchHealthMetric` — replaces old `getMetric` / `getLatestMetric` / `getAllMetrics`
+- `startMetricMonitoring` — starts a native monitor for one metric type (verification / debug use)
+- `stopMetricMonitoring` — stops a specific monitor
+- `stopAllMetricMonitoring` — stops all active monitors
+
+**Added — Dart(`lib/src/managers/health_metrics_manager.dart`):**
+- `fetchHealthMetric(HealthMetricType, {startDate, endDate})` — single method replacing the old 8-method surface
+- `startMetricMonitoring(HealthMetricType)` / `stopMetricMonitoring(HealthMetricType)` / `stopAllMetricMonitoring()` — Dart-side monitoring control (debug / verification only; no Dart callback fires)
+
+**Breaking changes:**
+- `getMetric`, `getLatestMetric`, `getAllMetrics`, `getHRV`, `getRestingHeartRate`, `getBodyFatPercentage`, `getWeight`, `getHeight` — all removed; migrate to `fetchHealthMetric`
+- `HealthMetricsManager.queryMetric` / `queryLatestMetric` / `queryAllMetrics` (iOS) — replaced by `HealthMetricsManager.fetchMetric` / `fetchLatestMetric` / `fetchAllMetrics` and the public `HumangoHealthPlugin.shared` wrappers
+
+**Monitoring behavior:**
+- Payload delivers **re-fetched current-day samples** (midnight → now). It is **not** a delta.
+- `completion()` in `HKObserverQuery` handler is called only after the full `await fetchAndDeliverCurrentDay()` chain — never via `defer`.
+- Requires iOS 17+.
+
+**Changed in:** `ios/Classes/HealthMetrics/HealthMetricsManager.swift`, `ios/Classes/HealthMetrics/HealthMetricMonitor.swift` (new), `ios/Classes/HumangoHealthPlugin.swift`, `ios/Classes/HumangoHealthDataDelegate.swift`, `ios/Classes/PermissionManager.swift`, `lib/src/managers/health_metrics_manager.dart`
+
+---
+
 ## 0.0.25 — 2026-04-03
 
 ### Breaking Changes

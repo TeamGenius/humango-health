@@ -1,6 +1,26 @@
 import 'package:flutter/material.dart';
 import 'package:humango_health/humango_health.dart';
 
+// ─────────────────────────────────────────────────────────────────────────────
+// Log entry for Monitor tab
+// ─────────────────────────────────────────────────────────────────────────────
+
+class _LogEntry {
+  final DateTime time;
+  final String message;
+  final bool isError;
+
+  const _LogEntry({
+    required this.time,
+    required this.message,
+    this.isError = false,
+  });
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Screen
+// ─────────────────────────────────────────────────────────────────────────────
+
 class HealthMetricsScreen extends StatefulWidget {
   const HealthMetricsScreen({super.key});
   @override
@@ -8,9 +28,12 @@ class HealthMetricsScreen extends StatefulWidget {
 }
 
 class _HealthMetricsScreenState extends State<HealthMetricsScreen>
-    with WidgetsBindingObserver {
+    with SingleTickerProviderStateMixin, WidgetsBindingObserver {
   final HealthMetricsManager _metricsManager = HealthMetricsManager();
 
+  late final TabController _tabController;
+
+  // ── Fetch tab ──────────────────────────────────────────────────────────────
   bool _isLoading = false;
   String? _error;
   AllHealthMetricsResponse? _allMetrics;
@@ -20,15 +43,37 @@ class _HealthMetricsScreenState extends State<HealthMetricsScreen>
   DateTime? _customStartDate;
   DateTime? _customEndDate;
 
+  // ── Monitor tab ────────────────────────────────────────────────────────────
+  final Set<HealthMetricType> _activeMonitors = {};
+  final Map<HealthMetricType, HealthMetricResponse?> _todayPreviews = {};
+  final Map<HealthMetricType, bool> _monitorLoading = {};
+  final List<_LogEntry> _log = [];
+
+  // ── Metric display config ──────────────────────────────────────────────────
+  static const _metricConfig = <HealthMetricType, (IconData, Color)>{
+    HealthMetricType.heartRateVariabilitySDNN: (
+      Icons.monitor_heart,
+      Colors.purple,
+    ),
+    HealthMetricType.restingHeartRate: (Icons.favorite, Colors.red),
+    HealthMetricType.bodyFatPercentage: (Icons.percent, Colors.orange),
+    HealthMetricType.bodyMass: (Icons.scale, Colors.blue),
+    HealthMetricType.height: (Icons.height, Colors.teal),
+  };
+
+  // ── Lifecycle ──────────────────────────────────────────────────────────────
+
   @override
   void initState() {
     super.initState();
+    _tabController = TabController(length: 2, vsync: this);
     WidgetsBinding.instance.addObserver(this);
     _fetchAllMetrics();
   }
 
   @override
   void dispose() {
+    _tabController.dispose();
     WidgetsBinding.instance.removeObserver(this);
     super.dispose();
   }
@@ -39,6 +84,8 @@ class _HealthMetricsScreenState extends State<HealthMetricsScreen>
       _fetchAllMetrics();
     }
   }
+
+  // ── Date helpers ───────────────────────────────────────────────────────────
 
   DateTime _getStartDate() {
     final now = DateTime.now();
@@ -65,6 +112,10 @@ class _HealthMetricsScreenState extends State<HealthMetricsScreen>
     return DateTime.now();
   }
 
+  // ══════════════════════════════════════════════════════════════════════════
+  // FETCH TAB – actions
+  // ══════════════════════════════════════════════════════════════════════════
+
   Future<void> _fetchAllMetrics() async {
     setState(() {
       _isLoading = true;
@@ -72,17 +123,30 @@ class _HealthMetricsScreenState extends State<HealthMetricsScreen>
     });
 
     try {
-      final response = await _metricsManager.getAllMetrics(
-        startDate: _getStartDate(),
-        endDate: _getEndDate(),
-      );
+      final start = _getStartDate();
+      final end = _getEndDate();
+      final results = <String, HealthMetricResponse>{};
+      final errors = <String, String>{};
+
+      for (final type in HealthMetricType.values) {
+        try {
+          results[type.key] = await _metricsManager.fetchHealthMetric(
+            type,
+            startDate: start,
+            endDate: end,
+          );
+        } on HealthMetricsException catch (e) {
+          errors[type.key] = e.message;
+        }
+      }
+
       setState(() {
-        _allMetrics = response;
-        _isLoading = false;
-      });
-    } on HealthMetricsException catch (e) {
-      setState(() {
-        _error = '${e.code}: ${e.message}';
+        _allMetrics = AllHealthMetricsResponse(
+          metrics: results,
+          errors: errors,
+          fetchedFrom: start,
+          fetchedTo: end,
+        );
         _isLoading = false;
       });
     } catch (e) {
@@ -100,7 +164,7 @@ class _HealthMetricsScreenState extends State<HealthMetricsScreen>
     });
 
     try {
-      final response = await _metricsManager.getMetric(
+      final response = await _metricsManager.fetchHealthMetric(
         type,
         startDate: _getStartDate(),
         endDate: _getEndDate(),
@@ -152,35 +216,178 @@ class _HealthMetricsScreenState extends State<HealthMetricsScreen>
     _fetchAllMetrics();
   }
 
+  // ══════════════════════════════════════════════════════════════════════════
+  // MONITOR TAB – actions
+  // ══════════════════════════════════════════════════════════════════════════
+
+  void _addLog(String message, {bool isError = false}) {
+    setState(() {
+      _log.insert(
+        0,
+        _LogEntry(time: DateTime.now(), message: message, isError: isError),
+      );
+      if (_log.length > 50) _log.removeLast();
+    });
+  }
+
+  Future<void> _startMonitor(HealthMetricType type) async {
+    setState(() => _monitorLoading[type] = true);
+    try {
+      await _metricsManager.startMetricMonitoring(type);
+      setState(() => _activeMonitors.add(type));
+      _addLog('Started monitoring ${type.displayName}');
+    } on HealthMetricsException catch (e) {
+      _addLog('Start error [${type.displayName}]: ${e.message}', isError: true);
+    } catch (e) {
+      _addLog('Start error [${type.displayName}]: $e', isError: true);
+    } finally {
+      setState(() => _monitorLoading.remove(type));
+    }
+  }
+
+  Future<void> _stopMonitor(HealthMetricType type) async {
+    setState(() => _monitorLoading[type] = true);
+    try {
+      await _metricsManager.stopMetricMonitoring(type);
+      setState(() {
+        _activeMonitors.remove(type);
+        _todayPreviews.remove(type);
+      });
+      _addLog('Stopped monitoring ${type.displayName}');
+    } on HealthMetricsException catch (e) {
+      _addLog('Stop error [${type.displayName}]: ${e.message}', isError: true);
+    } catch (e) {
+      _addLog('Stop error [${type.displayName}]: $e', isError: true);
+    } finally {
+      setState(() => _monitorLoading.remove(type));
+    }
+  }
+
+  Future<void> _stopAllMonitors() async {
+    try {
+      await _metricsManager.stopAllMetricMonitoring();
+      setState(() {
+        _activeMonitors.clear();
+        _todayPreviews.clear();
+      });
+      _addLog('Stopped all monitors');
+    } on HealthMetricsException catch (e) {
+      _addLog('Stop-all error: ${e.message}', isError: true);
+    } catch (e) {
+      _addLog('Stop-all error: $e', isError: true);
+    }
+  }
+
+  /// Fetch today (midnight → now) to preview what onHealthMetricReady would deliver.
+  Future<void> _fetchTodayPreview(HealthMetricType type) async {
+    final startOfToday = DateTime(
+      DateTime.now().year,
+      DateTime.now().month,
+      DateTime.now().day,
+    );
+    try {
+      final response = await _metricsManager.fetchHealthMetric(
+        type,
+        startDate: startOfToday,
+        endDate: DateTime.now(),
+      );
+      setState(() => _todayPreviews[type] = response);
+      _addLog(
+        'Today preview [${type.displayName}]: ${response.sampleCount} samples'
+        '${response.hasData ? ", latest ${_rawValue(response.latestValue)} ${response.unit}" : ""}',
+      );
+    } on HealthMetricsException catch (e) {
+      _addLog(
+        'Fetch-today error [${type.displayName}]: ${e.message}',
+        isError: true,
+      );
+    } catch (e) {
+      _addLog('Fetch-today error [${type.displayName}]: $e', isError: true);
+    }
+  }
+
+  // ══════════════════════════════════════════════════════════════════════════
+  // BUILD
+  // ══════════════════════════════════════════════════════════════════════════
+
   @override
   Widget build(BuildContext context) {
     return Scaffold(
       appBar: AppBar(
         title: const Text('Health Metrics'),
+        bottom: TabBar(
+          controller: _tabController,
+          tabs: const [
+            Tab(icon: Icon(Icons.download), text: 'Fetch'),
+            Tab(icon: Icon(Icons.sensors), text: 'Monitor'),
+          ],
+        ),
         actions: [
-          if (_selectedDetail != null)
-            IconButton(
-              icon: const Icon(Icons.arrow_back),
-              onPressed: () => setState(() => _selectedDetail = null),
-              tooltip: 'Back to overview',
-            ),
-          IconButton(
-            icon: const Icon(Icons.calendar_today),
-            onPressed: _selectCustomDateRange,
-            tooltip: 'Select custom date range',
-          ),
-          IconButton(
-            icon: const Icon(Icons.refresh),
-            onPressed: _fetchAllMetrics,
+          // Fetch tab: back / calendar / refresh
+          ListenableBuilder(
+            listenable: _tabController,
+            builder: (context, _) {
+              if (_tabController.index == 0) {
+                return Row(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    if (_selectedDetail != null)
+                      IconButton(
+                        icon: const Icon(Icons.arrow_back),
+                        onPressed: () => setState(() => _selectedDetail = null),
+                        tooltip: 'Back to overview',
+                      ),
+                    IconButton(
+                      icon: const Icon(Icons.calendar_today),
+                      onPressed: _selectCustomDateRange,
+                      tooltip: 'Select custom date range',
+                    ),
+                    IconButton(
+                      icon: const Icon(Icons.refresh),
+                      onPressed: _fetchAllMetrics,
+                    ),
+                  ],
+                );
+              }
+              // Monitor tab
+              return Row(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  IconButton(
+                    icon: const Icon(Icons.sensors_off),
+                    onPressed: _activeMonitors.isEmpty
+                        ? null
+                        : _stopAllMonitors,
+                    tooltip: 'Stop all monitors',
+                  ),
+                  IconButton(
+                    icon: const Icon(Icons.delete_sweep),
+                    onPressed: () => setState(() => _log.clear()),
+                    tooltip: 'Clear log',
+                  ),
+                ],
+              );
+            },
           ),
         ],
       ),
-      body: Column(
-        children: [
-          _buildDateRangeSelector(),
-          Expanded(child: _buildBody()),
-        ],
+      body: TabBarView(
+        controller: _tabController,
+        children: [_buildFetchTab(), _buildMonitorTab()],
       ),
+    );
+  }
+
+  // ══════════════════════════════════════════════════════════════════════════
+  // FETCH TAB
+  // ══════════════════════════════════════════════════════════════════════════
+
+  Widget _buildFetchTab() {
+    return Column(
+      children: [
+        _buildDateRangeSelector(),
+        Expanded(child: _buildFetchBody()),
+      ],
     );
   }
 
@@ -203,7 +410,8 @@ class _HealthMetricsScreenState extends State<HealthMetricsScreen>
                 child: ChoiceChip(
                   label: Text(
                     range == 'Custom' && _customStartDate != null
-                        ? '${_customStartDate!.month}/${_customStartDate!.day} - ${_customEndDate!.month}/${_customEndDate!.day}'
+                        ? '${_customStartDate!.month}/${_customStartDate!.day}'
+                              ' – ${_customEndDate!.month}/${_customEndDate!.day}'
                         : range,
                   ),
                   selected: _selectedRange == range,
@@ -225,7 +433,7 @@ class _HealthMetricsScreenState extends State<HealthMetricsScreen>
     );
   }
 
-  Widget _buildBody() {
+  Widget _buildFetchBody() {
     if (_isLoading) return const Center(child: CircularProgressIndicator());
 
     if (_error != null) {
@@ -258,9 +466,7 @@ class _HealthMetricsScreenState extends State<HealthMetricsScreen>
     return _buildOverview();
   }
 
-  // ---------------------------------------------------------------------------
-  // Overview – card per metric
-  // ---------------------------------------------------------------------------
+  // ── Overview ───────────────────────────────────────────────────────────────
 
   Widget _buildOverview() {
     if (_allMetrics == null) {
@@ -367,7 +573,7 @@ class _HealthMetricsScreenState extends State<HealthMetricsScreen>
                     const SizedBox(height: 4),
                     if (hasData) ...[
                       Text(
-                        'Latest: ${_formatValue(type, response.latestValue)} ${response.unit}',
+                        'Latest: ${_rawValue(response.latestValue)} ${response.unit}',
                         style: TextStyle(
                           fontSize: 20,
                           fontWeight: FontWeight.bold,
@@ -377,7 +583,7 @@ class _HealthMetricsScreenState extends State<HealthMetricsScreen>
                       const SizedBox(height: 2),
                       Text(
                         '${response.sampleCount} samples  •  '
-                        'Avg: ${_formatValue(type, response.statistics.average)} ${response.unit}',
+                        'Avg: ${_rawValue(response.statistics.average)} ${response.unit}',
                         style: TextStyle(fontSize: 12, color: Colors.grey[600]),
                       ),
                     ] else
@@ -396,9 +602,7 @@ class _HealthMetricsScreenState extends State<HealthMetricsScreen>
     );
   }
 
-  // ---------------------------------------------------------------------------
-  // Detail view – single metric with all samples
-  // ---------------------------------------------------------------------------
+  // ── Detail view ────────────────────────────────────────────────────────────
 
   Widget _buildDetailView(HealthMetricResponse response) {
     final type = HealthMetricType.fromKey(response.metricType);
@@ -438,24 +642,34 @@ class _HealthMetricsScreenState extends State<HealthMetricsScreen>
             const Divider(),
             _buildStatRow(
               'Average',
-              '${_formatValue(type, stats.average)} ${response.unit}',
+              '${_rawValue(stats.average)} ${response.unit}',
               Icons.trending_flat,
             ),
             _buildStatRow(
               'Min',
-              '${_formatValue(type, stats.min)} ${response.unit}',
+              '${_rawValue(stats.min)} ${response.unit}',
               Icons.arrow_downward,
             ),
             _buildStatRow(
               'Max',
-              '${_formatValue(type, stats.max)} ${response.unit}',
+              '${_rawValue(stats.max)} ${response.unit}',
               Icons.arrow_upward,
+            ),
+            _buildStatRow(
+              'Sum',
+              '${_rawValue(stats.sum)} ${response.unit}',
+              Icons.functions,
             ),
             _buildStatRow('Samples', '${response.sampleCount}', Icons.list),
             _buildStatRow(
-              'Date Range',
-              '${_formatDate(response.fetchedFrom)} – ${_formatDate(response.fetchedTo)}',
-              Icons.date_range,
+              'From',
+              _formatDateTimeFull(response.fetchedFrom),
+              Icons.calendar_today,
+            ),
+            _buildStatRow(
+              'To',
+              _formatDateTimeFull(response.fetchedTo),
+              Icons.event,
             ),
           ],
         ),
@@ -464,22 +678,24 @@ class _HealthMetricsScreenState extends State<HealthMetricsScreen>
   }
 
   Widget _buildSampleTile(HealthMetricSample sample, HealthMetricType? type) {
+    final duration = sample.endDate.difference(sample.startDate);
     return Card(
       margin: const EdgeInsets.only(bottom: 8),
       child: ExpansionTile(
         leading: CircleAvatar(
           radius: 16,
           child: Text(
-            _formatValue(type, sample.value),
-            style: const TextStyle(fontSize: 10),
+            _rawValue(sample.value),
+            style: const TextStyle(fontSize: 9),
+            overflow: TextOverflow.ellipsis,
           ),
         ),
         title: Text(
-          '${_formatValue(type, sample.value)} ${sample.unit}',
+          '${_rawValue(sample.value)} ${sample.unit}',
           style: const TextStyle(fontWeight: FontWeight.w500),
         ),
         subtitle: Text(
-          '${_formatDateTime(sample.startDate)} • ${sample.sourceName ?? "Unknown"}',
+          '${_formatDateTimeFull(sample.startDate)} • ${sample.sourceName ?? "Unknown"}',
           style: const TextStyle(fontSize: 12),
         ),
         children: [
@@ -489,8 +705,9 @@ class _HealthMetricsScreenState extends State<HealthMetricsScreen>
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
                 _buildDetailRow('UUID', sample.uuid),
-                _buildDetailRow('Start', _formatDateTime(sample.startDate)),
-                _buildDetailRow('End', _formatDateTime(sample.endDate)),
+                _buildDetailRow('Start', _formatDateTimeFull(sample.startDate)),
+                _buildDetailRow('End', _formatDateTimeFull(sample.endDate)),
+                _buildDetailRow('Duration', _formatDuration(duration)),
                 _buildDetailRow('Source', sample.sourceName ?? 'Unknown'),
                 _buildDetailRow('Bundle', sample.sourceBundle ?? 'Unknown'),
                 if (sample.device != null) ...[
@@ -515,9 +732,231 @@ class _HealthMetricsScreenState extends State<HealthMetricsScreen>
     );
   }
 
-  // ---------------------------------------------------------------------------
-  // Helpers
-  // ---------------------------------------------------------------------------
+  // ══════════════════════════════════════════════════════════════════════════
+  // MONITOR TAB
+  // ══════════════════════════════════════════════════════════════════════════
+
+  Widget _buildMonitorTab() {
+    return Column(
+      children: [
+        Expanded(
+          child: ListView(
+            padding: const EdgeInsets.all(16),
+            children: [
+              for (final type in HealthMetricType.values)
+                _buildMonitorCard(type),
+              const SizedBox(height: 8),
+              _buildActionLog(),
+            ],
+          ),
+        ),
+      ],
+    );
+  }
+
+  Widget _buildMonitorCard(HealthMetricType type) {
+    final isActive = _activeMonitors.contains(type);
+    final isLoading = _monitorLoading[type] == true;
+    final preview = _todayPreviews[type];
+    final cfg = _metricConfig[type];
+    final color = cfg?.$2 ?? Colors.grey;
+    final icon = cfg?.$1 ?? Icons.monitor_heart;
+
+    return Card(
+      margin: const EdgeInsets.only(bottom: 12),
+      shape: RoundedRectangleBorder(
+        borderRadius: BorderRadius.circular(12),
+        side: isActive ? BorderSide(color: color, width: 2) : BorderSide.none,
+      ),
+      child: Padding(
+        padding: const EdgeInsets.all(12),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            // Header row
+            Row(
+              children: [
+                CircleAvatar(
+                  backgroundColor: color.withValues(alpha: 0.15),
+                  child: Icon(icon, color: color, size: 20),
+                ),
+                const SizedBox(width: 12),
+                Expanded(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Text(
+                        type.displayName,
+                        style: const TextStyle(
+                          fontWeight: FontWeight.w600,
+                          fontSize: 15,
+                        ),
+                      ),
+                      if (isActive)
+                        Text(
+                          'Active',
+                          style: TextStyle(
+                            fontSize: 12,
+                            color: color,
+                            fontWeight: FontWeight.w500,
+                          ),
+                        )
+                      else
+                        Text(
+                          'Inactive',
+                          style: TextStyle(
+                            fontSize: 12,
+                            color: Colors.grey[400],
+                          ),
+                        ),
+                    ],
+                  ),
+                ),
+                if (isLoading)
+                  const SizedBox(
+                    width: 28,
+                    height: 28,
+                    child: CircularProgressIndicator(strokeWidth: 2),
+                  )
+                else ...[
+                  if (!isActive)
+                    TextButton.icon(
+                      icon: const Icon(Icons.play_arrow, size: 18),
+                      label: const Text('Start'),
+                      onPressed: () => _startMonitor(type),
+                      style: TextButton.styleFrom(foregroundColor: color),
+                    )
+                  else
+                    TextButton.icon(
+                      icon: const Icon(Icons.stop, size: 18),
+                      label: const Text('Stop'),
+                      onPressed: () => _stopMonitor(type),
+                      style: TextButton.styleFrom(foregroundColor: Colors.red),
+                    ),
+                ],
+              ],
+            ),
+            // Fetch Today preview button + result
+            Padding(
+              padding: const EdgeInsets.only(top: 8.0),
+              child: Row(
+                children: [
+                  OutlinedButton.icon(
+                    icon: const Icon(Icons.today, size: 16),
+                    label: const Text('Fetch Today'),
+                    onPressed: () => _fetchTodayPreview(type),
+                    style: OutlinedButton.styleFrom(
+                      visualDensity: VisualDensity.compact,
+                      side: BorderSide(color: color.withValues(alpha: 0.5)),
+                      foregroundColor: color,
+                    ),
+                  ),
+                  const SizedBox(width: 12),
+                  if (preview != null)
+                    Expanded(
+                      child: Text(
+                        preview.hasData
+                            ? '${preview.sampleCount} samples today'
+                                  ' | latest ${_rawValue(preview.latestValue)} ${preview.unit}'
+                            : 'No samples today',
+                        style: TextStyle(
+                          fontSize: 12,
+                          color: preview.hasData ? color : Colors.grey[400],
+                        ),
+                        overflow: TextOverflow.ellipsis,
+                      ),
+                    ),
+                ],
+              ),
+            ),
+            // Expandable today samples
+            if (preview != null && preview.hasData)
+              ExpansionTile(
+                dense: true,
+                tilePadding: EdgeInsets.zero,
+                title: Text(
+                  '${preview.sampleCount} today sample(s)  '
+                  '| avg ${_rawValue(preview.statistics.average)} ${preview.unit}',
+                  style: const TextStyle(fontSize: 12),
+                ),
+                children: preview.samples
+                    .map((s) => _buildSampleTile(s, type))
+                    .toList(),
+              ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Widget _buildActionLog() {
+    return Card(
+      child: Padding(
+        padding: const EdgeInsets.all(12),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Row(
+              children: [
+                const Icon(Icons.terminal, size: 18),
+                const SizedBox(width: 8),
+                const Text(
+                  'Action Log',
+                  style: TextStyle(fontWeight: FontWeight.w600),
+                ),
+                const Spacer(),
+                Text(
+                  '${_log.length} entries',
+                  style: const TextStyle(fontSize: 12, color: Colors.grey),
+                ),
+              ],
+            ),
+            const Divider(),
+            if (_log.isEmpty)
+              const Padding(
+                padding: EdgeInsets.symmetric(vertical: 8),
+                child: Text(
+                  'No actions yet',
+                  style: TextStyle(color: Colors.grey),
+                ),
+              )
+            else
+              for (final entry in _log)
+                Padding(
+                  padding: const EdgeInsets.symmetric(vertical: 2),
+                  child: Row(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Text(
+                        _formatLogTime(entry.time),
+                        style: const TextStyle(
+                          fontSize: 11,
+                          fontFamily: 'monospace',
+                          color: Colors.grey,
+                        ),
+                      ),
+                      const SizedBox(width: 8),
+                      Expanded(
+                        child: Text(
+                          entry.message,
+                          style: TextStyle(
+                            fontSize: 12,
+                            color: entry.isError ? Colors.red : null,
+                          ),
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  // ══════════════════════════════════════════════════════════════════════════
+  // SHARED HELPERS
+  // ══════════════════════════════════════════════════════════════════════════
 
   Widget _buildStatRow(String label, String value, IconData icon) {
     return Padding(
@@ -528,7 +967,13 @@ class _HealthMetricsScreenState extends State<HealthMetricsScreen>
           const SizedBox(width: 8),
           Text(label),
           const Spacer(),
-          Text(value, style: const TextStyle(fontWeight: FontWeight.bold)),
+          Flexible(
+            child: Text(
+              value,
+              style: const TextStyle(fontWeight: FontWeight.bold),
+              textAlign: TextAlign.right,
+            ),
+          ),
         ],
       ),
     );
@@ -544,28 +989,41 @@ class _HealthMetricsScreenState extends State<HealthMetricsScreen>
             width: 80,
             child: Text(label, style: TextStyle(color: Colors.grey[600])),
           ),
-          Expanded(child: Text(value)),
+          Expanded(child: SelectableText(value)),
         ],
       ),
     );
   }
 
-  String _formatValue(HealthMetricType? type, double value) {
-    if (type == HealthMetricType.bodyFatPercentage) {
-      // HealthKit stores as 0-1 fraction, display as %
-      return (value * 100).toStringAsFixed(1);
-    }
-    if (value == value.roundToDouble()) {
-      return value.toInt().toString();
-    }
-    return value.toStringAsFixed(1);
+  // ── Formatters ─────────────────────────────────────────────────────────────
+
+  /// Raw value with up to 6 decimal places; trailing zeros stripped.
+  /// Verifies no rounding at any layer.
+  String _rawValue(double v) {
+    final s = v.toStringAsFixed(6);
+    final trimmed = s.contains('.')
+        ? s.replaceAll(RegExp(r'0+$'), '').replaceAll(RegExp(r'\.$'), '')
+        : s;
+    return trimmed;
   }
 
-  String _formatDate(DateTime dt) {
-    return '${dt.month}/${dt.day}/${dt.year}';
+  String _formatDateTimeFull(DateTime dt) {
+    final local = dt.toLocal();
+    return '${local.year}-${_p(local.month)}-${_p(local.day)} '
+        '${_p(local.hour)}:${_p(local.minute)}:${_p(local.second)}';
   }
 
-  String _formatDateTime(DateTime dt) {
-    return '${dt.month}/${dt.day} ${dt.hour.toString().padLeft(2, '0')}:${dt.minute.toString().padLeft(2, '0')}';
+  String _formatDuration(Duration d) {
+    if (d.inSeconds < 60) return '${d.inSeconds}s';
+    if (d.inMinutes < 60)
+      return '${d.inMinutes}m ${d.inSeconds.remainder(60)}s';
+    return '${d.inHours}h ${d.inMinutes.remainder(60)}m';
   }
+
+  String _formatLogTime(DateTime dt) {
+    final local = dt.toLocal();
+    return '${_p(local.hour)}:${_p(local.minute)}:${_p(local.second)}';
+  }
+
+  String _p(int n) => n.toString().padLeft(2, '0');
 }

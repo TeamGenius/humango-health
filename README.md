@@ -20,7 +20,7 @@ A comprehensive Flutter plugin for integrating iOS HealthKit and WorkoutKit func
   - [Remove All Scheduled Workouts](#remove-all-scheduled-workouts)
 - [Workout Reading & Monitoring](#workout-reading--monitoring)
 - [Sleep Data Reading & Monitoring](#sleep-data-reading--monitoring)
-- [Health Metrics Reading](#health-metrics-reading)
+- [Health Metrics Reading & Monitoring](#health-metrics-reading)
 - [Native iOS Lifecycle Management](#native-ios-lifecycle-management)
 
 ## Features
@@ -32,7 +32,7 @@ A comprehensive Flutter plugin for integrating iOS HealthKit and WorkoutKit func
 | **Workout Scheduling** | Push workouts to Apple Watch via WorkoutKit with native deduplication |
 | **Workout Reading** | Real-time workout monitoring with foreground/background modes; completed workouts delivered via `HumangoHealthDataDelegate.onWorkoutReady(workout:deviceId:)` |
 | **Sleep Data** | Fetch and monitor sleep analysis; foreground (Descriptor) + background (Observer) monitoring; grouping-based `calculateSleepPayload` algorithm (gap ≤ 2 h, span ≥ 3 h); second-based precision for all durations; optimized 6 PM HealthKit query window; finalized sessions delivered via `HumangoHealthDataDelegate.onSleepSessionReady` |
-| **Health Metrics (HRV, RHR, etc.)** | Query-only reads via `HealthMetricsManager` with explicit `startDate` / `endDate`; available from both Flutter and native iOS |
+| **Health Metrics (HRV, RHR, etc.)** | On-demand fetch via `HealthMetricsManager.fetchHealthMetric` (Flutter + native iOS); background monitoring via `HumangoHealthPlugin.shared.startMetricsMonitoring` (native iOS); delivery via `HumangoHealthDataDelegate.onHealthMetricReady` (re-fetched current-day, not delta) |
 | **Delegate Delivery** | Workouts and finalized sleep sessions are pushed through **`HumangoHealthDataDelegate`** — no plugin-owned payload queues or HTTP |
 | **Native Lifecycle Management** | Centralized iOS app lifecycle detection for automatic mode switching |
 
@@ -1476,7 +1476,7 @@ print('Total workouts in range: ${all.length}');
 
 ## Health Metrics Reading
 
-Read body-composition and vital-sign metrics from HealthKit with a single, generic manager.
+Read body-composition and vital-sign metrics from HealthKit. On-demand fetching is available from both Flutter (Dart) and native iOS. Continuous background monitoring is available from native iOS only — the delegate callback fires on each HealthKit notification.
 
 ### Supported Metrics
 
@@ -1502,15 +1502,20 @@ final metrics = HealthMetricsManager();
 
 ---
 
-### 1. One-Shot Reads (Dart)
+### 1. On-Demand Fetch (Dart)
 
-#### Fetching a Single Metric
+`fetchHealthMetric` fetches all samples for a given metric type within a date range.
+Both `startDate` and `endDate` default to the last 30 days when omitted.
 
 ```dart
-// Fetch HRV samples from the last 30 days (default)
-final hrvResponse = await metrics.getHRV();
+// Fetch HRV samples for a specific date range
+final hrvResponse = await metrics.fetchHealthMetric(
+  HealthMetricType.heartRateVariabilitySDNN,
+  startDate: DateTime.now().subtract(const Duration(days: 7)),
+  endDate: DateTime.now(),
+);
 
-print('Latest HRV: ${hrvResponse.latestSample?.value} ${hrvResponse.unit}');
+print('Latest HRV: ${hrvResponse.latestValue} ${hrvResponse.unit}');
 print('Average:    ${hrvResponse.statistics.average}');
 print('Min / Max:  ${hrvResponse.statistics.min} / ${hrvResponse.statistics.max}');
 print('Samples:    ${hrvResponse.sampleCount}');
@@ -1518,114 +1523,254 @@ print('Samples:    ${hrvResponse.sampleCount}');
 for (final sample in hrvResponse.samples) {
   print('${sample.startDate}: ${sample.value} ${sample.unit}  (${sample.sourceName})');
 }
-```
 
-#### Convenience Methods
-
-Each metric has a dedicated helper that returns a `HealthMetricResponse`:
-
-```dart
-final hrv       = await metrics.getHRV();
-final restingHR = await metrics.getRestingHeartRate();
-final bodyFat   = await metrics.getBodyFatPercentage();
-final weight    = await metrics.getWeight();
-final height    = await metrics.getHeight();
-```
-
-All accept optional `startDate`, `endDate`, and `limit`:
-
-```dart
-final today = DateTime.now();
-final startOfDay = DateTime(today.year, today.month, today.day);
-
-// Today's HRV samples only
-final todayHRV = await metrics.getHRV(
-  startDate: startOfDay,
-  endDate: startOfDay.add(const Duration(days: 1)),
-);
-print('Today average HRV: ${todayHRV.statistics.average} ms');
-
-// Today's resting heart rate (avg / min / max)
-final todayRHR = await metrics.getRestingHeartRate(
-  startDate: startOfDay,
-  endDate: startOfDay.add(const Duration(days: 1)),
-);
-print('Today resting HR avg: ${todayRHR.statistics.average} bpm');
-print('Today resting HR min: ${todayRHR.statistics.min} bpm');
-print('Today resting HR max: ${todayRHR.statistics.max} bpm');
-```
-
-#### Fetching the Latest Value
-
-```dart
-final latest = await metrics.getLatestMetric(HealthMetricType.bodyMass);
-print('Current weight: ${latest.latestSample?.value} ${latest.unit}');
-```
-
-#### Fetching All Metrics at Once
-
-`getAllMetrics` queries all supported metric types in a single call:
-
-```dart
-final all = await metrics.getAllMetrics(
-  startDate: DateTime.now().subtract(const Duration(days: 30)),
-);
-
-print('HRV:        ${all.hrv?.statistics.average} ms');
-print('Resting HR: ${all.restingHeartRate?.statistics.average} bpm');
-print('Body Fat:   ${all.bodyFatPercentage?.latestSample?.value} %');
-print('Weight:     ${all.weight?.latestSample?.value} kg');
-print('Height:     ${all.height?.latestSample?.value} cm');
-
-if (all.errors.isNotEmpty) {
-  print('Partial errors: ${all.errors}');
+// Fetch all types in a loop
+for (final type in HealthMetricType.values) {
+  try {
+    final r = await metrics.fetchHealthMetric(type,
+        startDate: DateTime.now().subtract(const Duration(days: 30)));
+    print('${type.displayName}: ${r.sampleCount} samples');
+  } on HealthMetricsException catch (e) {
+    print('${type.key} error: ${e.message}');
+  }
 }
 ```
 
 ---
 
-### 2. Native iOS Query API
+### 2. Monitoring (Native iOS)
 
-Host iOS code can query health metrics directly without going through Flutter.
+> **Monitoring is native-iOS-only.** The Dart `HealthMetricsManager` does not receive callbacks. Delivery goes through `HumangoHealthDataDelegate.onHealthMetricReady`.
+
+#### 2a. Setup — Implement the delegate
+
+Before starting any monitor, your host app must implement `HumangoHealthDataDelegate` and assign it to `HumangoHealthPlugin.delegate`. This is the same delegate used for workout and sleep delivery — you only do this once.
+
+```swift
+// AppDelegate.swift (or your coordinator)
+import humango_health
+import UIKit
+
+@main
+class AppDelegate: UIResponder, UIApplicationDelegate, HumangoHealthDataDelegate {
+
+    func application(
+        _ application: UIApplication,
+        didFinishLaunchingWithOptions launchOptions: [UIApplication.LaunchOptionsKey: Any]?
+    ) -> Bool {
+        HumangoHealthPlugin.delegate = self   // ← assign delegate
+        return true
+    }
+
+    // Called whenever a monitored metric receives new HealthKit data.
+    func onHealthMetricReady(payload: [String: Any], metricType: String) async {
+        guard let stats = payload["statistics"] as? [String: Double] else { return }
+        print("[\(metricType)] avg=\(stats["average"] ?? 0) sampleCount=\(payload["sampleCount"] ?? 0)")
+        // forward to your analytics/API layer, update local state, etc.
+    }
+}
+```
+
+> The `onHealthMetricReady` method has a default no-op implementation in the protocol extension, so you only need to add it when you want to act on the data.
+
+#### 2b. Starting and stopping monitors
+
+Call `startMetricsMonitoring(for:)` after your user is authenticated and the delegate is assigned. A typical place is your post-login coordinator:
 
 ```swift
 import humango_health
 
-let end = Date()
-let start = Calendar.current.date(byAdding: .day, value: -30, to: end)!
+final class HealthCoordinator {
 
-let hrv = try await HealthMetricsManager.shared.queryHRV(
-  startDate: start,
-  endDate: end
-)
+    func onUserLoggedIn() {
+        guard let plugin = HumangoHealthPlugin.shared else { return }
 
-let latestWeight = try await HealthMetricsManager.shared.queryLatestWeight()
+        // Monitor HRV and resting heart rate
+        plugin.startMetricsMonitoring(for: [.heartRateVariabilitySDNN, .restingHeartRate])
+
+        // Or monitor every supported metric type at once
+        plugin.startMetricsMonitoring(for: HealthMetricType.allCases)
+    }
+
+    func onUserLoggedOut() {
+        // Stops all monitors and clears the registry.
+        // Also called automatically by HumangoHealthPlugin.clearAllDataOnLogout().
+        HumangoHealthPlugin.shared?.stopMetricsMonitoring(for: HealthMetricType.allCases)
+    }
+
+    func pauseHRVMonitoring() {
+        HumangoHealthPlugin.shared?.stopMetricsMonitoring(for: [.heartRateVariabilitySDNN])
+    }
+}
 ```
 
-You can also use the generic native API when you want to choose the metric type dynamically:
+#### 2c. Delegate Callback — Payload Keys
+
+Every monitor fires `onHealthMetricReady` whenever HealthKit delivers a change notification:
 
 ```swift
-import humango_health
+func onHealthMetricReady(payload: [String: Any], metricType: String) async {
+    // ── Identification ──────────────────────────────────────────────────
+    // metricType   : String          — "heartRateVariabilitySDNN", "restingHeartRate", …
+    // unit         : String          — "ms", "bpm", "%", "kg", "cm"
+    // sampleCount  : Int             — number of samples in window
+    //
+    // ── Latest sample ───────────────────────────────────────────────────
+    // latestSample : [String: Any]?  — most recent sample dict (or nil if none)
+    //     .uuid        : String
+    //     .value       : Double      — raw, no rounding
+    //     .unit        : String
+    //     .startDate   : String      — ISO 8601 UTC with fractional seconds
+    //     .endDate     : String
+    //     .sourceName  : String
+    //     .sourceBundle: String
+    //     .device      : [String: Any]?
+    //     .metadata    : [String: Any]?
+    //
+    // ── Aggregates ──────────────────────────────────────────────────────
+    // statistics   : [String: Double] — average, min, max, sum (raw Double)
+    //
+    // ── Window ──────────────────────────────────────────────────────────
+    // fetchedFrom  : String          — midnight local time, as UTC ISO 8601
+    // fetchedTo    : String          — now, as UTC ISO 8601
+    //
+    // ── Samples ─────────────────────────────────────────────────────────
+    // samples      : [[String: Any]] — all samples in window (same shape as latestSample)
 
-let metrics = HealthMetricsManager.shared
-let endDate = Date()
-let startDate = Calendar.current.date(byAdding: .day, value: -30, to: endDate)!
+    let type   = HealthMetricType(rawValue: metricType)
+    let stats  = payload["statistics"] as? [String: Double] ?? [:]
+    let latest = payload["latestSample"] as? [String: Any]
 
-let hrv = try await metrics.queryMetric(
-  .heartRateVariabilitySDNN,
-  startDate: startDate,
-  endDate: endDate
-)
-
-let latestWeight = try await metrics.queryLatestMetric(.bodyMass)
-let allMetrics = try await metrics.queryAllMetrics(startDate: startDate, endDate: endDate)
+    switch type {
+    case .heartRateVariabilitySDNN:
+        print("HRV today: avg \(stats["average"] ?? 0) ms  latest \(latest?["value"] ?? "–") ms")
+    case .restingHeartRate:
+        print("Resting HR today: avg \(stats["average"] ?? 0) bpm")
+    default:
+        print("[\(metricType)] \(payload["sampleCount"] ?? 0) samples")
+    }
+}
 ```
 
-These methods return the same dictionary shape used by the Flutter method channel APIs.
+> **Important:** `onHealthMetricReady` delivers **re-fetched current-day samples** (midnight → now on the device clock). It is **not** a delta of new samples. Each HealthKit notification triggers a full re-query of today's window.
+
+#### 2d. Monitoring Behavior
+
+| App State | Mechanism | Notes |
+|-----------|-----------|-------|
+| Foreground | `HKAnchoredObjectQueryDescriptor` live stream | Real-time, low-latency |
+| Background | `HKObserverQuery` + `enableBackgroundDelivery(.immediate)` | System-scheduled wake-up |
+
+- When the app transitions **background → foreground**, monitoring automatically switches to live-stream mode (same `AppLifecycleManager` pattern as workout and sleep monitors).
+- `completion()` is called by `HKObserverQuery` only **after** the full `await fetchAndDeliverCurrentDay()` chain — never via `defer`.
+- Requires **iOS 17+** (`@available(iOS 17.0, *)`).
+
+#### 2e. Starting / Stopping from Dart (Verification / Debug)
+
+> The Dart API for monitoring control is intended for **testing/verification only** — use native iOS (§2b) in production. No Dart callback fires; delivery always goes to the native delegate.
+
+```dart
+final metrics = HealthMetricsManager();
+
+// Start a monitor
+await metrics.startMetricMonitoring(HealthMetricType.heartRateVariabilitySDNN);
+
+// Stop a specific monitor
+await metrics.stopMetricMonitoring(HealthMetricType.heartRateVariabilitySDNN);
+
+// Stop all active monitors
+await metrics.stopAllMetricMonitoring();
+```
 
 ---
 
-### 3. Response Shape
+### 3. Native iOS Fetch API
+
+All fetch methods are `async throws` and return `[String: Any]` — the same dictionary shape described in §4 (Response Shape). Call them from any `async` context in your host app.
+
+#### 3a. Prerequisites
+
+```swift
+import humango_health
+
+// Ensure the plugin is initialised (it is, after FlutterEngine registers it).
+guard let plugin = HumangoHealthPlugin.shared else { return }
+
+let now   = Date()
+let end   = now
+let start = Calendar.current.date(byAdding: .day, value: -30, to: now)!
+```
+
+#### 3b. Generic fetch (any metric type)
+
+```swift
+// All samples for a type in a date range
+let hrvData = try await plugin.fetchHealthMetric(
+    .heartRateVariabilitySDNN,
+    startDate: start,
+    endDate: end
+)
+
+// Most recent sample only
+let latestWeight = try await plugin.fetchLatestHealthMetric(.bodyMass)
+
+// Every supported type at once — returns [String: [String: Any]]
+let allMetrics = try await plugin.fetchAllHealthMetrics(startDate: start, endDate: end)
+if let hrv = allMetrics["heartRateVariabilitySDNN"] {
+    let stats = hrv["statistics"] as? [String: Double] ?? [:]
+    print("30-day HRV avg: \(stats["average"] ?? 0) ms")
+}
+```
+
+#### 3c. Per-type convenience wrappers
+
+Each supported metric has a dedicated pair of methods — one for a date range and one for the latest sample:
+
+```swift
+// HRV (ms)
+let hrv       = try await plugin.fetchHRV(startDate: start, endDate: end)
+let latestHRV = try await plugin.fetchLatestHRV()
+
+// Resting Heart Rate (bpm)
+let rhr       = try await plugin.fetchRestingHeartRate(startDate: start, endDate: end)
+let latestRHR = try await plugin.fetchLatestRestingHeartRate()
+
+// Body Fat Percentage (% stored as 0–1 fraction by HealthKit)
+let bodyFat       = try await plugin.fetchBodyFatPercentage(startDate: start, endDate: end)
+let latestBodyFat = try await plugin.fetchLatestBodyFatPercentage()
+
+// Weight / Body Mass (kg)
+let weight       = try await plugin.fetchWeight(startDate: start, endDate: end)
+let latestWeight = try await plugin.fetchLatestWeight()
+
+// Height (cm)
+let height       = try await plugin.fetchHeight(startDate: start, endDate: end)
+let latestHeight = try await plugin.fetchLatestHeight()
+```
+
+#### 3d. Reading the response
+
+```swift
+// Inspect any fetch result the same way
+func printMetric(_ data: [String: Any]) {
+    let type       = data["metricType"] as? String ?? ""
+    let unit       = data["unit"] as? String ?? ""
+    let count      = data["sampleCount"] as? Int ?? 0
+    let stats      = data["statistics"] as? [String: Double] ?? [:]
+    let latest     = data["latestSample"] as? [String: Any]
+    let latestVal  = latest?["value"] as? Double
+
+    print("\(type): \(count) samples — avg \(stats["average"] ?? 0) \(unit)"
+          + (latestVal != nil ? "  latest \(latestVal!) \(unit)" : ""))
+}
+
+let hrv = try await plugin.fetchHRV(startDate: start, endDate: end)
+printMetric(hrv)  // "heartRateVariabilitySDNN: 14 samples — avg 42.785341 ms  latest 44.12 ms"
+```
+
+---
+
+### 4. Response Shape
 
 Both Flutter and native iOS metric queries return dictionaries with this structure:
 
@@ -1636,7 +1781,7 @@ Both Flutter and native iOS metric queries return dictionaries with this structu
   "sampleCount": 14,
   "latestSample": {
     "uuid":         "A1B2C3D4-...",
-    "value":        42.7,
+    "value":        42.785341,
     "unit":         "ms",
     "startDate":    "2026-03-27T02:14:00.000Z",
     "endDate":      "2026-03-27T02:14:00.000Z",
@@ -1646,56 +1791,18 @@ Both Flutter and native iOS metric queries return dictionaries with this structu
     "metadata":     {}
   },
   "statistics": {
-    "average": 42.7,
-    "min": 38.5,
-    "max": 49.2,
-    "sum": 597.8
+    "average": 42.785341,
+    "min": 38.521847,
+    "max": 49.201563,
+    "sum": 597.994774
   },
   "fetchedFrom": "2026-02-26T06:30:00.000Z",
   "fetchedTo":   "2026-03-27T06:30:00.000Z",
-  "samples": [
-    {
-      "uuid":         "A1B2C3D4-...",
-      "value":        42.7,
-      "unit":         "ms",
-      "startDate":    "2026-03-27T02:14:00.000Z",
-      "endDate":      "2026-03-27T02:14:00.000Z",
-      "sourceName":   "Apple Watch",
-      "sourceBundle": "com.apple.health",
-      "device": { "name": "Apple Watch", "model": "Watch" },
-      "metadata":     {}
-    }
-  ]
+  "samples": [ "..." ]
 }
 ```
 
-For `getAllMetrics` / `queryAllMetrics`, the result wraps per-metric responses in:
-
-```json
-{
-  "metrics": {
-    "heartRateVariabilitySDNN": { "...": "single-metric response" },
-    "restingHeartRate": { "...": "single-metric response" }
-  },
-  "errors": {},
-  "fetchedFrom": "2026-02-26T06:30:00.000Z",
-  "fetchedTo": "2026-03-27T06:30:00.000Z"
-}
-```
-
----
-
-### 4. Query API Reference
-
-| Surface | Method | Description |
-|--------|--------|-------------|
-| Flutter | `getMetric(metricType, startDate, endDate, limit)` | Query a single metric type within a date range |
-| Flutter | `getLatestMetric(metricType)` | Query the most recent sample for one metric type |
-| Flutter | `getAllMetrics(startDate, endDate)` | Query all supported metric types at once |
-| iOS | `queryMetric(_:startDate:endDate:limit:)` | Native Swift query for one metric type |
-| iOS | `queryLatestMetric(_:)` | Native Swift query for the most recent sample |
-| iOS | `queryHRV(startDate:endDate:limit:)`, `queryLatestWeight()`, etc. | Native Swift convenience wrappers for direct client app usage |
-| iOS | `queryAllMetrics(startDate:endDate:)` | Native Swift query for all supported metric types |
+> All numeric values are **raw `Double` with full HealthKit precision** — no rounding is applied at any layer (native or Dart).
 
 ---
 
@@ -1703,7 +1810,9 @@ For `getAllMetrics` / `queryAllMetrics`, the result wraps per-metric responses i
 
 ```dart
 try {
-  final response = await metrics.getHRV();
+  final response = await metrics.fetchHealthMetric(
+    HealthMetricType.heartRateVariabilitySDNN,
+  );
 } on HealthMetricsException catch (e) {
   switch (e.code) {
     case 'UNKNOWN_METRIC':
@@ -1738,9 +1847,7 @@ All are included in the plugin's fixed permission set — a single `requestAutho
 
 | Channel | Type | Purpose |
 |---------|------|---------|
-| `com.humango.health/metrics` | MethodChannel | Query-only health metrics reads |
-
-> There is **no EventChannel** for health metrics. Both Flutter and native iOS clients query metrics explicitly.
+| `com.humango.health/metrics` | MethodChannel | `fetchHealthMetric`, `startMetricMonitoring`, `stopMetricMonitoring`, `stopAllMetricMonitoring` |
 
 ---
 ## Channel Reference

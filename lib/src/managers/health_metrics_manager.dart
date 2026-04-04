@@ -4,7 +4,11 @@
 //
 //  Dart manager for reading health quantity metrics from Apple HealthKit.
 //  Supports: HRV, resting heart rate, body fat %, weight (bodyMass), height.
-//  Access is query-only through explicit date-range reads.
+//
+//  Querying is explicit: call fetchHealthMetric with a start and end date.
+//  Monitoring is native-iOS-only — use HumangoHealthPlugin.shared on the iOS side.
+//  When a monitor fires, the host app receives the payload via
+//  HumangoHealthDataDelegate.onHealthMetricReady (native iOS delegate).
 //
 
 import 'package:flutter/services.dart';
@@ -12,27 +16,26 @@ import '../models/health_metric_sample.dart';
 
 /// Manager for fetching health quantity metrics from Apple HealthKit.
 ///
-/// Provides typed access to:
+/// Provides typed, on-demand access to:
 /// - **HRV** (heartRateVariabilitySDNN) – standard deviation of heartbeat intervals in ms
 /// - **Resting Heart Rate** – estimated lowest resting HR in bpm
-/// - **Body Fat %** – body fat percentage (0-1 from HealthKit, displayed as %)
+/// - **Body Fat %** – body fat percentage (HealthKit stores 0–1 range, returned as %)
 /// - **Weight** (bodyMass) – in kg
 /// - **Height** – in cm
 ///
-/// Quantity metrics are query-only. Use [getMetric], [getLatestMetric], or
-/// [getAllMetrics] with explicit date ranges to read HealthKit data.
+/// All numeric values use full [double] precision — no rounding is applied at any layer.
 ///
-/// Example usage:
+/// Example:
 /// ```dart
-/// final metricsManager = HealthMetricsManager();
+/// final manager = HealthMetricsManager();
 ///
-/// // Fetch HRV samples from the last 7 days
-/// final hrvResponse = await metricsManager.getMetric(
+/// // Fetch HRV for the last 7 days
+/// final response = await manager.fetchHealthMetric(
 ///   HealthMetricType.heartRateVariabilitySDNN,
 ///   startDate: DateTime.now().subtract(const Duration(days: 7)),
+///   endDate: DateTime.now(),
 /// );
-/// print('Average HRV: ${hrvResponse.statistics.average} ms');
-///
+/// print('Latest HRV: \${response.latestValue} ms');
 /// ```
 class HealthMetricsManager {
   static const MethodChannel _channel = MethodChannel(
@@ -40,34 +43,33 @@ class HealthMetricsManager {
   );
 
   // ---------------------------------------------------------------------------
-  // Single metric fetch
+  // On-demand fetch
   // ---------------------------------------------------------------------------
 
-  /// Fetch samples for a specific [metricType] within a date range.
+  /// Fetch all samples for [metricType] within the given date range.
   ///
-  /// Defaults to last 30 days if [startDate] / [endDate] are omitted.
-  /// Pass [limit] to cap the number of returned samples.
-  Future<HealthMetricResponse> getMetric(
+  /// [startDate] and [endDate] default to the last 30 days when omitted.
+  /// Dates are transmitted as UTC ISO 8601 strings with fractional seconds.
+  /// All numeric values in the returned [HealthMetricResponse] are raw [double]
+  /// with full HealthKit precision — no rounding is applied.
+  Future<HealthMetricResponse> fetchHealthMetric(
     HealthMetricType metricType, {
     DateTime? startDate,
     DateTime? endDate,
-    int? limit,
   }) async {
     final effectiveEndDate = endDate ?? DateTime.now();
     final effectiveStartDate =
         startDate ?? effectiveEndDate.subtract(const Duration(days: 30));
+
     final arguments = <String, dynamic>{
       'metricType': metricType.key,
       'startDate': effectiveStartDate.toUtc().toIso8601String(),
       'endDate': effectiveEndDate.toUtc().toIso8601String(),
     };
-    if (limit != null) {
-      arguments['limit'] = limit;
-    }
 
     try {
       final result = await _channel.invokeMethod<Map<dynamic, dynamic>>(
-        'getHealthMetric',
+        'fetchHealthMetric',
         arguments,
       );
 
@@ -91,147 +93,60 @@ class HealthMetricsManager {
   }
 
   // ---------------------------------------------------------------------------
-  // Latest sample shorthand
+  // Monitoring control (triggers native iOS HealthMetricMonitor)
   // ---------------------------------------------------------------------------
 
-  /// Fetch only the most recent sample for a [metricType].
+  /// Start monitoring [metricType] on the native iOS side.
   ///
-  /// Searches across all time – returns the single newest sample.
-  Future<HealthMetricResponse> getLatestMetric(
-    HealthMetricType metricType,
-  ) async {
+  /// Delivery is via `HumangoHealthDataDelegate.onHealthMetricReady`
+  /// on the iOS delegate — no Dart-side callback is fired.
+  /// The monitor re-fetches current-day samples (midnight → now) on each
+  /// HealthKit notification; it is NOT a delta.
+  Future<void> startMetricMonitoring(HealthMetricType metricType) async {
     try {
-      final result = await _channel.invokeMethod<Map<dynamic, dynamic>>(
-        'getLatestHealthMetric',
-        {'metricType': metricType.key},
-      );
-
-      if (result != null) {
-        return HealthMetricResponse.fromMap(Map<String, dynamic>.from(result));
-      }
-
-      return _emptyResponse(
-        metricType.key,
-        metricType.defaultUnit,
-        DateTime.now(),
-        DateTime.now(),
-      );
+      await _channel.invokeMethod<void>('startMetricMonitoring', {
+        'metricType': metricType.key,
+      });
     } on PlatformException catch (e) {
       throw HealthMetricsException(
         code: e.code,
-        message: e.message ?? 'Error fetching latest ${metricType.displayName}',
+        message:
+            e.message ??
+            'Error starting monitoring for ${metricType.displayName}',
         details: e.details,
       );
     }
   }
 
-  // ---------------------------------------------------------------------------
-  // All metrics at once
-  // ---------------------------------------------------------------------------
-
-  /// Fetch all supported metrics in a single call.
-  ///
-  /// Defaults to last 30 days. Errors for individual types are collected in
-  /// [AllHealthMetricsResponse.errors] rather than throwing.
-  Future<AllHealthMetricsResponse> getAllMetrics({
-    DateTime? startDate,
-    DateTime? endDate,
-  }) async {
-    final effectiveEndDate = endDate ?? DateTime.now();
-    final effectiveStartDate =
-        startDate ?? effectiveEndDate.subtract(const Duration(days: 30));
-
+  /// Stop monitoring [metricType] on the native iOS side.
+  Future<void> stopMetricMonitoring(HealthMetricType metricType) async {
     try {
-      final result = await _channel
-          .invokeMethod<Map<dynamic, dynamic>>('getAllHealthMetrics', {
-            'startDate': effectiveStartDate.toUtc().toIso8601String(),
-            'endDate': effectiveEndDate.toUtc().toIso8601String(),
-          });
-
-      if (result != null) {
-        return AllHealthMetricsResponse.fromMap(
-          Map<String, dynamic>.from(result),
-        );
-      }
-
-      return AllHealthMetricsResponse(
-        metrics: {},
-        errors: {},
-        fetchedFrom: effectiveStartDate,
-        fetchedTo: effectiveEndDate,
-      );
+      await _channel.invokeMethod<void>('stopMetricMonitoring', {
+        'metricType': metricType.key,
+      });
     } on PlatformException catch (e) {
       throw HealthMetricsException(
         code: e.code,
-        message: e.message ?? 'Error fetching all health metrics',
+        message:
+            e.message ??
+            'Error stopping monitoring for ${metricType.displayName}',
         details: e.details,
       );
     }
   }
 
-  // ---------------------------------------------------------------------------
-  // Convenience methods for each metric type
-  // ---------------------------------------------------------------------------
-
-  /// Fetch HRV (Heart Rate Variability SDNN) samples.
-  Future<HealthMetricResponse> getHRV({
-    DateTime? startDate,
-    DateTime? endDate,
-    int? limit,
-  }) => getMetric(
-    HealthMetricType.heartRateVariabilitySDNN,
-    startDate: startDate,
-    endDate: endDate,
-    limit: limit,
-  );
-
-  /// Fetch resting heart rate samples.
-  Future<HealthMetricResponse> getRestingHeartRate({
-    DateTime? startDate,
-    DateTime? endDate,
-    int? limit,
-  }) => getMetric(
-    HealthMetricType.restingHeartRate,
-    startDate: startDate,
-    endDate: endDate,
-    limit: limit,
-  );
-
-  /// Fetch body fat percentage samples.
-  Future<HealthMetricResponse> getBodyFatPercentage({
-    DateTime? startDate,
-    DateTime? endDate,
-    int? limit,
-  }) => getMetric(
-    HealthMetricType.bodyFatPercentage,
-    startDate: startDate,
-    endDate: endDate,
-    limit: limit,
-  );
-
-  /// Fetch weight (body mass) samples.
-  Future<HealthMetricResponse> getWeight({
-    DateTime? startDate,
-    DateTime? endDate,
-    int? limit,
-  }) => getMetric(
-    HealthMetricType.bodyMass,
-    startDate: startDate,
-    endDate: endDate,
-    limit: limit,
-  );
-
-  /// Fetch height samples.
-  Future<HealthMetricResponse> getHeight({
-    DateTime? startDate,
-    DateTime? endDate,
-    int? limit,
-  }) => getMetric(
-    HealthMetricType.height,
-    startDate: startDate,
-    endDate: endDate,
-    limit: limit,
-  );
+  /// Stop all active metric monitors on the native iOS side.
+  Future<void> stopAllMetricMonitoring() async {
+    try {
+      await _channel.invokeMethod<void>('stopAllMetricMonitoring');
+    } on PlatformException catch (e) {
+      throw HealthMetricsException(
+        code: e.code,
+        message: e.message ?? 'Error stopping all metric monitors',
+        details: e.details,
+      );
+    }
+  }
 
   // ---------------------------------------------------------------------------
   // Helpers
