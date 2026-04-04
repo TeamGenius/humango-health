@@ -1,3 +1,24 @@
+## 0.0.27 — 2026-04-04
+
+### Bug Fixes
+
+#### WorkoutScheduler — crash on `requestAuthorization` (`NSInvalidArgumentException` SIGABRT)
+
+**Problem:** Calling `requestAuthorizationForWorkoutPush` or `scheduleWorkoutsFromFlutter` from Flutter caused an immediate SIGABRT:
+
+```
+NSInvalidArgumentException: Authorization for HKWorkoutTypeIdentifier should also be
+requested when requesting authorization to read HKWorkoutRouteTypeIdentifier
+```
+
+Apple's `WorkoutScheduler.shared.requestAuthorization()` (WorkoutKit) internally calls `HKHealthStore.requestAuthorization` with `HKWorkoutRouteTypeIdentifier` in the read set but **without** `HKWorkoutTypeIdentifier`. HealthKit enforces that the two types must always be requested together — violating the constraint throws an uncaught `NSException` and kills the process.
+
+**Fix:** Added `ensureHealthKitWorkoutTypesAuthorized()` — a private async helper in `WorkoutPlanManager` that pre-authorizes `HKWorkoutType` (write) and `[HKWorkoutType, HKWorkoutRoute]` (read) together before every `WorkoutScheduler.shared.requestAuthorization()` call. Once HealthKit has seen both types, WorkoutKit's internal request passes the constraint check silently. Errors from the pre-auth call are swallowed (best-effort); the WorkoutKit `authorizationState` remains the authoritative result returned to Flutter.
+
+**Changed in:** `ios/Classes/WorkoutScheduling/WorkoutPlanManager.swift`
+
+---
+
 ## 0.0.26 — 2026-04-04
 
 ### Features

@@ -5,6 +5,7 @@
 
 import Flutter
 import WorkoutKit
+import HealthKit
 import Foundation
 
 // MARK: - WorkoutPlanManager
@@ -13,6 +14,25 @@ public class WorkoutPlanManager: NSObject {
     static let shared = WorkoutPlanManager()
     
     private let store = ScheduledWorkoutStore.shared
+    private var healthStore: HKHealthStore { SharedHealthKitStore.shared }
+
+    // MARK: - HealthKit Pre-authorization
+
+    /// Pre-authorizes HKWorkoutType (write) and HKWorkoutType + HKWorkoutRoute (read) so
+    /// that the subsequent WorkoutScheduler.requestAuthorization() call does not violate
+    /// HealthKit's constraint that workoutRoute can only be requested alongside workoutType.
+    private func ensureHealthKitWorkoutTypesAuthorized() async {
+        guard HKHealthStore.isHealthDataAvailable() else { return }
+        let typesToShare: Set<HKSampleType> = [HKObjectType.workoutType()]
+        let typesToRead: Set<HKObjectType>  = [HKObjectType.workoutType(), HKSeriesType.workoutRoute()]
+        do {
+            try await healthStore.requestAuthorization(toShare: typesToShare, read: typesToRead)
+        } catch {
+            // Best-effort — WorkoutScheduler will surface auth state to the caller
+            print("⚠️ [Humango Health] ensureHealthKitWorkoutTypesAuthorized: \(error)")
+        }
+    }
+
     private let builder = WorkoutPlanBuilder()
     
     // Set by plugin registration
@@ -175,6 +195,7 @@ public class WorkoutPlanManager: NSObject {
         switch authState {
         case .notDetermined:
             do {
+                await ensureHealthKitWorkoutTypesAuthorized()
                 try await WorkoutScheduler.shared.requestAuthorization()
                 let newState = await WorkoutScheduler.shared.authorizationState
                 return authorizationStatusMap(from: newState)
@@ -460,6 +481,7 @@ public class WorkoutPlanManager: NSObject {
         let authState = await WorkoutScheduler.shared.authorizationState
         if authState == .notDetermined {
             do {
+                await ensureHealthKitWorkoutTypesAuthorized()
                 try await WorkoutScheduler.shared.requestAuthorization()
             } catch {
                 print("⚠️ [Humango Health] WorkoutScheduler requestAuthorization failed: \(error)")
