@@ -1,3 +1,83 @@
+## 0.0.28 — 2026-04-07
+
+### Bug Fixes
+
+#### Workout Reading — activities not displayed for users who never set import preferences
+
+`WorkoutService.handleSpotImporting()` used `UserDefaults.standard.bool(forKey:)` to read the three import-preference flags (`isImportRunning`, `isImportCycling`, `isImportSwimming`). `bool(forKey:)` returns `false` when the key has never been written, causing all three sport types to be added to `excludeImporting` and every live-monitoring workout to be silently dropped. Users who had never explicitly saved preferences (the default state) saw no activities delivered through the monitoring pipeline.
+
+**Fix:** Changed all three reads to `object(forKey:) as? Bool ?? true`, matching the existing correct default-to-import pattern already used in `WorkoutServiceChannel.unImportWorkout`. The default is now *import everything* when no preference has been saved.
+
+**Changed in:** `ios/Classes/WorkoutReading/WorkoutService.swift`
+
+---
+
+### Changes
+
+#### Workout Reading — import-preference filtering removed from `WorkoutService` (live monitoring path)
+
+Import-preference filtering (`isImportRunning`, `isImportCycling`, `isImportSwimming`) has been removed from the live monitoring pipeline (`WorkoutService`). The sport-type filter now lives exclusively in `WorkoutServiceChannel.unImportWorkout`, which covers the one-shot `readWorkouts` and `fetchAllWorkouts` paths. The client app is responsible for filtering workout types delivered via `HumangoHealthDataDelegate.onWorkoutReady`.
+
+**Removed from `WorkoutService`:**
+- `handleSpotImporting()` method and its call in `init`
+- Private properties: `importRunning`, `importCycling`, `importSwimming`, `excludeImporting`
+- Sport-name string constants: `cycling`, `running`, `swimminng`, `strength`
+
+**Changed in:** `ios/Classes/WorkoutReading/WorkoutService.swift`
+
+---
+
+### Features
+
+#### Workout Reading — comprehensive remote logging across the full fetch pipeline
+
+All workout reading and delivery paths now emit structured `SleepRemoteLogger` events (`subsystem: "WorkoutReading"`) in addition to `debugPrint`. Every stage from HealthKit query through delegate delivery is individually tagged with `class`, `method`, step key, and contextual metadata. Workout JSON payloads are attached at the point of serialization and at delegate delivery so missing-activity issues can be diagnosed from remote logs alone.
+
+**`WorkoutServiceChannel` — new log steps:**
+
+| Step | Description |
+|---|---|
+| `readWorkouts.start` / `.complete` / `.error` | One-shot fetch entry, success, failure |
+| `fetchBatched.start` / `.batch` / `.skip` / `.processError` / `.complete` | Paginated batch fetch lifecycle |
+| `fetchBatched.payload` | Full JSON payload per serialized workout |
+| `processWorkout.start` / `.series` / `.seriesError` | Quantity series fetch per workout |
+| `processWorkout.routes` / `.routesError` | Route fetch per workout |
+| `processWorkout.locations` / `.locationsError` | Location build per workout |
+| `processWorkout.complete` | Assembled `HuWorkout` with full JSON payload |
+| `fetchRoutes.start` / `.complete` | `HKWorkoutRoute` query |
+| `buildRouteData.start` / `.complete` | Location point extraction |
+| `fetchQuantitySeries.typeError` | Per-type quantity fetch failure |
+| `startMonitoring.start` / `.alreadyActive` / `.parse` | Monitoring start |
+| `stopMonitoring` | Monitoring stop |
+| `setImportPreferences` | Preference update |
+| `fetchAllWorkouts.start` / `.complete` / `.error` | Unfiltered fetch entry, success, failure |
+| `fetchAllRaw.start` / `.batch` / `.skip` / `.complete` | Unfiltered paginated fetch lifecycle |
+| `fetchAllRaw.payload` | Full JSON payload per serialized workout |
+
+**`WorkoutService` — new log steps:**
+
+| Step | Description |
+|---|---|
+| `workoutService.start` | Service start with mode (foreground/background) and startDate |
+| `liveUpdates.start` / `.streaming` / `.update` / `.workout` / `.ended` / `.error` / `.stop` | Full live stream lifecycle, per-update count, per-workout metadata |
+| `fetchWorkouts.skip` / `.start` / `.result` / `.handle` / `.error` | Background snapshot fetch lifecycle |
+| `bgMonitoring.stop` / `.disableDelivery` | Background observer teardown |
+| `handleWorkouts.skip` / `.classify` / `.snapshot` / `.routeMode` / `.oneShot` / `.oneShotComplete` | Per-workout classification and RouteService path |
+
+**`RouteService` — new log steps:**
+
+| Step | Description |
+|---|---|
+| `routeService.workoutBuilt` | Assembled `HuWorkout` with full JSON payload before delivery |
+| `routeService.buildError` | Build failure with `uuid` and error |
+| `routeService.delivering` | Delegate call with full JSON payload |
+| `routeService.delivered` | Delegate returned successfully |
+| `routeService.delegateNil` | Delegate absent — payload still logged |
+
+**Changed in:** `ios/Classes/WorkoutReading/WorkoutServiceChannel.swift`, `ios/Classes/WorkoutReading/WorkoutService.swift`, `ios/Classes/WorkoutReading/RouteService.swift`
+
+---
+
 ## 0.0.27 — 2026-04-04
 
 ### Features

@@ -346,9 +346,32 @@ class RouteService {
                 workoutActivities: workout.workoutActivities,
                 metadata: dictMetaData
             )
+
+            let payloadString: String
+            if let jsonData = huWorkout.toJson(), let jsonString = String(data: jsonData, encoding: .utf8) {
+                payloadString = jsonString
+            } else {
+                payloadString = "{}"
+            }
+            SleepRemoteLogger.log(.info, step: "routeService.workoutBuilt", message: "workout built and ready to deliver", context: [
+                "class": "RouteService",
+                "method": "handleCompleteWorkout",
+                "uuid": workout.uuid.uuidString,
+                "type": workout.workoutActivityType.name,
+                "locationCount": location.count,
+                "totalSamples": series.reduce(0) { $0 + $1.count },
+                "payload": payloadString,
+            ], subsystem: "WorkoutReading")
+
             await pushWorkout(finalWorkout: huWorkout)
         } catch {
             debugPrint("[RouteService] handleCompleteWorkout error: \(error)")
+            SleepRemoteLogger.log(.error, step: "routeService.buildError", message: "handleCompleteWorkout failed", context: [
+                "class": "RouteService",
+                "method": "handleCompleteWorkout",
+                "uuid": workout.uuid.uuidString,
+                "error": error.localizedDescription,
+            ], subsystem: "WorkoutReading")
         }
     }
 
@@ -358,10 +381,35 @@ class RouteService {
     // request from the host app's handler finishes.
     func pushWorkout(finalWorkout: HuWorkout) async {
         let deviceId = finalWorkout.deviceActivityId
+        let payloadString: String
+        if let jsonData = finalWorkout.toJson(), let jsonString = String(data: jsonData, encoding: .utf8) {
+            payloadString = jsonString
+        } else {
+            payloadString = "{}"
+        }
+
         if let delegate = HumangoHealthPlugin.delegate {
+            SleepRemoteLogger.log(.info, step: "routeService.delivering", message: "delivering workout to delegate", context: [
+                "class": "RouteService",
+                "method": "pushWorkout",
+                "uuid": deviceId,
+                "delegatePresent": true,
+                "payload": payloadString,
+            ], subsystem: "WorkoutReading")
             await delegate.onWorkoutReady(workout: finalWorkout, deviceId: deviceId)
+            SleepRemoteLogger.log(.info, step: "routeService.delivered", message: "workout delivered to delegate", context: [
+                "class": "RouteService",
+                "method": "pushWorkout",
+                "uuid": deviceId,
+            ], subsystem: "WorkoutReading")
         } else {
             debugPrint("[RouteService] delegate is nil — workout \(deviceId) not delivered")
+            SleepRemoteLogger.log(.warn, step: "routeService.delegateNil", message: "delegate is nil — workout not delivered", context: [
+                "class": "RouteService",
+                "method": "pushWorkout",
+                "uuid": deviceId,
+                "payload": payloadString,
+            ], subsystem: "WorkoutReading")
         }
     }
 

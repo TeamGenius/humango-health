@@ -65,6 +65,12 @@ class WorkoutServiceChannel: NSObject {
         }
         
         debugPrint("Read Workouts: handleReadWorkouts - Start: \(startDate), End: \(endDate)")
+        SleepRemoteLogger.log(.info, step: "readWorkouts.start", message: "readWorkouts requested", context: [
+            "class": "WorkoutServiceChannel",
+            "method": "handleReadWorkouts",
+            "startDate": startDate.description,
+            "endDate": endDate.description,
+        ], subsystem: "WorkoutReading")
         
         Task {
             do {
@@ -72,11 +78,21 @@ class WorkoutServiceChannel: NSObject {
                     startDate: startDate,
                     endDate: endDate
                 )
+                SleepRemoteLogger.log(.info, step: "readWorkouts.complete", message: "readWorkouts completed", context: [
+                    "class": "WorkoutServiceChannel",
+                    "method": "handleReadWorkouts",
+                    "count": workoutsJson.count,
+                ], subsystem: "WorkoutReading")
                 DispatchQueue.main.async {
                     result(workoutsJson)
                 }
             } catch {
                 debugPrint("Read Workouts: handleReadWorkouts error: \(error)")
+                SleepRemoteLogger.log(.error, step: "readWorkouts.error", message: "readWorkouts failed", context: [
+                    "class": "WorkoutServiceChannel",
+                    "method": "handleReadWorkouts",
+                    "error": error.localizedDescription,
+                ], subsystem: "WorkoutReading")
                 DispatchQueue.main.async {
                     result(FlutterError(code: "FETCH_ERROR", message: error.localizedDescription, details: nil))
                 }
@@ -90,6 +106,7 @@ class WorkoutServiceChannel: NSObject {
         var allWorkouts: [HuWorkout] = []
         var anchor: HKQueryAnchor? = nil
         var results: HKAnchoredObjectQueryDescriptor<HKWorkout>.Result
+        var batchNumber = 0
         
         let predicate = HKQuery.predicateForSamples(
             withStart: startDate,
@@ -99,8 +116,16 @@ class WorkoutServiceChannel: NSObject {
         
         let excludedTypes = unImportWorkout
         debugPrint("Read Workouts: Excluded workout types: \(excludedTypes)")
+        SleepRemoteLogger.log(.info, step: "fetchBatched.start", message: "starting batched workout fetch", context: [
+            "class": "WorkoutServiceChannel",
+            "method": "fetchWorkoutsBatched",
+            "startDate": startDate.description,
+            "endDate": endDate.description,
+            "excludedTypes": excludedTypes.joined(separator: ","),
+        ], subsystem: "WorkoutReading")
         
         repeat {
+            batchNumber += 1
             // Create a query descriptor that reads a batch of matching samples
             let anchorDescriptor = HKAnchoredObjectQueryDescriptor(
                 predicates: [.workout(predicate)],
@@ -112,6 +137,12 @@ class WorkoutServiceChannel: NSObject {
             anchor = results.newAnchor
             
             debugPrint("Read Workouts: Fetched batch of \(results.addedSamples.count) workouts")
+            SleepRemoteLogger.log(.info, step: "fetchBatched.batch", message: "batch fetched", context: [
+                "class": "WorkoutServiceChannel",
+                "method": "fetchWorkoutsBatched",
+                "batch": batchNumber,
+                "count": results.addedSamples.count,
+            ], subsystem: "WorkoutReading")
             
             // Process each workout in the batch
             for workout in results.addedSamples {
@@ -120,12 +151,25 @@ class WorkoutServiceChannel: NSObject {
                 // Skip incomplete workouts
                 guard workout.endDate > workout.startDate else {
                     debugPrint("Read Workouts: Skipping incomplete workout: \(workout.uuid.uuidString)")
+                    SleepRemoteLogger.log(.warn, step: "fetchBatched.skip", message: "skipping incomplete workout", context: [
+                        "class": "WorkoutServiceChannel",
+                        "method": "fetchWorkoutsBatched",
+                        "uuid": workout.uuid.uuidString,
+                        "reason": "endDate <= startDate",
+                    ], subsystem: "WorkoutReading")
                     continue
                 }
                 
                 // Filter based on user preferences
                 if excludedTypes.contains(workout.workoutActivityType.name) {
                     debugPrint("Read Workouts: Skipping due to preferences: \(workout.workoutActivityType.name)")
+                    SleepRemoteLogger.log(.info, step: "fetchBatched.skip", message: "skipping excluded workout type", context: [
+                        "class": "WorkoutServiceChannel",
+                        "method": "fetchWorkoutsBatched",
+                        "uuid": workout.uuid.uuidString,
+                        "type": workout.workoutActivityType.name,
+                        "reason": "excludedByPreference",
+                    ], subsystem: "WorkoutReading")
                     continue
                 }
                 
@@ -136,6 +180,12 @@ class WorkoutServiceChannel: NSObject {
                     }
                 } catch {
                     debugPrint("Read Workouts: Error processing workout \(workout.uuid.uuidString): \(error)")
+                    SleepRemoteLogger.log(.error, step: "fetchBatched.processError", message: "error processing workout", context: [
+                        "class": "WorkoutServiceChannel",
+                        "method": "fetchWorkoutsBatched",
+                        "uuid": workout.uuid.uuidString,
+                        "error": error.localizedDescription,
+                    ], subsystem: "WorkoutReading")
                 }
             }
             
@@ -148,17 +198,38 @@ class WorkoutServiceChannel: NSObject {
             if let jsonData = workout.toJson(),
                let jsonString = String(data: jsonData, encoding: .utf8) {
                 workoutsJson.append(jsonString)
+                SleepRemoteLogger.log(.info, step: "fetchBatched.payload", message: "workout payload ready", context: [
+                    "class": "WorkoutServiceChannel",
+                    "method": "fetchWorkoutsBatched",
+                    "uuid": workout.deviceActivityId,
+                    "payload": jsonString,
+                ], subsystem: "WorkoutReading")
             }
         }
         
         debugPrint("Read Workouts: Returning \(workoutsJson.count) workouts")
+        SleepRemoteLogger.log(.info, step: "fetchBatched.complete", message: "batched fetch complete", context: [
+            "class": "WorkoutServiceChannel",
+            "method": "fetchWorkoutsBatched",
+            "totalBatches": batchNumber,
+            "totalWorkouts": workoutsJson.count,
+        ], subsystem: "WorkoutReading")
         return workoutsJson
     }
     
     // MARK: - Process Individual Workout
     
     private func processWorkout(_ workout: HKWorkout) async throws -> HuWorkout? {
-        debugPrint("Read Workouts: Processing workout \(workout.uuid.uuidString)")
+        let uuid = workout.uuid.uuidString
+        debugPrint("Read Workouts: Processing workout \(uuid)")
+        SleepRemoteLogger.log(.info, step: "processWorkout.start", message: "processing workout", context: [
+            "class": "WorkoutServiceChannel",
+            "method": "processWorkout",
+            "uuid": uuid,
+            "type": workout.workoutActivityType.name,
+            "start": workout.startDate.description,
+            "end": workout.endDate.description,
+        ], subsystem: "WorkoutReading")
         
         // Fetch all quantity series data (gracefully handle authorization errors)
         let series: [[HKQuantitySample]]
@@ -166,8 +237,21 @@ class WorkoutServiceChannel: NSObject {
             series = try await fetchAllQuantitySeriesForWorkout(workout)
             let totalSamples = series.reduce(0) { $0 + $1.count }
             debugPrint("Read Workouts: Fetched \(totalSamples) quantity samples across \(series.count) types")
+            SleepRemoteLogger.log(.info, step: "processWorkout.series", message: "quantity series fetched", context: [
+                "class": "WorkoutServiceChannel",
+                "method": "processWorkout",
+                "uuid": uuid,
+                "totalSamples": totalSamples,
+                "seriesTypes": series.count,
+            ], subsystem: "WorkoutReading")
         } catch {
-            debugPrint("Read Workouts: Warning - failed to fetch quantity series for \(workout.uuid.uuidString): \(error)")
+            debugPrint("Read Workouts: Warning - failed to fetch quantity series for \(uuid): \(error)")
+            SleepRemoteLogger.log(.warn, step: "processWorkout.seriesError", message: "failed to fetch quantity series", context: [
+                "class": "WorkoutServiceChannel",
+                "method": "processWorkout",
+                "uuid": uuid,
+                "error": error.localizedDescription,
+            ], subsystem: "WorkoutReading")
             // Continue with empty series rather than failing the entire workout
             series = []
         }
@@ -176,16 +260,40 @@ class WorkoutServiceChannel: NSObject {
         let routes: [HKWorkoutRoute]
         do {
             routes = try await fetchWorkoutRoutes(workout)
+            SleepRemoteLogger.log(.info, step: "processWorkout.routes", message: "routes fetched", context: [
+                "class": "WorkoutServiceChannel",
+                "method": "processWorkout",
+                "uuid": uuid,
+                "routeCount": routes.count,
+            ], subsystem: "WorkoutReading")
         } catch {
-            debugPrint("Read Workouts: Warning - failed to fetch routes for \(workout.uuid.uuidString): \(error)")
+            debugPrint("Read Workouts: Warning - failed to fetch routes for \(uuid): \(error)")
+            SleepRemoteLogger.log(.warn, step: "processWorkout.routesError", message: "failed to fetch routes", context: [
+                "class": "WorkoutServiceChannel",
+                "method": "processWorkout",
+                "uuid": uuid,
+                "error": error.localizedDescription,
+            ], subsystem: "WorkoutReading")
             routes = []
         }
         
         let locations: [CLLocation]
         do {
             locations = try await buildRouteData(from: routes)
+            SleepRemoteLogger.log(.info, step: "processWorkout.locations", message: "route locations built", context: [
+                "class": "WorkoutServiceChannel",
+                "method": "processWorkout",
+                "uuid": uuid,
+                "locationCount": locations.count,
+            ], subsystem: "WorkoutReading")
         } catch {
-            debugPrint("Read Workouts: Warning - failed to build route data for \(workout.uuid.uuidString): \(error)")
+            debugPrint("Read Workouts: Warning - failed to build route data for \(uuid): \(error)")
+            SleepRemoteLogger.log(.warn, step: "processWorkout.locationsError", message: "failed to build route locations", context: [
+                "class": "WorkoutServiceChannel",
+                "method": "processWorkout",
+                "uuid": uuid,
+                "error": error.localizedDescription,
+            ], subsystem: "WorkoutReading")
             locations = []
         }
         
@@ -198,6 +306,7 @@ class WorkoutServiceChannel: NSObject {
         
         // Construct HuWorkout
         let huWorkout = HuWorkout(
+
             distance: workout.totalDistance,
             duration: workout.duration,
             sport: workout.workoutActivityType,
@@ -210,6 +319,22 @@ class WorkoutServiceChannel: NSObject {
             metadata: dictMetaData
         )
         
+        let payloadString: String
+        if let jsonData = huWorkout.toJson(), let jsonString = String(data: jsonData, encoding: .utf8) {
+            payloadString = jsonString
+        } else {
+            payloadString = "{}"
+        }
+        SleepRemoteLogger.log(.info, step: "processWorkout.complete", message: "workout processed successfully", context: [
+            "class": "WorkoutServiceChannel",
+            "method": "processWorkout",
+            "uuid": uuid,
+            "type": workout.workoutActivityType.name,
+            "locationCount": locations.count,
+            "totalSamples": series.reduce(0) { $0 + $1.count },
+            "payload": payloadString,
+        ], subsystem: "WorkoutReading")
+        
         return huWorkout
     }
     
@@ -219,7 +344,13 @@ class WorkoutServiceChannel: NSObject {
         // Note: authorizationStatus(for:) only reflects *write* permission.
         // Read permission is intentionally hidden by HealthKit — just run the query
         // and it returns empty results if the user hasn't granted read access.
-        debugPrint("Read Workouts: Fetching routes for workout \(workout.uuid.uuidString)")
+        let routeUUID = workout.uuid.uuidString
+        debugPrint("Read Workouts: Fetching routes for workout \(routeUUID)")
+        SleepRemoteLogger.log(.info, step: "fetchRoutes.start", message: "fetching workout routes", context: [
+            "class": "WorkoutServiceChannel",
+            "method": "fetchWorkoutRoutes",
+            "uuid": routeUUID,
+        ], subsystem: "WorkoutReading")
         
         let pred = HKQuery.predicateForObjects(from: workout)
         let desc = HKAnchoredObjectQueryDescriptor(
@@ -229,13 +360,24 @@ class WorkoutServiceChannel: NSObject {
         )
         let result: HKAnchoredObjectQueryDescriptor<HKWorkoutRoute>.Result = try await desc.result(for: healthStore)
         
-        debugPrint("Read Workouts: Found \(result.addedSamples.count) route(s) for workout \(workout.uuid.uuidString)")
+        debugPrint("Read Workouts: Found \(result.addedSamples.count) route(s) for workout \(routeUUID)")
+        SleepRemoteLogger.log(.info, step: "fetchRoutes.complete", message: "workout routes fetched", context: [
+            "class": "WorkoutServiceChannel",
+            "method": "fetchWorkoutRoutes",
+            "uuid": routeUUID,
+            "routeCount": result.addedSamples.count,
+        ], subsystem: "WorkoutReading")
         
         return result.addedSamples
     }
     
     private func buildRouteData(from routes: [HKWorkoutRoute]) async throws -> [CLLocation] {
         debugPrint("Read Workouts: Building route data from \(routes.count) route(s)")
+        SleepRemoteLogger.log(.info, step: "buildRouteData.start", message: "building route location data", context: [
+            "class": "WorkoutServiceChannel",
+            "method": "buildRouteData",
+            "routeCount": routes.count,
+        ], subsystem: "WorkoutReading")
         var allPoints: [CLLocation] = []
         for route in routes {
             let seq = HKWorkoutRouteQueryDescriptor(route).results(for: healthStore)
@@ -247,6 +389,11 @@ class WorkoutServiceChannel: NSObject {
             debugPrint("Read Workouts: Route \(route.uuid) contributed \(routePointCount) location points")
         }
         debugPrint("Read Workouts: Total locations extracted: \(allPoints.count)")
+        SleepRemoteLogger.log(.info, step: "buildRouteData.complete", message: "route location data built", context: [
+            "class": "WorkoutServiceChannel",
+            "method": "buildRouteData",
+            "totalLocations": allPoints.count,
+        ], subsystem: "WorkoutReading")
         return allPoints
     }
     
@@ -300,6 +447,12 @@ class WorkoutServiceChannel: NSObject {
                     } catch {
                         // Log error but continue with empty results for this type
                         debugPrint("Read Workouts: Warning - failed to fetch \(id.rawValue): \(error.localizedDescription)")
+                        SleepRemoteLogger.log(.warn, step: "fetchQuantitySeries.typeError", message: "failed to fetch quantity type", context: [
+                            "class": "WorkoutServiceChannel",
+                            "method": "fetchAllQuantitySeriesForWorkout",
+                            "type": id.rawValue,
+                            "error": error.localizedDescription,
+                        ], subsystem: "WorkoutReading")
                         return (idx, [])
                     }
                 }
@@ -319,12 +472,23 @@ class WorkoutServiceChannel: NSObject {
         guard let args = call.arguments as? [String: Any],
               let startISO = args["startDate"] as? String,
               let startDate = DateUtils.parseDate(from: startISO) else {
+            SleepRemoteLogger.log(.error, step: "startMonitoring.parse", message: "missing or invalid startDate", context: ["class": "WorkoutServiceChannel", "method": "handleStartMonitoring"], subsystem: "WorkoutReading")
             result(FlutterError(code: "INVALID_ARGS", message: "Missing or invalid startDate", details: nil))
             return
         }
         
         if workoutService == nil {
+            SleepRemoteLogger.log(.info, step: "startMonitoring.start", message: "starting workout monitoring", context: [
+                "class": "WorkoutServiceChannel",
+                "method": "handleStartMonitoring",
+                "startDate": startDate.description,
+            ], subsystem: "WorkoutReading")
             workoutService = WorkoutService(startDate: startDate)
+        } else {
+            SleepRemoteLogger.log(.info, step: "startMonitoring.alreadyActive", message: "monitoring already active — reusing existing service", context: [
+                "class": "WorkoutServiceChannel",
+                "method": "handleStartMonitoring",
+            ], subsystem: "WorkoutReading")
         }
         
         Task {
@@ -336,6 +500,7 @@ class WorkoutServiceChannel: NSObject {
     }
     
     private func handleStopMonitoring(_ result: @escaping FlutterResult) {
+        SleepRemoteLogger.log(.info, step: "stopMonitoring", message: "stopping workout monitoring", context: ["class": "WorkoutServiceChannel", "method": "handleStopMonitoring"], subsystem: "WorkoutReading")
         workoutService?.stopLiveUpdates()
         workoutService?.stopBackgroundMonitoring()
         workoutService = nil
@@ -358,6 +523,13 @@ class WorkoutServiceChannel: NSObject {
         UserDefaults.standard.synchronize()
         
         debugPrint("Read Workouts: Import preferences updated - Running: \(running), Cycling: \(cycling), Swimming: \(swimming)")
+        SleepRemoteLogger.log(.info, step: "setImportPreferences", message: "import preferences updated", context: [
+            "class": "WorkoutServiceChannel",
+            "method": "handleSetImportPreferences",
+            "running": running,
+            "cycling": cycling,
+            "swimming": swimming,
+        ], subsystem: "WorkoutReading")
         result(nil)
     }
 
@@ -383,15 +555,31 @@ class WorkoutServiceChannel: NSObject {
         }
 
         debugPrint("Read Workouts: fetchAllWorkouts - Start: \(startDate), End: \(endDate)")
+        SleepRemoteLogger.log(.info, step: "fetchAllWorkouts.start", message: "fetchAllWorkouts requested", context: [
+            "class": "WorkoutServiceChannel",
+            "method": "handleFetchAllWorkouts",
+            "startDate": startDate.description,
+            "endDate": endDate.description,
+        ], subsystem: "WorkoutReading")
 
         Task {
             do {
                 let workoutsJson = try await fetchAllWorkoutsRaw(startDate: startDate, endDate: endDate)
+                SleepRemoteLogger.log(.info, step: "fetchAllWorkouts.complete", message: "fetchAllWorkouts completed", context: [
+                    "class": "WorkoutServiceChannel",
+                    "method": "handleFetchAllWorkouts",
+                    "count": workoutsJson.count,
+                ], subsystem: "WorkoutReading")
                 DispatchQueue.main.async {
                     result(workoutsJson)
                 }
             } catch {
                 debugPrint("Read Workouts: fetchAllWorkouts error: \(error)")
+                SleepRemoteLogger.log(.error, step: "fetchAllWorkouts.error", message: "fetchAllWorkouts failed", context: [
+                    "class": "WorkoutServiceChannel",
+                    "method": "handleFetchAllWorkouts",
+                    "error": error.localizedDescription,
+                ], subsystem: "WorkoutReading")
                 DispatchQueue.main.async {
                     result(FlutterError(code: "FETCH_ERROR", message: error.localizedDescription, details: nil))
                 }
@@ -404,8 +592,17 @@ class WorkoutServiceChannel: NSObject {
         var workoutsJson: [String] = []
         var anchor: HKQueryAnchor? = nil
         var results: HKAnchoredObjectQueryDescriptor<HKWorkout>.Result
+        var batchNumberRaw = 0
+
+        SleepRemoteLogger.log(.info, step: "fetchAllRaw.start", message: "starting fetchAllWorkoutsRaw", context: [
+            "class": "WorkoutServiceChannel",
+            "method": "fetchAllWorkoutsRaw",
+            "startDate": startDate.description,
+            "endDate": endDate.description,
+        ], subsystem: "WorkoutReading")
 
         repeat {
+            batchNumberRaw += 1
             let anchorDescriptor = HKAnchoredObjectQueryDescriptor(
                 predicates: [.workout(predicate)],
                 anchor: anchor,
@@ -413,18 +610,44 @@ class WorkoutServiceChannel: NSObject {
             )
             results = try await anchorDescriptor.result(for: healthStore)
             anchor = results.newAnchor
+            SleepRemoteLogger.log(.info, step: "fetchAllRaw.batch", message: "batch fetched", context: [
+                "class": "WorkoutServiceChannel",
+                "method": "fetchAllWorkoutsRaw",
+                "batch": batchNumberRaw,
+                "count": results.addedSamples.count,
+            ], subsystem: "WorkoutReading")
 
             for workout in results.addedSamples {
-                guard workout.endDate > workout.startDate else { continue }
+                guard workout.endDate > workout.startDate else {
+                    SleepRemoteLogger.log(.warn, step: "fetchAllRaw.skip", message: "skipping incomplete workout", context: [
+                        "class": "WorkoutServiceChannel",
+                        "method": "fetchAllWorkoutsRaw",
+                        "uuid": workout.uuid.uuidString,
+                        "reason": "endDate <= startDate",
+                    ], subsystem: "WorkoutReading")
+                    continue
+                }
                 if let huWorkout = try? await processWorkout(workout),
                    let jsonData = huWorkout.toJson(),
                    let jsonString = String(data: jsonData, encoding: .utf8) {
                     workoutsJson.append(jsonString)
+                    SleepRemoteLogger.log(.info, step: "fetchAllRaw.payload", message: "workout payload ready", context: [
+                        "class": "WorkoutServiceChannel",
+                        "method": "fetchAllWorkoutsRaw",
+                        "uuid": huWorkout.deviceActivityId,
+                        "payload": jsonString,
+                    ], subsystem: "WorkoutReading")
                 }
             }
         } while results.addedSamples.count == workoutAnchoredBatchLimit
 
         debugPrint("Read Workouts: fetchAllWorkoutsRaw returning \(workoutsJson.count) workout(s)")
+        SleepRemoteLogger.log(.info, step: "fetchAllRaw.complete", message: "fetchAllWorkoutsRaw complete", context: [
+            "class": "WorkoutServiceChannel",
+            "method": "fetchAllWorkoutsRaw",
+            "totalBatches": batchNumberRaw,
+            "totalWorkouts": workoutsJson.count,
+        ], subsystem: "WorkoutReading")
         return workoutsJson
     }
 

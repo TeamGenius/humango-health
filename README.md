@@ -2,7 +2,7 @@
 
 A comprehensive Flutter plugin for integrating iOS HealthKit and WorkoutKit functionalities natively into the Humango platform.
 
-> **Version 0.0.27** — See [CHANGELOG](CHANGELOG.md) for what's new.
+> **Version 0.0.28** — See [CHANGELOG](CHANGELOG.md) for what's new.
 
 ## Table of Contents
 
