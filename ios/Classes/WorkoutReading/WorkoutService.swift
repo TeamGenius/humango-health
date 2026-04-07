@@ -85,7 +85,7 @@ final class WorkoutService: AppLifecycleObserver {
         SleepRemoteLogger.log(.info, step: "enterBackgroundMode", message: "entering background mode", context: [
             "class": "WorkoutService",
             "method": "enterBackgroundMode",
-            "activeRouteServices": activeRouteCount,
+            "activeRouteServices": "\(activeRouteCount)",
         ], subsystem: "WorkoutService")
         stopLiveUpdates()
         startBackgroundMonitoring()
@@ -110,7 +110,7 @@ final class WorkoutService: AppLifecycleObserver {
         SleepRemoteLogger.log(.info, step: "enterForegroundMode", message: "entering foreground mode", context: [
             "class": "WorkoutService",
             "method": "enterForegroundMode",
-            "activeRouteServices": activeRouteCount,
+            "activeRouteServices": "\(activeRouteCount)",
         ], subsystem: "WorkoutService")
         stopBackgroundMonitoring()
         startLiveUpdates()
@@ -166,7 +166,7 @@ final class WorkoutService: AppLifecycleObserver {
                     SleepRemoteLogger.log(.info, step: "liveUpdates.update", message: "live stream update received", context: [
                         "class": "WorkoutService",
                         "method": "startLiveUpdates",
-                        "count": count,
+                        "count": "\(count)",
                     ], subsystem: "WorkoutService")
                     for w in update.addedSamples {
                         debugPrint("[Humango] WorkoutService: live workout received — uuid=\(w.uuid.uuidString) type=\(w.workoutActivityType.name) start=\(w.startDate) end=\(w.endDate)")
@@ -238,7 +238,7 @@ final class WorkoutService: AppLifecycleObserver {
             SleepRemoteLogger.log(.info, step: "fetchWorkouts.result", message: "snapshot fetch returned workouts", context: [
                 "class": "WorkoutService",
                 "method": "fetchWorkouts",
-                "count": result.addedSamples.count,
+                "count": "\(result.addedSamples.count)",
             ], subsystem: "WorkoutService")
             for workout in result.addedSamples {
                 debugPrint("[Humango] WorkoutService: fetchWorkouts — handling uuid=\(workout.uuid.uuidString) type=\(workout.workoutActivityType.name)")
@@ -361,8 +361,8 @@ final class WorkoutService: AppLifecycleObserver {
             "method": "handleWorkouts",
             "uuid": deviceId,
             "type": workout.workoutActivityType.name,
-            "ageMinutes": ageMinutes,
-            "isRecent": isRecent,
+            "ageMinutes": "\(ageMinutes)",
+            "isRecent": "\(isRecent)",
         ], subsystem: "WorkoutService")
 
         Task {
@@ -407,7 +407,7 @@ final class WorkoutService: AppLifecycleObserver {
                     "class": "WorkoutService",
                     "method": "handleWorkouts",
                     "uuid": deviceId,
-                    "ageMinutes": ageMinutes,
+                    "ageMinutes": "\(ageMinutes)",
                 ], subsystem: "WorkoutService")
                 await routeService.fetchWorkoutRoute()
                 debugPrint("[Humango] WorkoutService: handleWorkouts — one-shot fetch complete for uuid=\(deviceId)")

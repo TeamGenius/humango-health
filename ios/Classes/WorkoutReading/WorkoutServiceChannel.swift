@@ -81,7 +81,7 @@ class WorkoutServiceChannel: NSObject {
                 SleepRemoteLogger.log(.info, step: "readWorkouts.complete", message: "readWorkouts completed", context: [
                     "class": "WorkoutServiceChannel",
                     "method": "handleReadWorkouts",
-                    "count": workoutsJson.count,
+                    "count": "\(workoutsJson.count)",
                 ], subsystem: "WorkoutReading")
                 DispatchQueue.main.async {
                     result(workoutsJson)
@@ -140,8 +140,8 @@ class WorkoutServiceChannel: NSObject {
             SleepRemoteLogger.log(.info, step: "fetchBatched.batch", message: "batch fetched", context: [
                 "class": "WorkoutServiceChannel",
                 "method": "fetchWorkoutsBatched",
-                "batch": batchNumber,
-                "count": results.addedSamples.count,
+                "batch": "\(batchNumber)",
+                "count": "\(results.addedSamples.count)",
             ], subsystem: "WorkoutReading")
             
             // Process each workout in the batch
@@ -211,8 +211,8 @@ class WorkoutServiceChannel: NSObject {
         SleepRemoteLogger.log(.info, step: "fetchBatched.complete", message: "batched fetch complete", context: [
             "class": "WorkoutServiceChannel",
             "method": "fetchWorkoutsBatched",
-            "totalBatches": batchNumber,
-            "totalWorkouts": workoutsJson.count,
+            "totalBatches": "\(batchNumber)",
+            "totalWorkouts": "\(workoutsJson.count)",
         ], subsystem: "WorkoutReading")
         return workoutsJson
     }
@@ -241,8 +241,8 @@ class WorkoutServiceChannel: NSObject {
                 "class": "WorkoutServiceChannel",
                 "method": "processWorkout",
                 "uuid": uuid,
-                "totalSamples": totalSamples,
-                "seriesTypes": series.count,
+                "totalSamples": "\(totalSamples)",
+                "seriesTypes": "\(series.count)",
             ], subsystem: "WorkoutReading")
         } catch {
             debugPrint("Read Workouts: Warning - failed to fetch quantity series for \(uuid): \(error)")
@@ -264,7 +264,7 @@ class WorkoutServiceChannel: NSObject {
                 "class": "WorkoutServiceChannel",
                 "method": "processWorkout",
                 "uuid": uuid,
-                "routeCount": routes.count,
+                "routeCount": "\(routes.count)",
             ], subsystem: "WorkoutReading")
         } catch {
             debugPrint("Read Workouts: Warning - failed to fetch routes for \(uuid): \(error)")
@@ -284,7 +284,7 @@ class WorkoutServiceChannel: NSObject {
                 "class": "WorkoutServiceChannel",
                 "method": "processWorkout",
                 "uuid": uuid,
-                "locationCount": locations.count,
+                "locationCount": "\(locations.count)",
             ], subsystem: "WorkoutReading")
         } catch {
             debugPrint("Read Workouts: Warning - failed to build route data for \(uuid): \(error)")
@@ -330,8 +330,8 @@ class WorkoutServiceChannel: NSObject {
             "method": "processWorkout",
             "uuid": uuid,
             "type": workout.workoutActivityType.name,
-            "locationCount": locations.count,
-            "totalSamples": series.reduce(0) { $0 + $1.count },
+            "locationCount": "\(locations.count)",
+            "totalSamples": "\(series.reduce(0) { $0 + $1.count })",
             "payload": payloadString,
         ], subsystem: "WorkoutReading")
         
@@ -365,7 +365,7 @@ class WorkoutServiceChannel: NSObject {
             "class": "WorkoutServiceChannel",
             "method": "fetchWorkoutRoutes",
             "uuid": routeUUID,
-            "routeCount": result.addedSamples.count,
+            "routeCount": "\(result.addedSamples.count)",
         ], subsystem: "WorkoutReading")
         
         return result.addedSamples
@@ -376,7 +376,7 @@ class WorkoutServiceChannel: NSObject {
         SleepRemoteLogger.log(.info, step: "buildRouteData.start", message: "building route location data", context: [
             "class": "WorkoutServiceChannel",
             "method": "buildRouteData",
-            "routeCount": routes.count,
+            "routeCount": "\(routes.count)",
         ], subsystem: "WorkoutReading")
         var allPoints: [CLLocation] = []
         for route in routes {
@@ -392,7 +392,7 @@ class WorkoutServiceChannel: NSObject {
         SleepRemoteLogger.log(.info, step: "buildRouteData.complete", message: "route location data built", context: [
             "class": "WorkoutServiceChannel",
             "method": "buildRouteData",
-            "totalLocations": allPoints.count,
+            "totalLocations": "\(allPoints.count)",
         ], subsystem: "WorkoutReading")
         return allPoints
     }
@@ -526,9 +526,9 @@ class WorkoutServiceChannel: NSObject {
         SleepRemoteLogger.log(.info, step: "setImportPreferences", message: "import preferences updated", context: [
             "class": "WorkoutServiceChannel",
             "method": "handleSetImportPreferences",
-            "running": running,
-            "cycling": cycling,
-            "swimming": swimming,
+            "running": "\(running)",
+            "cycling": "\(cycling)",
+            "swimming": "\(swimming)",
         ], subsystem: "WorkoutReading")
         result(nil)
     }
@@ -568,7 +568,7 @@ class WorkoutServiceChannel: NSObject {
                 SleepRemoteLogger.log(.info, step: "fetchAllWorkouts.complete", message: "fetchAllWorkouts completed", context: [
                     "class": "WorkoutServiceChannel",
                     "method": "handleFetchAllWorkouts",
-                    "count": workoutsJson.count,
+                    "count": "\(workoutsJson.count)",
                 ], subsystem: "WorkoutReading")
                 DispatchQueue.main.async {
                     result(workoutsJson)
@@ -613,8 +613,8 @@ class WorkoutServiceChannel: NSObject {
             SleepRemoteLogger.log(.info, step: "fetchAllRaw.batch", message: "batch fetched", context: [
                 "class": "WorkoutServiceChannel",
                 "method": "fetchAllWorkoutsRaw",
-                "batch": batchNumberRaw,
-                "count": results.addedSamples.count,
+                "batch": "\(batchNumberRaw)",
+                "count": "\(results.addedSamples.count)",
             ], subsystem: "WorkoutReading")
 
             for workout in results.addedSamples {
@@ -645,8 +645,8 @@ class WorkoutServiceChannel: NSObject {
         SleepRemoteLogger.log(.info, step: "fetchAllRaw.complete", message: "fetchAllWorkoutsRaw complete", context: [
             "class": "WorkoutServiceChannel",
             "method": "fetchAllWorkoutsRaw",
-            "totalBatches": batchNumberRaw,
-            "totalWorkouts": workoutsJson.count,
+            "totalBatches": "\(batchNumberRaw)",
+            "totalWorkouts": "\(workoutsJson.count)",
         ], subsystem: "WorkoutReading")
         return workoutsJson
     }

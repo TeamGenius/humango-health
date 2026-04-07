@@ -358,8 +358,8 @@ class RouteService {
                 "method": "handleCompleteWorkout",
                 "uuid": workout.uuid.uuidString,
                 "type": workout.workoutActivityType.name,
-                "locationCount": location.count,
-                "totalSamples": series.reduce(0) { $0 + $1.count },
+                "locationCount": "\(location.count)",
+                "totalSamples": "\(series.reduce(0) { $0 + $1.count })",
                 "payload": payloadString,
             ], subsystem: "WorkoutReading")
 
@@ -393,7 +393,7 @@ class RouteService {
                 "class": "RouteService",
                 "method": "pushWorkout",
                 "uuid": deviceId,
-                "delegatePresent": true,
+                "delegatePresent": "true",
                 "payload": payloadString,
             ], subsystem: "WorkoutReading")
             await delegate.onWorkoutReady(workout: finalWorkout, deviceId: deviceId)
