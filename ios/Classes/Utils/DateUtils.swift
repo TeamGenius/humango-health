@@ -49,7 +49,14 @@ struct DateUtils {
         
         // Strip trailing Z for custom formatters if present
         let cleanString = string.hasSuffix("Z") ? String(string.dropLast()) : string
-        
+
+        // Warn when the string has no timezone designator (no Z, no +hh:mm).
+        // This means the caller sent a local time that will be interpreted as UTC — a silent timezone bug.
+        let hasTimezoneDesignator = string.hasSuffix("Z") || string.contains("+") || (string.count > 19 && string.dropFirst(19).contains("-"))
+        if !hasTimezoneDesignator {
+            print("⚠️ [DateUtils] timezone-naive string '\(string)' — interpreting as UTC. Callers must use toUtc().toIso8601String().")
+        }
+
         // Dart specific fallbacks
         if let date = customFormatterMicro.date(from: cleanString) {
             return date

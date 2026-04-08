@@ -1,3 +1,23 @@
+## 0.0.29 — 2026-04-08
+
+### Bug Fixes
+
+#### Sleep Data — incorrect query window when dates are passed from a non-UTC device timezone
+
+`SleepDataManager.getSleepData`, `calculateSleepPayload`, and `startSleepMonitoring` all receive date arguments serialised by Dart over the Flutter method channel. The Dart SDK's `DateTime.toIso8601String()` emits a timezone-naive string (e.g. `"2026-04-06T18:00:00.000000"`) when called on a local `DateTime`. Swift's `ISO8601DateFormatter` rejects strings without a timezone designator and `DateUtils.parseDate` falls through to a UTC `DateFormatter`, silently interpreting the local time as UTC. On a device in IST (+5:30) this shifts the HealthKit query window 5 h 30 m into the future, causing the first ~55 minutes of sleep samples to fall outside the query range and be excluded.
+
+**Consequence for the reported session (Apr 06–07, IST):** The query started at 18:00 UTC (23:30 IST) instead of 18:00 IST (12:30 UTC), excluding 4 samples covering 10:34 PM – 11:29 PM IST. Only 29 of 33 samples were returned, reporting 6 h 24 m instead of ≈ 7 h 15 m.
+
+**Fix:** All three method-channel call sites in `sleep_data_manager.dart` now call `.toUtc().toIso8601String()`, producing a `Z`-suffixed string that `ISO8601DateFormatter` parses correctly regardless of device timezone.
+
+Additionally, `DateUtils.parseDate` now emits a `⚠️` console warning whenever it receives a timezone-naive string, making this class of bug immediately visible in the Xcode console for future callers.
+
+**Changed in:**
+- `lib/src/managers/sleep_data_manager.dart` — `getSleepData`, `startMonitoring`, `calculateSleepPayload`
+- `ios/Classes/Utils/DateUtils.swift` — `parseDate`
+
+---
+
 ## 0.0.28 — 2026-04-07
 
 ### Bug Fixes

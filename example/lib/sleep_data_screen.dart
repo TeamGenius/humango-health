@@ -156,31 +156,64 @@ class _SleepDataScreenState extends State<SleepDataScreen> {
 
   Future<void> _selectCustomDateRange() async {
     final now = DateTime.now();
-    final pickedStart = await showDatePicker(
+
+    // --- Start date ---
+    final pickedStartDate = await showDatePicker(
       context: context,
       initialDate: _customStartDate ?? now.subtract(const Duration(days: 1)),
       firstDate: now.subtract(const Duration(days: 365)),
       lastDate: now,
       helpText: 'Select start date',
     );
+    if (pickedStartDate == null || !mounted) return;
 
-    if (pickedStart == null || !mounted) return;
+    final pickedStartTime = await showTimePicker(
+      context: context,
+      initialTime: _customStartDate != null
+          ? TimeOfDay.fromDateTime(_customStartDate!)
+          : const TimeOfDay(hour: 18, minute: 0),
+      helpText: 'Select start time',
+    );
+    if (pickedStartTime == null || !mounted) return;
 
-    final pickedEnd = await showDatePicker(
+    final combinedStart = DateTime(
+      pickedStartDate.year,
+      pickedStartDate.month,
+      pickedStartDate.day,
+      pickedStartTime.hour,
+      pickedStartTime.minute,
+    );
+
+    // --- End date ---
+    final pickedEndDate = await showDatePicker(
       context: context,
       initialDate: _customEndDate ?? now,
-      firstDate: pickedStart,
+      firstDate: pickedStartDate,
       lastDate: now,
       helpText: 'Select end date',
     );
+    if (pickedEndDate == null || !mounted) return;
 
-    if (pickedEnd == null || !mounted) return;
+    final pickedEndTime = await showTimePicker(
+      context: context,
+      initialTime: _customEndDate != null
+          ? TimeOfDay.fromDateTime(_customEndDate!)
+          : TimeOfDay.fromDateTime(now),
+      helpText: 'Select end time',
+    );
+    if (pickedEndTime == null || !mounted) return;
+
+    final combinedEnd = DateTime(
+      pickedEndDate.year,
+      pickedEndDate.month,
+      pickedEndDate.day,
+      pickedEndTime.hour,
+      pickedEndTime.minute,
+    );
 
     setState(() {
-      _customStartDate = pickedStart;
-      _customEndDate = pickedEnd.add(
-        const Duration(hours: 23, minutes: 59, seconds: 59),
-      );
+      _customStartDate = combinedStart;
+      _customEndDate = combinedEnd;
       _selectedRange = 'Custom';
     });
     _fetchSleepData();
@@ -409,7 +442,9 @@ class _SleepDataScreenState extends State<SleepDataScreen> {
                 child: ChoiceChip(
                   label: Text(
                     range == 'Custom' && _customStartDate != null
-                        ? '${_customStartDate!.month}/${_customStartDate!.day} - ${_customEndDate!.month}/${_customEndDate!.day}'
+                        ? '${_customStartDate!.month}/${_customStartDate!.day} ${_customStartDate!.hour.toString().padLeft(2, '0')}:${_customStartDate!.minute.toString().padLeft(2, '0')}'
+                              ' – '
+                              '${_customEndDate!.month}/${_customEndDate!.day} ${_customEndDate!.hour.toString().padLeft(2, '0')}:${_customEndDate!.minute.toString().padLeft(2, '0')}'
                         : range,
                   ),
                   selected: _selectedRange == range,

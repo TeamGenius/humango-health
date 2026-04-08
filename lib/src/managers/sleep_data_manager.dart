@@ -56,8 +56,8 @@ class SleepDataManager {
     try {
       final result = await _channel
           .invokeMethod<Map<dynamic, dynamic>>('getSleepData', {
-            'startDate': effectiveStartDate.toIso8601String(),
-            'endDate': effectiveEndDate.toIso8601String(),
+            'startDate': effectiveStartDate.toUtc().toIso8601String(),
+            'endDate': effectiveEndDate.toUtc().toIso8601String(),
           });
 
       if (result != null) {
@@ -93,7 +93,7 @@ class SleepDataManager {
     try {
       final result = await _channel.invokeMethod<Map<dynamic, dynamic>>(
         'startSleepMonitoring',
-        {'startDate': effectiveStartDate.toIso8601String()},
+        {'startDate': effectiveStartDate.toUtc().toIso8601String()},
       );
       return Map<String, dynamic>.from(result ?? {});
     } on PlatformException catch (e) {
@@ -135,8 +135,9 @@ class SleepDataManager {
     DateTime? endDate,
   }) async {
     final args = <String, String>{};
-    if (startDate != null) args['startDate'] = startDate.toIso8601String();
-    if (endDate != null) args['endDate'] = endDate.toIso8601String();
+    if (startDate != null)
+      args['startDate'] = startDate.toUtc().toIso8601String();
+    if (endDate != null) args['endDate'] = endDate.toUtc().toIso8601String();
 
     try {
       final result = await _channel.invokeMethod<Map<dynamic, dynamic>>(
