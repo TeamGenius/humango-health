@@ -31,7 +31,7 @@ A comprehensive Flutter plugin for integrating iOS HealthKit and WorkoutKit func
 | **Permission Handling** | Request, verify, and continuously monitor HealthKit permissions |
 | **Workout Scheduling** | Push workouts to Apple Watch via WorkoutKit with native deduplication |
 | **Workout Reading** | Real-time workout monitoring with foreground/background modes; completed workouts delivered via `HumangoHealthDataDelegate.onWorkoutReady(workout:deviceId:)` |
-| **Sleep Data** | Fetch and monitor sleep analysis; foreground (Descriptor) + background (Observer) monitoring; grouping-based `calculateSleepPayload` algorithm (gap ≤ 2 h, span ≥ 3 h); second-based precision for all durations; optimized 6 PM HealthKit query window; finalized sessions delivered via `HumangoHealthDataDelegate.onSleepSessionReady` |
+| **Sleep Data** | Fetch and monitor sleep analysis; foreground (Descriptor) + background (Observer) monitoring; grouping-based `calculateSleepPayload` algorithm (gap ≤ 2 h, span ≥ 3 h); Apple-platform source priority (Watch/Health app over third-party, identified by bundle prefix `com.apple.health`); second-based precision for all durations; optimized 6 PM HealthKit query window; finalized sessions delivered via `HumangoHealthDataDelegate.onSleepSessionReady` |
 | **Health Metrics (HRV, RHR, etc.)** | On-demand fetch via `HealthMetricsManager.fetchHealthMetric` (Flutter + native iOS); background monitoring via `HumangoHealthPlugin.shared.startMetricsMonitoring` (native iOS); delivery via `HumangoHealthDataDelegate.onHealthMetricReady` (re-fetched current-day, not delta) |
 | **Delegate Delivery** | Workouts and finalized sleep sessions are pushed through **`HumangoHealthDataDelegate`** — no plugin-owned payload queues or HTTP |
 | **Native Lifecycle Management** | Centralized iOS app lifecycle detection for automatic mode switching |
@@ -1186,6 +1186,7 @@ The plugin provides comprehensive access to Apple HealthKit's sleep analysis dat
 - **Foreground monitoring**: `HKAnchoredObjectQueryDescriptor` accumulates samples into session state while the app is active
 - **Background monitoring**: `HKObserverQuery` detects changes; raw samples are processed by `calculateSleepPayload` and the finalized session is delivered via delegate
 - **Grouping algorithm**: Samples are sorted, grouped by gap (≤ 2 h), short groups (span < 3 h) discarded, and remaining groups aggregated — filters out wrist-worn noise and fragmented readings
+- **Source priority**: When samples from multiple sources are present, Apple-platform sources (bundle prefix `com.apple.health`) take priority and all third-party samples are discarded before aggregation. The Watch is matched by its bundle ID (`com.apple.health.<device-UUID>`), not its user-assigned name. If no Apple-platform samples exist, all samples are used.
 - **Session-aware delivery**: When the HealthKit observer fires, the 6PM window is fetched, grouped, and if valid the finalized payload JSON is passed to `HumangoHealthDataDelegate.onSleepSessionReady(json:sessionId:)` in your iOS Runner; a deduplication guard prevents re-delivery if the session is unchanged
 
 ### Sleep Stages (iOS 16+)

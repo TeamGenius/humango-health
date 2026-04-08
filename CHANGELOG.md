@@ -1,5 +1,24 @@
 ## 0.0.29 — 2026-04-08
 
+### Features
+
+#### Sleep Data — Apple-platform source priority filter in `buildAggregatedPayload`
+
+When HealthKit contains sleep samples from multiple sources (e.g. Apple Watch alongside a third-party app such as Garmin Connect or Oura), the aggregation now discards all non-Apple samples before grouping and winner-selection. Apple-platform sources are identified by their **bundle ID prefix** (`com.apple.health`), which covers:
+
+- **Apple Watch** — `com.apple.health.<device-UUID>` (the UUID is assigned at Watch pairing time and does not change even if the user renames their Watch)
+- **iPhone Health app** — `com.apple.health`
+
+The source *name* (e.g. "Hardik's Apple Watch") is explicitly **not** used for identification because it is user-editable and unreliable.
+
+Fallback: if no Apple-platform samples are present, all samples are used as before (third-party-only scenario).
+
+A `debugPrint` line is emitted whenever third-party samples are dropped, logging the discarded bundle IDs.
+
+**Changed in:** `ios/Classes/SleepData/SleepDataManager.swift` — `buildAggregatedPayload`
+
+---
+
 ### Bug Fixes
 
 #### Sleep Data — incorrect query window when dates are passed from a non-UTC device timezone
