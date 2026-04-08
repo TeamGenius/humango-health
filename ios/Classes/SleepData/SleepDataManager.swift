@@ -672,10 +672,42 @@ public class SleepDataManager: NSObject, AppLifecycleObserver {
     /// Groups samples by source name. Picks source with highest TOTAL_SLEEP (Core+Deep+REM).
     /// Matches the SleepResult.toDict() shape from the legacy humango-mobile app,
     /// with the addition of SOURCE_BUNDLE, TIMEZONE, BED_TIME and WAKE_TIME.
+    ///
+    /// Source priority: if ANY sample originates from an Apple-platform source
+    /// (bundle prefix `com.apple.health`) — which covers both the user's Apple Watch
+    /// (`com.apple.health.<device-UUID>`) and the iPhone Health app (`com.apple.health`)
+    /// regardless of the user-visible device name — all third-party samples are discarded
+    /// before aggregation. If no Apple samples exist, all samples are used (third-party only).
     private func buildAggregatedPayload(samples: [HKCategorySample], queryStart: Date, queryEnd: Date) -> [String: Any]? {
+        // --- Source priority filter ---
+        // Bundle IDs are stable regardless of user-assigned device names:
+        //   Apple Watch  → "com.apple.health.<device-UUID>"
+        //   iPhone Health app → "com.apple.health"
+        //   Third-party apps → any other prefix (e.g. "com.garmin.connect")
+        // When Apple-platform samples are present, ignore all third-party samples.
+        let appleSamples = samples.filter {
+            $0.sourceRevision.source.bundleIdentifier.hasPrefix("com.apple.health")
+        }
+        let activeSamples: [HKCategorySample]
+        if appleSamples.isEmpty {
+            activeSamples = samples
+            debugPrint("\u{1F6CF}\u{FE0F} [SleepDataManager] buildAggregatedPayload: no Apple source — using all \(samples.count) sample(s)")
+        } else {
+            activeSamples = appleSamples
+            let droppedCount = samples.count - appleSamples.count
+            if droppedCount > 0 {
+                let droppedBundles = Set(
+                    samples
+                        .filter { !$0.sourceRevision.source.bundleIdentifier.hasPrefix("com.apple.health") }
+                        .map { $0.sourceRevision.source.bundleIdentifier }
+                )
+                debugPrint("\u{1F6CF}\u{FE0F} [SleepDataManager] buildAggregatedPayload: dropped \(droppedCount) third-party sample(s) from: \(droppedBundles.joined(separator: ", "))")
+            }
+        }
+
         // --- Group by source name ---
         var bySource: [String: [HKCategorySample]] = [:]
-        for s in samples {
+        for s in activeSamples {
             let name = s.sourceRevision.source.name
             bySource[name, default: []].append(s)
         }
