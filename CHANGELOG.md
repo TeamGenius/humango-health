@@ -1,3 +1,51 @@
+## 0.0.31 — 2026-04-09
+
+### Features
+
+#### Workout Push — `ELLIPTICAL` sport added
+
+**`Sport` enum** (`ios/Classes/WorkoutScheduling/WorkoutInstanceModel.swift`)**
+
+- Added `case elliptical = "ELLIPTICAL"` to the Swift `Sport` enum.
+- Added `.elliptical: return .elliptical` mapping in `hkWorkoutType` — routes to `HKWorkoutActivityType.elliptical` on Apple Watch.
+
+**`AppleSport` enum** (`lib/src/models/enums/workout_enums.dart`)**
+
+- Added `elliptical` case to `AppleSport`.
+- `AppleSport.elliptical.jsonValue` → `'ELLIPTICAL'`
+- `AppleSportExtension.fromJsonValue('ELLIPTICAL')` → `AppleSport.elliptical`
+
+#### Workout Push — example app scenario buttons for HIKING · ELLIPTICAL · ROWING · HIIT · WALKING
+
+**`WorkoutPushScreen`** (`example/lib/workout_push_screen.dart`)**
+
+Five new real-backend workout scenarios added to the push screen test harness, each using `dateOffset: Duration(minutes: 15)` so the scheduled time is always ~15 minutes ahead of tap time:
+
+| Button label | `schedule_id` | Sport | `workout_id` |
+|---|---|---|---|
+| HPH Hiking Tempo Intervals | `46002051` | `HIKING` | `902151` |
+| HPH Elliptical Tempo Intervals | `46002052` | `ELLIPTICAL` | `902139` |
+| HPH Rowing Tempo Intervals | `46002053` | `ROWING` | `902133` |
+| HPH HIIT Tempo Intervals | `46002054` | `HIIT` | `902145` |
+| HPH Walking Tempo Intervals | `46002055` | `WALKING` | `902127` |
+
+All five scenarios share the same WARMUP → REPEAT(INTERVAL × 600 s + RECOVERY × 180 s) × 2 → COOLDOWN structure with HR zone targets.
+
+**`_Scenario` class** — added `dateOffset` field (`Duration`, defaults to `const Duration(hours: 2)`) so scenarios can specify how far ahead to schedule without touching `preserveDates`. `_pushWorkouts` and `_buildScenarioButton` updated accordingly.
+
+### Bug Fixes
+
+#### Workout Push — JSON decode crash for workouts with unknown block-level `sport` values (e.g. `RUCKING`)
+
+**`WorkoutInstanceModelBlock` / `BlockBlock`** (`ios/Classes/WorkoutScheduling/WorkoutInstanceModel.swift`)**
+
+- Changed `sport: Sport?` → `sport: String?` in both `WorkoutInstanceModelBlock` and `BlockBlock`.
+- **Root cause:** Block-level `"sport"` fields containing backend-only values not in the `Sport` enum (e.g. `"RUCKING"`) caused `JSONDecoder` to throw `DecodingError.dataCorruptedError`, silently aborting the entire decode. The log trail cut off immediately after `jsonData … bytes` with no native scheduling following.
+- **Impact:** Only `WorkoutInstanceModelElement.sport` (the top-level field, still `Sport`) drives `HKWorkoutActivityType` selection; block-level sport is unused by the builder, so `String?` is the correct type.
+- **Verification:** Decoding a workout whose blocks carry `"sport": "RUCKING"` now succeeds; the workout is built and scheduled on Apple Watch as the top-level sport (e.g. `HIKING`).
+
+---
+
 ## 0.0.30 — 2026-04-09
 
 ### Features

@@ -2,7 +2,7 @@
 
 A comprehensive Flutter plugin for integrating iOS HealthKit and WorkoutKit functionalities natively into the Humango platform.
 
-> **Version 0.0.30** — See [CHANGELOG](CHANGELOG.md) for what's new.
+> **Version 0.0.31** — See [CHANGELOG](CHANGELOG.md) for what's new.
 
 ## Table of Contents
 
@@ -707,6 +707,7 @@ void scheduleWorkouts() async {
 | `handball` | `HANDBALL` | `.handball` |
 | `basketball` | `BASKETBALL` | `.basketball` |
 | `multisport` | `MULTISPORT` | `.swimBikeRun` |
+| `elliptical` | `ELLIPTICAL` | `.elliptical` |
 
 ### Swimming Workouts & Pool Size
 

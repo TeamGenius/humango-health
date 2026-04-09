@@ -100,6 +100,7 @@ enum AppleSport {
   handball,
   basketball,
   multisport,
+  elliptical,
 }
 
 extension AppleSportExtension on AppleSport {
@@ -164,6 +165,8 @@ extension AppleSportExtension on AppleSport {
         return 'BASKETBALL';
       case AppleSport.multisport:
         return 'MULTISPORT';
+      case AppleSport.elliptical:
+        return 'ELLIPTICAL';
     }
   }
 
@@ -228,6 +231,8 @@ extension AppleSportExtension on AppleSport {
         return AppleSport.basketball;
       case 'MULTISPORT':
         return AppleSport.multisport;
+      case 'ELLIPTICAL':
+        return AppleSport.elliptical;
       default:
         return null;
     }
