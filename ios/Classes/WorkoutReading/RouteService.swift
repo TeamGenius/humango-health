@@ -328,10 +328,30 @@ class RouteService {
             dictMetaData["dataSource"] = workout.sourceRevision.source.name
             dictMetaData["iosVersion"] = ProcessInfo.processInfo.operatingSystemVersionString
 
-            let scheduledWorkoutId = await getScheduledWorkoutId(workout)
-            dictMetaData["isScheduledWorkout"] = scheduledWorkoutId != nil
-            if let scheduleId = scheduledWorkoutId {
-                dictMetaData["scheduledWorkoutId"] = scheduleId
+            // Resolve scheduleId via WorkoutPlan ID (primary), fall back to date+type matching
+            let workoutPlan = try? await workout.workoutPlan
+            if let workoutPlan = workoutPlan {
+                let planIdStr = workoutPlan.id.uuidString
+                debugPrint("[RouteService] workoutPlanId: \(planIdStr)")
+                if let scheduleId = ScheduledWorkoutStore.shared.findWorkoutByPlanId(planIdStr) {
+                    dictMetaData["isScheduledWorkout"] = true
+                    dictMetaData["scheduledWorkoutId"] = scheduleId
+                    debugPrint("[RouteService] matched scheduleId: \(scheduleId) via planId: \(planIdStr)")
+                } else {
+                    dictMetaData["isScheduledWorkout"] = false
+                    debugPrint("[RouteService] workoutPlanId: \(planIdStr) — no matching scheduleId in store")
+                }
+            } else {
+                // Fallback: date+type matching for workouts without a WorkoutPlan
+                debugPrint("[RouteService] workoutPlanId: nil — falling back to date+type matching")
+                let scheduledWorkoutId = await getScheduledWorkoutId(workout)
+                dictMetaData["isScheduledWorkout"] = scheduledWorkoutId != nil
+                if let scheduleId = scheduledWorkoutId {
+                    dictMetaData["scheduledWorkoutId"] = scheduleId
+                    debugPrint("[RouteService] matched scheduleId: \(scheduleId) via date+type fallback")
+                } else {
+                    debugPrint("[RouteService] scheduledWorkoutId: nil — not a scheduled workout")
+                }
             }
 
             let huWorkout = HuWorkout(

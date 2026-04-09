@@ -147,7 +147,10 @@ class WorkoutServiceChannel: NSObject {
             // Process each workout in the batch
             for workout in results.addedSamples {
                 debugPrint("Read Workouts: Processing workout: \(workout.uuid.uuidString) type: \(workout.workoutActivityType.name)")
-                
+               debugPrint("Read Workouts: Processing workout:  metadata: \(workout.metadata)")
+               
+               let workoutPlan = try? await workout.workoutPlan
+               debugPrint("Read Workouts: Processing workout: workoutPlan: \(String(describing: workoutPlan))")
                 // Skip incomplete workouts
                 guard workout.endDate > workout.startDate else {
                     debugPrint("Read Workouts: Skipping incomplete workout: \(workout.uuid.uuidString)")
@@ -301,7 +304,21 @@ class WorkoutServiceChannel: NSObject {
         var dictMetaData = workout.metadata ?? [:]
         dictMetaData["dataSource"] = workout.sourceRevision.source.name
         dictMetaData["iosVersion"] = UIDevice.current.systemVersion
-        
+
+        // Resolve scheduleId via WorkoutPlan ID
+        if let workoutPlan = try? await workout.workoutPlan {
+            let planIdStr = workoutPlan.id.uuidString
+            if let scheduleId = ScheduledWorkoutStore.shared.findWorkoutByPlanId(planIdStr) {
+                dictMetaData["isScheduledWorkout"] = true
+                dictMetaData["scheduledWorkoutId"] = scheduleId
+                debugPrint("Read Workouts: processWorkout matched scheduleId: \(scheduleId) for planId: \(planIdStr)")
+            } else {
+                dictMetaData["isScheduledWorkout"] = false
+            }
+        } else {
+            dictMetaData["isScheduledWorkout"] = false
+        }
+
         debugPrint("Read Workouts: Creating HuWorkout with \(locations.count) locations and \(series.reduce(0) { $0 + $1.count }) samples")
         
         // Construct HuWorkout

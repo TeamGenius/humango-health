@@ -1,3 +1,83 @@
+## 0.0.30 — 2026-04-09
+
+### Features
+
+#### Workout Reading — WorkoutPlan-based scheduled workout matching
+
+**`WorkoutServiceChannel` (`ios/Classes/WorkoutReading/WorkoutServiceChannel.swift`)**
+
+- In `processWorkout`, resolves `scheduleId` from `ScheduledWorkoutStore` using `workout.workoutPlan.id` (Apple's `WorkoutKit` plan UUID) instead of fuzzy date+type matching.
+- Stamps `isScheduledWorkout` and `scheduledWorkoutId` into `dictMetaData`, which `HuWorkout.formatMetadata()` maps to `IS_SCHEDULED_WORKOUT` and `SCHEDULED_WORKOUT_ID` in the JSON payload.
+- Uses `try? await workout.workoutPlan` — safe, non-throwing; no impact on workouts without a plan.
+
+**`RouteService` (`ios/Classes/WorkoutReading/RouteService.swift`)**
+
+- `handleCompleteWorkout` now uses the same WorkoutPlan-based matching as `WorkoutServiceChannel`.
+- Primary path: fetches `workout.workoutPlan`, extracts `.id.uuidString`, calls `ScheduledWorkoutStore.shared.findWorkoutByPlanId(_:)`.
+- Falls back to the existing `getScheduledWorkoutId` (date+type) if `workoutPlan` is nil (pre-WorkoutKit workouts).
+- Added `debugPrint` at every branch logging `workoutPlanId` and `scheduledWorkoutId`.
+
+### Bug Fixes
+
+#### Workout Reading — `WorkoutStatistics` Dart parsing crash
+
+**`WorkoutData` (`lib/src/models/workout_data.dart`)**
+
+- Fixed crash: `type 'String' is not a subtype of type 'int' of 'index'` when fetching workouts.
+- Root cause: iOS sends `statistics` as `List<Map<String, Double>>` (e.g. `[{"HKQuantityTypeIdentifierHeartRate": 72.5}]`) but `WorkoutStatistics.fromJson` expected a `Map<String, dynamic>` and indexed it with string keys.
+- `WorkoutStatistics.fromJson` now accepts `dynamic`, flattens the iOS list into a `Map<String, double>` keyed by HealthKit identifiers, and retains backward compatibility with nested-map format.
+
+---
+
+
+**`AppleSport` enum** (`lib/src/models/enums/workout_enums.dart`)
+
+A new `AppleSport` enum with 28 cases mirrors the iOS native `Sport` enum exactly, eliminating hardcoded uppercase strings in push payloads. Two helpers via `AppleSportExtension`:
+
+- `jsonValue` — converts to the iOS raw string (`AppleSport.poolSwimming.jsonValue` → `'POOL_SWIMMING'`)
+- `fromJsonValue(String)` — reverse lookup; returns `null` for unknown values (forward-compatible)
+
+**`WorkoutPushEntry` class** (`lib/src/models/workout_push_entry.dart`) — new file
+
+`WorkoutPushManager.pushRawWorkouts` now accepts `List<WorkoutPushEntry>` instead of `List<Map<String, dynamic>>`. `WorkoutPushEntry` takes `scheduleId` and `sport` as typed fields alongside a raw `data` map (backend blob). `toMap()` stamps both into the serialized payload automatically.
+
+Before / after:
+
+```dart
+// Before (raw strings, typo-prone)
+await pushManager.pushRawWorkouts([
+  {'schedule_id': 'abc', 'sport': 'RUNNING', 'date': '...', 'blocks': [...]},
+]);
+
+// After (typed)
+await pushManager.pushRawWorkouts([
+  WorkoutPushEntry(
+    scheduleId: 'abc',
+    sport: AppleSport.running,
+    data: {'date': '...', 'blocks': [...]},
+  ),
+]);
+```
+
+**`ScheduledWorkoutInfo.sport`** (`lib/src/models/scheduled_workout_info.dart`)
+
+`getScheduledWorkouts()` now populates `AppleSport? sport` on each returned `ScheduledWorkoutInfo`. The native handler forwards the stored `sport` string from the local push record; `sport` is `null` only when a workout was not matched in the local push store.
+
+```dart
+final workouts = await pushManager.getScheduledWorkouts();
+print(workouts.first.sport?.jsonValue); // → 'RUNNING'
+```
+
+**Changed in:**
+- `lib/src/models/enums/workout_enums.dart` — `AppleSport` enum + `AppleSportExtension`
+- `lib/src/models/workout_push_entry.dart` *(new)*
+- `lib/src/managers/workout_push_manager.dart` — `pushRawWorkouts` signature changed to `List<WorkoutPushEntry>`
+- `lib/src/models/scheduled_workout_info.dart` — `AppleSport? sport` field added
+- `lib/humango_health.dart` — export `workout_push_entry.dart`
+- `ios/Classes/WorkoutScheduling/WorkoutPlanManager.swift` — forward `sport` key in `getScheduledWorkouts`
+
+---
+
 ## 0.0.29 — 2026-04-08
 
 ### Features

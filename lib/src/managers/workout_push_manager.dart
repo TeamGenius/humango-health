@@ -6,6 +6,7 @@
 import 'package:flutter/foundation.dart';
 import 'package:flutter/services.dart';
 import '../models/workout_push_authorization_result.dart';
+import '../models/workout_push_entry.dart';
 import '../models/workout_push_response.dart';
 import '../models/scheduled_workout_info.dart';
 import '../models/workout_removal_result.dart';
@@ -88,8 +89,11 @@ class WorkoutPushManager {
   /// Handles deduplication offline by calculating raw payload sizes, comparing
   /// dates, and extracting IDs.
   Future<WorkoutPushResponse> pushRawWorkouts(
-    List<Map<String, dynamic>> workouts,
+    List<WorkoutPushEntry> entries,
   ) async {
+    final List<Map<String, dynamic>> workouts = entries
+        .map((e) => e.toMap())
+        .toList();
     // Per-workout validation — collect failures, continue with valid ones
     final List<WorkoutPushResult> failedResults = [];
     final List<Map<String, dynamic>> validWorkouts = [];

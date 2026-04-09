@@ -1,3 +1,5 @@
+import 'enums/workout_enums.dart';
+
 /// Represents a workout that is currently scheduled on Apple Watch via WorkoutKit.
 class ScheduledWorkoutInfo {
   /// The unique identifier from WorkoutKit (UUID).
@@ -31,6 +33,10 @@ class ScheduledWorkoutInfo {
   /// SHA-256 hash of the stored JSON.
   final String? jsonHash;
 
+  /// The sport / activity type parsed from the push payload.
+  /// `null` if the workout was not matched with a local push record.
+  final AppleSport? sport;
+
   ScheduledWorkoutInfo({
     required this.id,
     this.workoutPlanId,
@@ -41,6 +47,7 @@ class ScheduledWorkoutInfo {
     this.activityType,
     this.workoutJson,
     this.jsonHash,
+    this.sport,
   });
 
   /// Creates a [ScheduledWorkoutInfo] from a native platform map.
@@ -65,11 +72,12 @@ class ScheduledWorkoutInfo {
       activityType: map['activityType'] as String?,
       workoutJson: workoutJson,
       jsonHash: map['jsonHash'] as String?,
+      sport: AppleSportExtension.fromJsonValue(map['sport'] as String? ?? ''),
     );
   }
 
   @override
   String toString() {
-    return 'ScheduledWorkoutInfo(id: $id, workoutPlanId: $workoutPlanId, scheduleId: $scheduleId, workoutId: $workoutId, scheduledDate: $scheduledDate, name: $name, activityType: $activityType, jsonHash: $jsonHash)';
+    return 'ScheduledWorkoutInfo(id: $id, workoutPlanId: $workoutPlanId, scheduleId: $scheduleId, workoutId: $workoutId, scheduledDate: $scheduledDate, name: $name, activityType: $activityType, sport: $sport, jsonHash: $jsonHash)';
   }
 }

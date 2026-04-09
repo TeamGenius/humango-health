@@ -964,7 +964,17 @@ class _WorkoutPushScreenState extends State<WorkoutPushScreen> {
         }
       }
 
-      final response = await _pushManager.pushRawWorkouts(mutable);
+      final List<WorkoutPushEntry> entries = mutable.map((m) {
+        return WorkoutPushEntry(
+          scheduleId: m['schedule_id']?.toString() ?? '',
+          sport:
+              AppleSportExtension.fromJsonValue(m['sport'] as String? ?? '') ??
+              AppleSport.running,
+          data: m,
+        );
+      }).toList();
+
+      final response = await _pushManager.pushRawWorkouts(entries);
 
       setState(() {
         _lastResponse = response;
@@ -1205,6 +1215,15 @@ class _WorkoutPushScreenState extends State<WorkoutPushScreen> {
                       Text(
                         'schedule_id: ${w.scheduleId}',
                         style: const TextStyle(fontSize: 11),
+                      ),
+                    if (w.sport != null)
+                      Text(
+                        'sport: ${w.sport!.jsonValue}',
+                        style: const TextStyle(
+                          fontSize: 11,
+                          color: Colors.deepPurple,
+                          fontWeight: FontWeight.w500,
+                        ),
                       ),
                     Text(
                       'planId: ${w.id}',

@@ -2,7 +2,7 @@
 
 A comprehensive Flutter plugin for integrating iOS HealthKit and WorkoutKit functionalities natively into the Humango platform.
 
-> **Version 0.0.29** — See [CHANGELOG](CHANGELOG.md) for what's new.
+> **Version 0.0.30** — See [CHANGELOG](CHANGELOG.md) for what's new.
 
 ## Table of Contents
 
@@ -616,6 +616,8 @@ for (final result in response.results) {
 
 The native deduplication engine compares the SHA-256 hash of the sorted-key JSON alongside the scheduled date, keyed by `schedule_id`, to ensure workouts aren't duplicated if users click sync multiple times.
 
+Use `WorkoutPushEntry` to build each entry — `scheduleId` and `sport` are typed fields so they can never be misspelled or wrong-cased. `data` is the raw backend JSON blob (must contain `date` and `blocks`).
+
 ```dart
 import 'package:humango_health/humango_health.dart';
 
@@ -623,21 +625,31 @@ final pushManager = WorkoutPushManager();
 
 void scheduleWorkouts() async {
 
-  // 1. Ingest raw backend JSON (List of Maps)
-  // All required fields: schedule_id, date, blocks
-  final List<Map<String, dynamic>> rawBackendJson = [
-    {
-      "schedule_id": 123456,
-      "date": DateTime.now().add(const Duration(hours: 2)).toIso8601String(),
-      "sport": "RUNNING",
-      "blocks": [
-        // ... (Humango specific Warmup/Interval/Cooldown definition)
-      ]
-    }
+  // 1. Build typed entries — no raw strings for sport or schedule_id
+  final List<WorkoutPushEntry> entries = [
+    WorkoutPushEntry(
+      scheduleId: '123456',
+      sport: AppleSport.running,                  // ← typed, maps to 'RUNNING' on iOS
+      data: {
+        'date': DateTime.now().add(const Duration(hours: 2)).toUtc().toIso8601String(),
+        'blocks': [
+          // ... (Humango specific Warmup/Interval/Cooldown definition)
+        ],
+      },
+    ),
+    WorkoutPushEntry(
+      scheduleId: '123457',
+      sport: AppleSport.poolSwimming,             // ← maps to 'POOL_SWIMMING' on iOS
+      data: {
+        'date': DateTime.now().add(const Duration(hours: 4)).toUtc().toIso8601String(),
+        'pool_size': '25m',
+        'blocks': [ /* ... */ ],
+      },
+    ),
   ];
 
-  // 2. Dispatch the raw maps natively
-  final response = await pushManager.pushRawWorkouts(rawBackendJson);
+  // 2. Dispatch — sport and schedule_id are stamped in automatically
+  final response = await pushManager.pushRawWorkouts(entries);
 
   // 3. Process the results
   for (final result in response.results) {
@@ -662,6 +674,39 @@ void scheduleWorkouts() async {
   }
 }
 ```
+
+#### `AppleSport` — all supported values
+
+| `AppleSport` case | iOS raw value | HKWorkoutActivityType |
+|---|---|---|
+| `running` | `RUNNING` | `.running` |
+| `cycling` | `CYCLING` | `.cycling` |
+| `swimming` | `SWIMMING` | `.swimming` |
+| `poolSwimming` | `POOL_SWIMMING` | `.swimming` (indoor) |
+| `openWaterSwimming` | `OPEN_WATER_SWIMMING` | `.swimming` (outdoor) |
+| `strength` | `STRENGTH` | `.traditionalStrengthTraining` |
+| `hiking` | `HIKING` | `.hiking` |
+| `walking` | `WALKING` | `.walking` |
+| `yoga` | `YOGA` | `.yoga` |
+| `paddling` | `PADDLING` | `.paddleSports` |
+| `alpineSkiing` | `ALPINE_SKIING` | `.downhillSkiing` |
+| `rowing` | `ROWING` | `.rowing` |
+| `cardio` | `CARDIO` | `.mixedCardio` |
+| `nordicSkiing` | `NORDIC_SKIING` | `.crossCountrySkiing` |
+| `snowshoeing` | `SNOWSHOEING` | `.snowSports` |
+| `hiit` | `HIIT` | `.highIntensityIntervalTraining` |
+| `hyrox` | `HYROX` | `.highIntensityIntervalTraining` |
+| `soccer` | `SOCCER` | `.soccer` |
+| `tennis` | `TENNIS` | `.tennis` |
+| `squash` | `SQUASH` | `.squash` |
+| `pickleball` | `PICKLEBALL` | `.pickleball` |
+| `badminton` | `BADMINTON` | `.badminton` |
+| `baseball` | `BASEBALL` | `.baseball` |
+| `hockey` | `HOCKEY` | `.hockey` |
+| `volleyball` | `VOLLEYBALL` | `.volleyball` |
+| `handball` | `HANDBALL` | `.handball` |
+| `basketball` | `BASKETBALL` | `.basketball` |
+| `multisport` | `MULTISPORT` | `.swimBikeRun` |
 
 ### Swimming Workouts & Pool Size
 
@@ -792,7 +837,7 @@ void fetchScheduledWorkouts() async {
   
   for (final workout in scheduledWorkouts) {
     print("📅 Scheduled: ${workout.name ?? 'Unnamed'}");
-    print("   Activity: ${workout.activityType}");
+    print("   Sport: ${workout.sport?.jsonValue ?? workout.activityType}"); // ← typed AppleSport
     print("   Date: ${workout.scheduledDate}");
     print("   Workout ID: ${workout.workoutId}");
   }
@@ -806,7 +851,8 @@ The `ScheduledWorkoutInfo` model provides:
 - `workoutId`: Your original `schedule_id` (if matched with local records)
 - `scheduledDate`: When the workout is scheduled
 - `name`: The workout name
-- `activityType`: The activity type (Running, Cycling, etc.)
+- `sport`: `AppleSport?` — typed enum, populated when the workout was pushed via `WorkoutPushEntry`; `null` if not matched in local store
+- `activityType`: The raw activity type string from WorkoutKit (e.g. `"Running"`) — always present
 - `workoutJson`: The full JSON payload that was scheduled (for comparison)
 - `jsonHash`: SHA-256 hex hash of the stored JSON payload
 

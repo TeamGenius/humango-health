@@ -178,6 +178,10 @@ public class WorkoutPlanManager: NSObject {
                     let jsonDict = storedRecord.workoutJson.mapValues { $0.value }
                     workoutInfo["workoutJson"] = jsonDict
                     workoutInfo["jsonHash"] = storedRecord.jsonHash
+                    // Forward the sport string so Dart can parse it into AppleSport
+                    if let sportString = storedRecord.workoutJson["sport"]?.value as? String {
+                        workoutInfo["sport"] = sportString
+                    }
                 }
             }
             
