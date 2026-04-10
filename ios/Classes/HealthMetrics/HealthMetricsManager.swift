@@ -193,6 +193,41 @@ public class HealthMetricsManager: NSObject {
         }
     }
 
+    // MARK: - Auto-Start on App Launch
+
+    /// Restarts monitors for all metric types that were previously enabled via
+    /// `startMetricsMonitoring(for:)`. Called from `startAllBackgroundMonitoring()`
+    /// on every app launch so persisted metric observers resume automatically.
+    ///
+    /// Skips if the user is not logged in, the delegate is unset, or no metric keys
+    /// are stored in `MonitoringConfig.enabledMetricKeys`.
+    func autoStartIfConfigured() {
+        guard UserAuthStateManager.shared.isLoggedIn else {
+            debugPrint("[Humango] HealthMetricsManager: autoStart skipped — user not logged in")
+            SleepRemoteLogger.log(.warn, step: "metrics.autoStart", message: "skipped — user not logged in", context: ["class": "HealthMetricsManager", "method": "autoStartIfConfigured"], subsystem: "HealthMetrics")
+            return
+        }
+        guard HumangoHealthPlugin.delegate != nil else {
+            debugPrint("[Humango] HealthMetricsManager: autoStart skipped — delegate nil")
+            SleepRemoteLogger.log(.warn, step: "metrics.autoStart", message: "skipped — delegate nil", context: ["class": "HealthMetricsManager", "method": "autoStartIfConfigured"], subsystem: "HealthMetrics")
+            return
+        }
+        let enabledKeys = MonitoringConfig.shared.enabledMetricKeys
+        guard !enabledKeys.isEmpty else {
+            debugPrint("[Humango] HealthMetricsManager: autoStart skipped — no metric types enabled")
+            SleepRemoteLogger.log(.info, step: "metrics.autoStart", message: "skipped — enabledMetricKeys is empty", context: ["class": "HealthMetricsManager", "method": "autoStartIfConfigured"], subsystem: "HealthMetrics")
+            return
+        }
+        let types = HealthMetricType.allCases.filter { enabledKeys.contains($0.key) }
+        debugPrint("[Humango] HealthMetricsManager: autoStart — restarting \(types.count) metric monitor(s): \(types.map { $0.key })")
+        SleepRemoteLogger.log(.info, step: "metrics.autoStart", message: "restarting metric monitors", context: [
+            "class": "HealthMetricsManager",
+            "method": "autoStartIfConfigured",
+            "types": types.map { $0.key }.joined(separator: ", "),
+        ], subsystem: "HealthMetrics")
+        types.forEach { startMonitoring($0) }
+    }
+
     // MARK: - Client iOS Convenience API (completion handler–based)
 
     /// Query a single metric by its **string key** (e.g. `"heartRateVariabilitySDNN"`) within a

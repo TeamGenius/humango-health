@@ -2,7 +2,7 @@
 
 A comprehensive Flutter plugin for integrating iOS HealthKit and WorkoutKit functionalities natively into the Humango platform.
 
-> **Version 0.0.33** — See [CHANGELOG](CHANGELOG.md) for what's new.
+> **Version 0.0.34** — See [CHANGELOG](CHANGELOG.md) for what's new.
 
 ## Table of Contents
 
@@ -27,7 +27,7 @@ A comprehensive Flutter plugin for integrating iOS HealthKit and WorkoutKit func
 
 | Feature | Description |
 |---------|-------------|
-| **User Session Management** | Login/logout gate for all background observers with automatic data cleanup on logout |
+| **User Session Management** | Login/logout gate for all background observers with automatic data cleanup on logout; per-subsystem `MonitoringConfig` flags persist which observers auto-restart across relaunches |
 | **Permission Handling** | Request, verify, and continuously monitor HealthKit permissions |
 | **Workout Scheduling** | Push workouts to Apple Watch via WorkoutKit with native deduplication |
 | **Workout Reading** | Real-time workout monitoring with foreground/background modes; completed workouts delivered via `HumangoHealthDataDelegate.onWorkoutReady(workout:deviceId:)` |
@@ -102,10 +102,13 @@ The plugin persists login state across app launches so HealthKit observers can a
 Workout and sleep auto-start also require **`HumangoHealthPlugin.delegate`** to be set — if the delegate is `nil`, monitoring start methods are a no-op (see `HumangoHealthPlugin.swift`). You can start subsystems individually:
 
 ```swift
-HumangoHealthPlugin.shared?.startAllBackgroundMonitoring()          // workouts + sleep
-HumangoHealthPlugin.shared?.startActivityBackgroundMonitoring()      // workouts only
-HumangoHealthPlugin.shared?.startSleepBackgroundMonitoring()         // sleep only
+HumangoHealthPlugin.shared?.startAllBackgroundMonitoring()          // workouts + sleep (arms both flags)
+HumangoHealthPlugin.shared?.startActivityBackgroundMonitoring()      // workouts only   (arms workoutsEnabled)
+HumangoHealthPlugin.shared?.startSleepBackgroundMonitoring()         // sleep only       (arms sleepEnabled)
+HumangoHealthPlugin.shared?.startMetricsMonitoring(for: [.restingHeartRate, .bodyMass])  // arms those metric keys
 ```
+
+Each call both **arms the flag** and **starts the observer** in one step. On the next relaunch, `startAllBackgroundMonitoring()` consults the persisted flags and only auto-restarts what was previously armed.
 
 ---
 
@@ -118,20 +121,28 @@ App Launch / Background Wake
 HumangoHealthPlugin.register()
         │
         ▼
-┌─────────────────────────────────────────────────────┐
-│  UserAuthStateManager.isLoggedIn?                   │
-│                                                     │
-│  false ──→ Skip all auto-start                      │
-│            (no observers started)                   │
-│                                                     │
-│  true  ──→ delegate set + isLoggedIn?             │
-│              │                                      │
-│              ├─ Workout armed + delegate set? ──→ Auto-start WorkoutService (24h lookback)
-│              │                               ──→ Not armed or no delegate → no-op
-│              │                                      │
-│              └─ Sleep armed + delegate set?  ──→ Auto-start SleepDataManager (12h lookback)
-│                                             ──→ Not armed or no delegate → no-op
-└─────────────────────────────────────────────────────┘
+┌─────────────────────────────────────────────────────────────────────────┐
+│  UserAuthStateManager.isLoggedIn?                                       │
+│                                                                         │
+│  false ──→ Skip all auto-start (no observers started)                   │
+│                                                                         │
+│  true  ──→ check per-subsystem MonitoringConfig flags                   │
+│              │                                                          │
+│              ├─ workoutsEnabled == true && delegate set?                │
+│              │     yes ──→ Auto-start WorkoutService (24 h lookback)    │
+│              │     no  ──→ no-op                                        │
+│              │                                                          │
+│              ├─ sleepEnabled == true && delegate set?                   │
+│              │     yes ──→ Auto-start SleepDataManager (12 h lookback)  │
+│              │     no  ──→ no-op                                        │
+│              │                                                          │
+│              └─ enabledMetricKeys non-empty && delegate set?            │
+│                    yes ──→ Auto-start HealthMetricMonitor per key       │
+│                    no  ──→ no-op                                        │
+└─────────────────────────────────────────────────────────────────────────┘
+
+Flags are reset to false on every new login (isLoggedIn: false → true).
+The host app must re-arm subsystems after each login.
 ```
 
 ### Case 1 — Logged In, Delegate Set
@@ -171,6 +182,7 @@ Calling **`HumangoHealthPlugin.shared?.logout()`** (or setting `isLoggedIn = fal
 | Data | What Is Cleared |
 |------|-----------------|
 | **Session gate** | `UserDefaults` `isLoggedIn` flag set to `false` |
+| **Monitoring flags** | `MonitoringConfig.clearAll()` — `workoutsEnabled`, `sleepEnabled`, `enabledMetricKeys` all reset |
 | **Sleep dedup state** | Clears `lastDeliveredSessionId` and `lastDeliveredWakeTime` so the next observer fire re-delivers if new data arrives |
 | **Scheduled workouts** | All workouts in `ScheduledWorkoutStore` (Apple Watch scheduled workouts cache) |
 | **Active monitors** | All running `HKObserverQuery` and `HKAnchoredObjectQueryDescriptor` tasks stopped |

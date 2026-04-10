@@ -39,8 +39,15 @@ public class UserAuthStateManager {
     public var isLoggedIn: Bool {
         get { UserDefaults.standard.bool(forKey: loggedInKey) }
         set {
+            let wasLoggedIn = UserDefaults.standard.bool(forKey: loggedInKey)
             UserDefaults.standard.set(newValue, forKey: loggedInKey)
             UserDefaults.standard.synchronize()
+            // On every new login (false → true) reset all monitoring flags so each
+            // login begins from a clean slate. The host-app must re-arm subsystems
+            // explicitly (startActivityBackgroundMonitoring, startSleepBackgroundMonitoring, etc.).
+            if newValue && !wasLoggedIn {
+                MonitoringConfig.shared.clearAll()
+            }
             NotificationCenter.default.post(
                 name: .humangoUserLoginStateChanged,
                 object: nil,

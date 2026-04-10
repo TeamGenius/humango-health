@@ -670,8 +670,11 @@ class WorkoutServiceChannel: NSObject {
 
     // MARK: - Auto-Start on App Launch
     
-    /// Auto-starts workout monitoring when the user is logged in and a delegate is configured.
-    /// Called from HumangoHealthPlugin.startAllBackgroundMonitoring().
+    /// Auto-starts workout monitoring when the user is logged in, a delegate is configured,
+    /// and `MonitoringConfig.workoutsEnabled` is `true`.
+    /// Called from HumangoHealthPlugin.startAllBackgroundMonitoring() on every app launch.
+    /// The flag is set to `true` by startActivityBackgroundMonitoring() / startAllBackgroundMonitoring()
+    /// and reset to `false` on new login — so only a deliberate host-app call arms auto-start.
     func autoStartIfConfigured() {
         guard UserAuthStateManager.shared.isLoggedIn else {
             debugPrint("[Humango] WorkoutService: autoStart skipped — user not logged in")
@@ -681,6 +684,11 @@ class WorkoutServiceChannel: NSObject {
         guard HumangoHealthPlugin.delegate != nil else {
             debugPrint("[Humango] WorkoutService: autoStart skipped — no delegate configured")
             SleepRemoteLogger.log(.warn, step: "workout.autoStart", message: "skipped — delegate nil", context: ["class": "WorkoutServiceChannel", "method": "autoStartIfConfigured"], subsystem: "WorkoutService")
+            return
+        }
+        guard MonitoringConfig.shared.workoutsEnabled else {
+            debugPrint("[Humango] WorkoutService: autoStart skipped — workouts monitoring not enabled (call startActivityBackgroundMonitoring first)")
+            SleepRemoteLogger.log(.info, step: "workout.autoStart", message: "skipped — workoutsEnabled flag is false", context: ["class": "WorkoutServiceChannel", "method": "autoStartIfConfigured"], subsystem: "WorkoutService")
             return
         }
         guard workoutService == nil else {

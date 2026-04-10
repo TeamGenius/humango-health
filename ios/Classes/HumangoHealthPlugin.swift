@@ -13,28 +13,37 @@ public class HumangoHealthPlugin: NSObject, FlutterPlugin {
 
   // MARK: - Background Monitoring
 
-    /// Triggers monitoring-capable subsystems to auto-start background monitoring (workouts, sleep)
-  /// provided they have been previously configured/armed. Safe to call after login.
+    /// Triggers monitoring-capable subsystems to auto-start background monitoring (workouts, sleep,
+  /// and any previously-enabled metric types). Arms `workoutsEnabled` and `sleepEnabled` flags so
+  /// subsequent relaunches auto-start those two subsystems without a repeated explicit call.
+  /// Metric flags are only armed by `startMetricsMonitoring(for:)` — not by this method.
   public func startAllBackgroundMonitoring() {
       guard guardMonitoringPreconditions("startAllBackgroundMonitoring") else { return }
       SleepRemoteLogger.log(.info, step: "startAllBackgroundMonitoring", message: "starting all subsystems", context: ["class": "HumangoHealthPlugin", "method": "startAllBackgroundMonitoring"])
+      MonitoringConfig.shared.workoutsEnabled = true
+      MonitoringConfig.shared.sleepEnabled    = true
       workoutReadChannel.autoStartIfConfigured()
       SleepDataManager.shared.autoStartIfConfigured()
+      HealthMetricsManager.shared.autoStartIfConfigured()
   }
 
   /// Starts background monitoring for **activity/workout reading** only.
+  /// Arms `MonitoringConfig.workoutsEnabled = true` so subsequent relaunches auto-start workouts.
   /// Requires the user to be logged in and `HumangoHealthPlugin.delegate` to be set.
   public func startActivityBackgroundMonitoring() {
       guard guardMonitoringPreconditions("startActivityBackgroundMonitoring") else { return }
       SleepRemoteLogger.log(.info, step: "startActivityBackgroundMonitoring", message: "starting activity subsystem", context: ["class": "HumangoHealthPlugin", "method": "startActivityBackgroundMonitoring"])
+      MonitoringConfig.shared.workoutsEnabled = true
       workoutReadChannel.autoStartIfConfigured()
   }
 
   /// Starts background monitoring for **sleep data** only.
+  /// Arms `MonitoringConfig.sleepEnabled = true` so subsequent relaunches auto-start sleep.
   /// Requires the user to be logged in and `HumangoHealthPlugin.delegate` to be set.
   public func startSleepBackgroundMonitoring() {
       guard guardMonitoringPreconditions("startSleepBackgroundMonitoring") else { return }
       SleepRemoteLogger.log(.info, step: "startSleepBackgroundMonitoring", message: "starting sleep subsystem", context: ["class": "HumangoHealthPlugin", "method": "startSleepBackgroundMonitoring"])
+      MonitoringConfig.shared.sleepEnabled = true
       SleepDataManager.shared.autoStartIfConfigured()
   }
 
@@ -179,22 +188,33 @@ public class HumangoHealthPlugin: NSObject, FlutterPlugin {
   /// Background: HKObserverQuery + enableBackgroundDelivery(immediate).
   /// Fires `HumangoHealthDataDelegate.onHealthMetricReady` with current-day samples on each notification.
   /// Requires `HumangoHealthPlugin.delegate` to be set and the user to be logged in.
+  /// Start monitoring one or more health metric types.
+  /// Arms each type in `MonitoringConfig.enabledMetricKeys` so subsequent relaunches
+  /// auto-restart those specific metric observers.
   public func startMetricsMonitoring(for types: [HealthMetricType]) {
       guard guardMonitoringPreconditions("startMetricsMonitoring") else { return }
       SleepRemoteLogger.log(.info, step: "startMetricsMonitoring", message: "starting metric monitors", context: [
           "class": "HumangoHealthPlugin",
           "types": types.map { $0.key }.joined(separator: ", "),
       ])
-      types.forEach { HealthMetricsManager.shared.startMonitoring($0) }
+      types.forEach {
+          MonitoringConfig.shared.enableMetric($0.key)
+          HealthMetricsManager.shared.startMonitoring($0)
+      }
   }
 
   /// Stop monitoring one or more health metric types.
+  /// Removes each type from `MonitoringConfig.enabledMetricKeys` so it does not
+  /// auto-restart on subsequent relaunches.
   public func stopMetricsMonitoring(for types: [HealthMetricType]) {
       SleepRemoteLogger.log(.info, step: "stopMetricsMonitoring", message: "stopping metric monitors", context: [
           "class": "HumangoHealthPlugin",
           "types": types.map { $0.key }.joined(separator: ", "),
       ])
-      types.forEach { HealthMetricsManager.shared.stopMonitoring($0) }
+      types.forEach {
+          MonitoringConfig.shared.disableMetric($0.key)
+          HealthMetricsManager.shared.stopMonitoring($0)
+      }
   }
 
   // MARK: - Public Native iOS Health Metrics Fetch API

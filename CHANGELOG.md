@@ -1,3 +1,68 @@
+## 0.0.34 — 2026-04-10
+
+### Features
+
+#### Monitoring Config — Per-subsystem auto-start flags persisted across launches
+
+**New: `MonitoringConfig`** (`ios/Classes/MonitoringConfig.swift`)
+
+A new singleton that persists per-subsystem flags to `UserDefaults` to explicitly gate which
+HealthKit observers auto-restart on every app relaunch.
+
+Previous behaviour — every relaunch with `isLoggedIn = true` and a delegate set would auto-start
+**all** subsystems unconditionally. The new behaviour requires the host app to deliberately arm
+each subsystem at least once before it can auto-restart.
+
+| Flag | Key | Controlled by |
+|---|---|---|
+| `workoutsEnabled` | `com.humango.health.monitoring.workouts` | `startActivityBackgroundMonitoring()` / `startAllBackgroundMonitoring()` |
+| `sleepEnabled` | `com.humango.health.monitoring.sleep` | `startSleepBackgroundMonitoring()` / `startAllBackgroundMonitoring()` |
+| `enabledMetricKeys: Set<String>` | `com.humango.health.monitoring.metricKeys` | `startMetricsMonitoring(for:)` / `stopMetricsMonitoring(for:)` |
+
+Supported individual metric keys (match `HealthMetricType.key`):
+`heartRateVariabilitySDNN`, `restingHeartRate`, `bodyFatPercentage`, `bodyMass`, `height`
+
+**Login reset** — `UserAuthStateManager.isLoggedIn: false → true`:
+`MonitoringConfig.clearAll()` is called automatically, resetting all flags to `false`.
+This ensures each new login starts from a clean slate — subsystems must be re-armed explicitly.
+
+**`HumangoHealthPlugin`** (`ios/Classes/HumangoHealthPlugin.swift`)
+
+All start methods now both arm the flag **and** start the observer in one call:
+
+```swift
+// Arms workoutsEnabled + sleepEnabled, restarts metric monitors for persisted keys
+HumangoHealthPlugin.shared?.startAllBackgroundMonitoring()
+
+// Arms workoutsEnabled only
+HumangoHealthPlugin.shared?.startActivityBackgroundMonitoring()
+
+// Arms sleepEnabled only
+HumangoHealthPlugin.shared?.startSleepBackgroundMonitoring()
+
+// Arms "restingHeartRate" + "bodyMass" in enabledMetricKeys
+HumangoHealthPlugin.shared?.startMetricsMonitoring(for: [.restingHeartRate, .bodyMass])
+
+// Removes keys from enabledMetricKeys (will not restart on next relaunch)
+HumangoHealthPlugin.shared?.stopMetricsMonitoring(for: [.restingHeartRate])
+```
+
+**`autoStartIfConfigured()` guard chain** (WorkoutServiceChannel, SleepDataManager, HealthMetricsManager)
+
+Each manager now guards with its flag before starting:
+```
+1. isLoggedIn == true            → else skip
+2. delegate != nil               → else skip
+3. <subsystem flag> == true      → else skip  ← NEW
+4. not already running           → else skip
+5. → start observer
+```
+
+**`HealthMetricsManager.autoStartIfConfigured()`** — new method called from `startAllBackgroundMonitoring()`.
+Re-starts monitors for all types in `MonitoringConfig.enabledMetricKeys` on every app launch.
+
+---
+
 ## 0.0.33 — 2026-04-10
 
 ### Features

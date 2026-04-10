@@ -79,6 +79,11 @@ public class SleepDataManager: NSObject, AppLifecycleObserver {
             SleepRemoteLogger.log(.warn, step: "autoStart", message: "skipped — delegate nil (set HumangoHealthPlugin.delegate before calling startAllBackgroundMonitoring)", context: ["class": "SleepDataManager", "method": "autoStartIfConfigured"])
             return
         }
+        guard MonitoringConfig.shared.sleepEnabled else {
+            debugPrint("🛏️ [SleepDataManager] autoStart skipped — sleep monitoring not enabled (call startSleepBackgroundMonitoring first)")
+            SleepRemoteLogger.log(.info, step: "autoStart", message: "skipped — sleepEnabled flag is false", context: ["class": "SleepDataManager", "method": "autoStartIfConfigured"])
+            return
+        }
         guard monitorStartDate == nil else {
             debugPrint("🛏️ [SleepDataManager] autoStart skipped — monitoring already active")
             SleepRemoteLogger.log(.info, step: "autoStart", message: "skipped — already active", context: ["class": "SleepDataManager", "method": "autoStartIfConfigured"])
