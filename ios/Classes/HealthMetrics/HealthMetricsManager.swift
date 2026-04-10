@@ -51,6 +51,8 @@ public class HealthMetricsManager: NSObject {
         switch call.method {
         case "fetchHealthMetric":
             handleFetchHealthMetric(call, result: result)
+        case "fetchLatestHealthMetric":
+            handleFetchLatestHealthMetric(call, result: result)
         case "startMetricMonitoring":
             handleStartMonitoring(call, result: result)
         case "stopMetricMonitoring":
@@ -191,6 +193,118 @@ public class HealthMetricsManager: NSObject {
         }
     }
 
+    // MARK: - Client iOS Convenience API (completion handler–based)
+
+    /// Query a single metric by its **string key** (e.g. `"heartRateVariabilitySDNN"`) within a
+    /// date range. Bridging convenience for callers that hold the key as a `String` rather than
+    /// a `HealthMetricType` value.
+    ///
+    /// ```swift
+    /// HealthMetricsManager.shared.fetchMetric(
+    ///     key: "restingHeartRate",
+    ///     startDate: start,
+    ///     endDate: end
+    /// ) { result in
+    ///     switch result {
+    ///     case .success(let payload): // use payload["samples"], payload["statistics"], …
+    ///     case .failure(let error):   // handle error
+    ///     }
+    /// }
+    /// ```
+    public func fetchMetric(
+        key: String,
+        startDate: Date,
+        endDate: Date,
+        completion: @escaping (Result<[String: Any], Error>) -> Void
+    ) {
+        guard let metricType = HealthMetricType(key: key) else {
+            let supported = HealthMetricType.allCases.map { $0.key }.joined(separator: ", ")
+            completion(.failure(NSError(
+                domain: "HealthMetrics",
+                code: 3,
+                userInfo: [NSLocalizedDescriptionKey: "Unknown metric type: '\(key)'. Supported: \(supported)"]
+            )))
+            return
+        }
+        fetchMetric(metricType, startDate: startDate, endDate: endDate, completion: completion)
+    }
+
+    /// Query a single metric by `HealthMetricType` within a date range, delivering the result on
+    /// the main queue via a completion handler. Suitable for call sites not running inside a Swift
+    /// `async` context.
+    ///
+    /// ```swift
+    /// HealthMetricsManager.shared.fetchMetric(
+    ///     .heartRateVariabilitySDNN,
+    ///     startDate: Calendar.current.date(byAdding: .day, value: -30, to: Date())!,
+    ///     endDate: Date()
+    /// ) { result in
+    ///     switch result {
+    ///     case .success(let payload):
+    ///         let samples = payload["samples"]        // [[String: Any]] of raw samples
+    ///         let stats   = payload["statistics"]     // ["average", "min", "max", "sum"]
+    ///         let count   = payload["sampleCount"]    // Int
+    ///     case .failure(let error):
+    ///         print("Fetch failed: \(error)")
+    ///     }
+    /// }
+    /// ```
+    public func fetchMetric(
+        _ metricType: HealthMetricType,
+        startDate: Date,
+        endDate: Date,
+        completion: @escaping (Result<[String: Any], Error>) -> Void
+    ) {
+        Task {
+            do {
+                let payload = try await fetchMetric(metricType, startDate: startDate, endDate: endDate)
+                DispatchQueue.main.async { completion(.success(payload)) }
+            } catch {
+                DispatchQueue.main.async { completion(.failure(error)) }
+            }
+        }
+    }
+
+    /// Query the most recent sample for a single metric type, delivering the result on the main
+    /// queue via a completion handler.
+    public func fetchLatestMetric(
+        _ metricType: HealthMetricType,
+        completion: @escaping (Result<[String: Any], Error>) -> Void
+    ) {
+        Task {
+            do {
+                let payload = try await fetchLatestMetric(metricType)
+                DispatchQueue.main.async { completion(.success(payload)) }
+            } catch {
+                DispatchQueue.main.async { completion(.failure(error)) }
+            }
+        }
+    }
+
+    /// Query **all** supported metric types within a date range, delivering the combined result on
+    /// the main queue via a completion handler. Errors per type are collected under the `"errors"`
+    /// key rather than failing the whole call.
+    ///
+    /// ```swift
+    /// HealthMetricsManager.shared.fetchAllMetrics(
+    ///     startDate: weekAgo,
+    ///     endDate: now
+    /// ) { payload in
+    ///     let metrics = payload["metrics"] as? [String: Any]
+    ///     let errors  = payload["errors"]  as? [String: String]
+    /// }
+    /// ```
+    public func fetchAllMetrics(
+        startDate: Date,
+        endDate: Date,
+        completion: @escaping ([String: Any]) -> Void
+    ) {
+        Task {
+            let payload = await fetchAllMetrics(startDate: startDate, endDate: endDate)
+            DispatchQueue.main.async { completion(payload) }
+        }
+    }
+
     // MARK: - Flutter Method Handlers (private)
 
     private func handleFetchHealthMetric(_ call: FlutterMethodCall, result: @escaping FlutterResult) {
@@ -222,6 +336,33 @@ public class HealthMetricsManager: NSObject {
                     limit: HKObjectQueryNoLimit,
                     ascending: true
                 )
+                DispatchQueue.main.async { result(response) }
+            } catch {
+                DispatchQueue.main.async {
+                    result(FlutterError(code: "FETCH_ERROR", message: error.localizedDescription, details: nil))
+                }
+            }
+        }
+    }
+
+    private func handleFetchLatestHealthMetric(_ call: FlutterMethodCall, result: @escaping FlutterResult) {
+        guard let args = call.arguments as? [String: Any],
+              let metricKey = args["metricType"] as? String else {
+            result(FlutterError(code: "INVALID_ARGS", message: "metricType is required", details: nil))
+            return
+        }
+        guard let metricType = HealthMetricType(key: metricKey) else {
+            let supported = HealthMetricType.allCases.map { $0.key }.joined(separator: ", ")
+            result(FlutterError(
+                code: "UNKNOWN_METRIC",
+                message: "Unknown metric type: \(metricKey). Supported: \(supported)",
+                details: nil
+            ))
+            return
+        }
+        Task {
+            do {
+                let response = try await fetchLatestMetric(metricType)
                 DispatchQueue.main.async { result(response) }
             } catch {
                 DispatchQueue.main.async {

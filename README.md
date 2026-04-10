@@ -2,7 +2,7 @@
 
 A comprehensive Flutter plugin for integrating iOS HealthKit and WorkoutKit functionalities natively into the Humango platform.
 
-> **Version 0.0.31** — See [CHANGELOG](CHANGELOG.md) for what's new.
+> **Version 0.0.32** — See [CHANGELOG](CHANGELOG.md) for what's new.
 
 ## Table of Contents
 
@@ -1597,7 +1597,9 @@ final metrics = HealthMetricsManager();
 
 ---
 
-### 1. On-Demand Fetch (Dart)
+### 1. On-Demand Fetch (Flutter / Dart)
+
+#### 1a. Fetch samples for a date range
 
 `fetchHealthMetric` fetches all samples for a given metric type within a date range.
 Both `startDate` and `endDate` default to the last 30 days when omitted.
@@ -1625,6 +1627,43 @@ for (final type in HealthMetricType.values) {
     final r = await metrics.fetchHealthMetric(type,
         startDate: DateTime.now().subtract(const Duration(days: 30)));
     print('${type.displayName}: ${r.sampleCount} samples');
+  } on HealthMetricsException catch (e) {
+    print('${type.key} error: ${e.message}');
+  }
+}
+```
+
+#### 1b. Fetch the latest sample only
+
+`fetchLatestMetric` returns the single most-recent HealthKit record — no date range
+needed, no unnecessary data transfer.
+
+```dart
+// Latest weight
+final weightResponse = await metrics.fetchLatestMetric(HealthMetricType.bodyMass);
+if (weightResponse.hasData) {
+  print('Current weight: ${weightResponse.latestValue} ${weightResponse.unit}');
+  print('Recorded:       ${weightResponse.latestSample?.startDate}');
+}
+
+// Latest HRV
+final hrv = await metrics.fetchLatestMetric(HealthMetricType.heartRateVariabilitySDNN);
+print('Latest HRV: ${hrv.latestValue} ms');
+
+// Latest resting heart rate
+final rhr = await metrics.fetchLatestMetric(HealthMetricType.restingHeartRate);
+print('Resting HR: ${rhr.latestValue} bpm');
+
+// Any metric by type in a loop
+for (final type in HealthMetricType.values) {
+  try {
+    final r = await metrics.fetchLatestMetric(type);
+    if (r.hasData) {
+      print('${type.displayName}: ${r.latestValue} ${r.unit}  '
+            'at ${r.latestSample?.startDate}');
+    } else {
+      print('${type.displayName}: no data recorded yet');
+    }
   } on HealthMetricsException catch (e) {
     print('${type.key} error: ${e.message}');
   }
@@ -1861,6 +1900,76 @@ func printMetric(_ data: [String: Any]) {
 
 let hrv = try await plugin.fetchHRV(startDate: start, endDate: end)
 printMetric(hrv)  // "heartRateVariabilitySDNN: 14 samples — avg 42.785341 ms  latest 44.12 ms"
+```
+
+#### 3e. Completion handler API (non-`async` call sites)
+
+If your host app code is not inside an `async` function, use the completion-handler overloads on
+`HealthMetricsManager.shared`. Results are always delivered on the **main queue**.
+
+```swift
+import humango_health
+
+let end   = Date()
+let start = Calendar.current.date(byAdding: .day, value: -30, to: end)!
+
+// ── Single metric, date range ────────────────────────────────────────────────
+HealthMetricsManager.shared.fetchMetric(
+    .heartRateVariabilitySDNN,
+    startDate: start,
+    endDate: end
+) { result in
+    switch result {
+    case .success(let payload):
+        let stats  = payload["statistics"]  as? [String: Double] ?? [:]
+        let latest = payload["latestSample"] as? [String: Any]
+        let count  = payload["sampleCount"] as? Int ?? 0
+        print("HRV: \(count) samples, avg \(stats["average"] ?? 0) ms, "
+              + "latest \(latest?["value"] ?? "–") ms")
+    case .failure(let error):
+        print("Error: \(error)")
+    }
+}
+
+// ── Single metric, string key ────────────────────────────────────────────────
+// Use this when the metric type comes from a variable/config string.
+HealthMetricsManager.shared.fetchMetric(
+    key: "restingHeartRate",   // one of: heartRateVariabilitySDNN, restingHeartRate,
+                               //         bodyFatPercentage, bodyMass, height
+    startDate: start,
+    endDate: end
+) { result in
+    if case .success(let payload) = result {
+        print("RHR latest: \(payload["latestSample"] ?? "no data")")
+    }
+}
+
+// ── Latest sample only ───────────────────────────────────────────────────────
+HealthMetricsManager.shared.fetchLatestMetric(.bodyMass) { result in
+    switch result {
+    case .success(let payload):
+        let latest = payload["latestSample"] as? [String: Any]
+        let value  = latest?["value"] as? Double ?? 0
+        let unit   = payload["unit"] as? String ?? ""
+        print("Current weight: \(value) \(unit)")
+    case .failure(let error):
+        print("Error: \(error)")
+    }
+}
+
+// ── All metrics at once ──────────────────────────────────────────────────────
+HealthMetricsManager.shared.fetchAllMetrics(startDate: start, endDate: end) { payload in
+    let metrics = payload["metrics"] as? [String: Any] ?? [:]
+    let errors  = payload["errors"]  as? [String: String] ?? [:]
+
+    for (key, data) in metrics {
+        let stats = (data as? [String: Any])?["statistics"] as? [String: Double] ?? [:]
+        print("\(key): avg \(stats["average"] ?? 0)")
+    }
+    for (key, message) in errors {
+        print("\(key) failed: \(message)")
+    }
+}
 ```
 
 ---

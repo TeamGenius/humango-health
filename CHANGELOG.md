@@ -1,3 +1,44 @@
+## 0.0.32 — 2026-04-10
+
+### Features
+
+#### Health Metrics — `fetchLatestMetric` (Flutter + native iOS)
+
+**Flutter / Dart** (`lib/src/managers/health_metrics_manager.dart`)
+
+Added `fetchLatestMetric(HealthMetricType)` — fetches the single most-recent HealthKit
+record for a metric type without requiring a date range. Returns a `HealthMetricResponse`
+with `sampleCount` 0 or 1 and `latestSample` / `latestValue` populated.
+
+```dart
+final response = await metrics.fetchLatestMetric(HealthMetricType.bodyMass);
+print('Weight: ${response.latestValue} ${response.unit}');
+```
+
+Bridges to the new `fetchLatestHealthMetric` method channel method (see below).
+
+**Swift method channel** (`ios/Classes/HealthMetrics/HealthMetricsManager.swift`)
+
+- Added `case "fetchLatestHealthMetric"` to the `handle(_:result:)` switch.
+- Added private `handleFetchLatestHealthMetric(_:result:)` — validates `metricType` arg,
+  calls `fetchLatestMetric(_:)` (async), returns the `[String: Any]` payload.
+
+#### Health Metrics — Completion handler convenience API (native iOS)
+
+**`HealthMetricsManager`** (`ios/Classes/HealthMetrics/HealthMetricsManager.swift`)
+
+Four new public completion-handler overloads for non-`async` native iOS call sites.
+All callbacks are delivered on the **main queue**.
+
+| Method | Description |
+|---|---|
+| `fetchMetric(_ type:startDate:endDate:completion:)` | Single metric, typed enum, date range |
+| `fetchMetric(key:startDate:endDate:completion:)` | Single metric, string key (validates against `HealthMetricType.allCases`) |
+| `fetchLatestMetric(_ type:completion:)` | Most-recent sample, typed enum |
+| `fetchAllMetrics(startDate:endDate:completion:)` | All five metric types, errors per-type |
+
+---
+
 ## 0.0.31 — 2026-04-09
 
 ### Features

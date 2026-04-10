@@ -92,6 +92,44 @@ class HealthMetricsManager {
     }
   }
 
+  /// Fetch only the single most-recent sample for [metricType], regardless of
+  /// date range.
+  ///
+  /// Returns a [HealthMetricResponse] where [HealthMetricResponse.sampleCount]
+  /// is 0 or 1 and [HealthMetricResponse.latestSample] holds the value.
+  ///
+  /// Example:
+  /// ```dart
+  /// final response = await metrics.fetchLatestMetric(HealthMetricType.bodyMass);
+  /// if (response.hasData) {
+  ///   print('Current weight: ${response.latestValue} ${response.unit}');
+  ///   print('Recorded: ${response.latestSample?.startDate}');
+  /// }
+  /// ```
+  Future<HealthMetricResponse> fetchLatestMetric(
+    HealthMetricType metricType,
+  ) async {
+    final now = DateTime.now();
+    try {
+      final result = await _channel.invokeMethod<Map<dynamic, dynamic>>(
+        'fetchLatestHealthMetric',
+        {'metricType': metricType.key},
+      );
+
+      if (result != null) {
+        return HealthMetricResponse.fromMap(Map<String, dynamic>.from(result));
+      }
+
+      return _emptyResponse(metricType.key, metricType.defaultUnit, now, now);
+    } on PlatformException catch (e) {
+      throw HealthMetricsException(
+        code: e.code,
+        message: e.message ?? 'Error fetching latest ${metricType.displayName}',
+        details: e.details,
+      );
+    }
+  }
+
   // ---------------------------------------------------------------------------
   // Monitoring control (triggers native iOS HealthMetricMonitor)
   // ---------------------------------------------------------------------------
