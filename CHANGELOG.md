@@ -1,3 +1,51 @@
+## 0.0.33 — 2026-04-10
+
+### Features
+
+#### Workout Reading — Native iOS API (`readWorkouts` / `fetchAllWorkouts`)
+
+**`WorkoutServiceChannel`** (`ios/Classes/WorkoutReading/WorkoutServiceChannel.swift`)
+
+Two new package-internal methods callable from `HumangoHealthPlugin`:
+
+| Method | Description |
+|---|---|
+| `readWorkouts(startDate:endDate:)` | Batched HealthKit fetch, applies import preferences |
+| `fetchAllWorkouts(startDate:endDate:)` | Same fetch, no preference filter |
+
+Both are `async throws -> [String]` returning compact JSON strings (one per workout), identical output to the Flutter method channel equivalents.
+
+**`HumangoHealthPlugin`** (`ios/Classes/HumangoHealthPlugin.swift`)
+
+New `// MARK: - Public Native iOS Workout Read API` section with two public methods forwarding to `WorkoutServiceChannel`:
+
+```swift
+public func readWorkouts(startDate: Date, endDate: Date) async throws -> [String]
+public func fetchAllWorkouts(startDate: Date, endDate: Date) async throws -> [String]
+```
+
+Usage:
+
+```swift
+let end   = Date()
+let start = Calendar.current.date(byAdding: .day, value: -7, to: end)!
+
+let workouts = try await HumangoHealthPlugin.shared?.readWorkouts(
+    startDate: start, endDate: end
+) ?? []
+```
+
+#### Workout Monitoring — Anchor priming on `start()` (no more history replay)
+
+**`WorkoutService`** (`ios/Classes/WorkoutReading/WorkoutService.swift`)
+
+Added `primeAnchor()` called at the top of `start()` before the foreground/background branch. It runs one anchored snapshot (`startDate → now`, no delivery) to advance `self.anchor` to the current HealthKit position. Both the live stream and the background observer inherit this anchor so they only surface workouts written **after** monitoring began — not historical replays.
+
+- Non-fatal: if the priming query fails, `anchor` stays `nil` and `WorkoutDedup` in the delegate handles any re-delivered duplicates.
+- Does not affect lifecycle transitions (`enterForegroundMode` / `enterBackgroundMode`) — those carry the already-advancing anchor forward.
+
+---
+
 ## 0.0.32 — 2026-04-10
 
 ### Features

@@ -42,6 +42,11 @@ final class WorkoutService: AppLifecycleObserver {
     // so a cold background relaunch by HealthKit correctly registers the observer.
     func start() async {
         authorized = true
+        // Prime the anchor to the current HealthKit position BEFORE opening the live
+        // stream or installing the background observer. This prevents both paths from
+        // replaying workouts that already exist in HealthKit — only workouts written
+        // AFTER monitoring starts will be delivered to handleWorkouts.
+        await primeAnchor()
         let mode = AppLifecycleManager.shared.isInForeground ? "foreground" : "background"
         SleepRemoteLogger.log(.info, step: "workoutService.start", message: "starting workout service", context: [
             "class": "WorkoutService",
@@ -260,6 +265,49 @@ final class WorkoutService: AppLifecycleObserver {
         }
     }
     
+
+    // MARK: - Anchor Priming
+
+    /// Advances `self.anchor` to the current HealthKit position without processing
+    /// or delivering any samples. Called once at the start of `start()` so that
+    /// both foreground live-stream updates and background observer fetches only
+    /// surface workouts written AFTER monitoring began — not historical replays.
+    ///
+    /// Failure is non-fatal: if the HealthKit query fails, `anchor` stays nil and
+    /// monitoring falls back to the old full-replay behaviour. WorkoutDedup in the
+    /// delegate will deduplicate any re-delivered workouts in that edge case.
+    private func primeAnchor() async {
+        let predicate = HKQuery.predicateForSamples(
+            withStart: startDate,
+            end: Date(),
+            options: [.strictStartDate]
+        )
+        let desc = HKAnchoredObjectQueryDescriptor(
+            predicates: [.workout(predicate)],
+            anchor: nil   // always nil — priming from scratch at monitoring start
+        )
+        do {
+            let result = try await desc.result(for: healthStore)
+            self.anchor = result.newAnchor
+            let skipped = result.addedSamples.count
+            debugPrint("[Humango] WorkoutService: primeAnchor — anchor set, skipped \(skipped) existing workout(s)")
+            SleepRemoteLogger.log(.info, step: "primeAnchor", message: "anchor primed — skipping existing workouts", context: [
+                "class":        "WorkoutService",
+                "method":       "primeAnchor",
+                "skippedCount": "\(skipped)",
+                "startDate":    startDate.description,
+            ], subsystem: "WorkoutService")
+        } catch {
+            // Leave anchor nil; worst case the first update replays known workouts
+            // which WorkoutDedup in the delegate will handle.
+            debugPrint("[Humango] WorkoutService: primeAnchor failed (\(error)) — proceeding with nil anchor")
+            SleepRemoteLogger.log(.warn, step: "primeAnchor", message: "anchor priming failed — may replay existing workouts", context: [
+                "class":  "WorkoutService",
+                "method": "primeAnchor",
+                "error":  "\(error)",
+            ], subsystem: "WorkoutService")
+        }
+    }
 
     // MARK: - Background Monitoring (HKObserverQuery)
 

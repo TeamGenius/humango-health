@@ -706,6 +706,67 @@ class WorkoutServiceChannel: NSObject {
         }
     }
 
+    // MARK: - Public Native iOS Workout Read API
+
+    /// Fetch completed workouts within a date range and return them as JSON strings.
+    /// Applies the user's import preferences (running / cycling / swimming exclusions)
+    /// identical to the Flutter `readWorkouts` method channel call.
+    ///
+    /// ```swift
+    /// let end   = Date()
+    /// let start = Calendar.current.date(byAdding: .day, value: -7, to: end)!
+    ///
+    /// let workouts = try await HumangoHealthPlugin.shared?.readWorkouts(
+    ///     startDate: start,
+    ///     endDate: end
+    /// ) ?? []
+    ///
+    /// for json in workouts {
+    ///     // each element is a JSON string — decode with JSONSerialization or Codable
+    ///     print(json)
+    /// }
+    /// ```
+    func readWorkouts(startDate: Date, endDate: Date) async throws -> [String] {
+        SleepRemoteLogger.log(.info, step: "nativeReadWorkouts.start", message: "native iOS readWorkouts requested", context: [
+            "class":     "WorkoutServiceChannel",
+            "method":    "readWorkouts",
+            "startDate": startDate.description,
+            "endDate":   endDate.description,
+        ], subsystem: "WorkoutReading")
+        let results = try await fetchWorkoutsBatched(startDate: startDate, endDate: endDate)
+        SleepRemoteLogger.log(.info, step: "nativeReadWorkouts.complete", message: "native iOS readWorkouts completed", context: [
+            "class":  "WorkoutServiceChannel",
+            "method": "readWorkouts",
+            "count":  "\(results.count)",
+        ], subsystem: "WorkoutReading")
+        return results
+    }
+
+    /// Fetch ALL workouts within a date range as JSON strings, ignoring import
+    /// preferences. Use this for full audits or re-syncs.
+    ///
+    /// ```swift
+    /// let all = try await HumangoHealthPlugin.shared?.fetchAllWorkouts(
+    ///     startDate: start,
+    ///     endDate: end
+    /// ) ?? []
+    /// ```
+    func fetchAllWorkouts(startDate: Date, endDate: Date) async throws -> [String] {
+        SleepRemoteLogger.log(.info, step: "nativeFetchAllWorkouts.start", message: "native iOS fetchAllWorkouts requested", context: [
+            "class":     "WorkoutServiceChannel",
+            "method":    "fetchAllWorkouts",
+            "startDate": startDate.description,
+            "endDate":   endDate.description,
+        ], subsystem: "WorkoutReading")
+        let results = try await fetchAllWorkoutsRaw(startDate: startDate, endDate: endDate)
+        SleepRemoteLogger.log(.info, step: "nativeFetchAllWorkouts.complete", message: "native iOS fetchAllWorkouts completed", context: [
+            "class":  "WorkoutServiceChannel",
+            "method": "fetchAllWorkouts",
+            "count":  "\(results.count)",
+        ], subsystem: "WorkoutReading")
+        return results
+    }
+
     /// Stops all active monitoring.
     /// Called on user logout to ensure no background activity continues.
     func stopAndClearAll() {

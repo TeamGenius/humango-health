@@ -2,7 +2,7 @@
 
 A comprehensive Flutter plugin for integrating iOS HealthKit and WorkoutKit functionalities natively into the Humango platform.
 
-> **Version 0.0.32** — See [CHANGELOG](CHANGELOG.md) for what's new.
+> **Version 0.0.33** — See [CHANGELOG](CHANGELOG.md) for what's new.
 
 ## Table of Contents
 
@@ -1565,6 +1565,89 @@ final all = await workoutManager.fetchAllWorkouts(
   endDate: DateTime.now(),
 );
 print('Total workouts in range: ${all.length}');
+```
+
+---
+
+### Native iOS Workout Read API
+
+All workout fetch methods are `async throws` on `HumangoHealthPlugin.shared` — call them from any Swift `async` context without going through the Flutter method channel.
+
+#### Prerequisites
+
+```swift
+import humango_health
+
+guard let plugin = HumangoHealthPlugin.shared else { return }
+
+let end   = Date()
+let start = Calendar.current.date(byAdding: .day, value: -7, to: end)!
+```
+
+#### `readWorkouts` — with import preferences applied
+
+```swift
+// Fetches workouts respecting the user's running / cycling / swimming exclusions.
+let workouts = try await plugin.readWorkouts(startDate: start, endDate: end)
+
+for json in workouts {
+    guard let data = json.data(using: .utf8),
+          let obj  = try? JSONSerialization.jsonObject(with: data) as? [String: Any]
+    else { continue }
+
+    let sport    = obj["sport"]    as? String ?? ""
+    let duration = obj["duration"] as? Double ?? 0
+    let uuid     = obj["device_activity_id"] as? String ?? ""
+    print("\(sport)  \(duration / 60, specifier: "%.1f") min  [\(uuid)]")
+}
+```
+
+#### `fetchAllWorkouts` — no preference filter
+
+```swift
+// Returns every workout type in the range, bypassing import preferences.
+let all = try await plugin.fetchAllWorkouts(startDate: start, endDate: end)
+print("Total workouts: \(all.count)")
+```
+
+#### Completion handler wrappers (non-`async` call sites)
+
+```swift
+// readWorkouts
+Task {
+    guard let plugin = HumangoHealthPlugin.shared else { return }
+    if let workouts = try? await plugin.readWorkouts(startDate: start, endDate: end) {
+        DispatchQueue.main.async {
+            // update UI with workouts
+        }
+    }
+}
+```
+
+#### Response shape per workout (JSON string)
+
+Each element is a compact JSON string. Decode it on the call site:
+
+```swift
+let data = json.data(using: .utf8)!
+let obj  = try JSONSerialization.jsonObject(with: data) as! [String: Any]
+
+// Top-level keys
+// "device_activity_id" : String   — HealthKit UUID
+// "sport"              : String   — e.g. "Running", "Cycling", "Swimming"
+// "start_time"         : String   — ISO 8601 UTC
+// "duration"           : Double   — seconds
+// "distance"           : Double   — metres (0 if not available)
+// "serial"             : String   — unique payload serial (UUID)
+// "metadata"           : [String: Any]
+//     "SOURCE_NAME"               : String
+//     "IS_SCHEDULED_WORKOUT"      : Bool
+//     "scheduledWorkoutId"        : String? (present when IS_SCHEDULED_WORKOUT = true)
+// "series_data"        : [String: Any]
+//     "samples"  : [[String: Any]]  — quantity series (HR, steps, energy, …)
+//     "locations": [[String: Any]]  — GPS points (if route data available)
+// "statistics"         : [[String: Any]]   — HealthKit statistics per type
+// "events"             : [[String: Any]]   — laps, pauses, segments
 ```
 
 ---

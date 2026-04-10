@@ -137,6 +137,41 @@ public class HumangoHealthPlugin: NSObject, FlutterPlugin {
 
   }
 
+  // MARK: - Public Native iOS Workout Read API
+
+  /// Fetch completed workouts within a date range as JSON strings.
+  /// Applies the user's import preferences (running / cycling / swimming exclusions).
+  ///
+  /// ```swift
+  /// let end   = Date()
+  /// let start = Calendar.current.date(byAdding: .day, value: -7, to: end)!
+  ///
+  /// let workouts = try await HumangoHealthPlugin.shared?.readWorkouts(
+  ///     startDate: start, endDate: end
+  /// ) ?? []
+  ///
+  /// for json in workouts {
+  ///     if let data = json.data(using: .utf8),
+  ///        let obj  = try? JSONSerialization.jsonObject(with: data) as? [String: Any] {
+  ///         print(obj["sport"] ?? "", obj["duration"] ?? "")
+  ///     }
+  /// }
+  /// ```
+  public func readWorkouts(startDate: Date, endDate: Date) async throws -> [String] {
+      try await workoutReadChannel.readWorkouts(startDate: startDate, endDate: endDate)
+  }
+
+  /// Fetch ALL workouts within a date range as JSON strings, ignoring import preferences.
+  ///
+  /// ```swift
+  /// let all = try await HumangoHealthPlugin.shared?.fetchAllWorkouts(
+  ///     startDate: start, endDate: end
+  /// ) ?? []
+  /// ```
+  public func fetchAllWorkouts(startDate: Date, endDate: Date) async throws -> [String] {
+      try await workoutReadChannel.fetchAllWorkouts(startDate: startDate, endDate: endDate)
+  }
+
   // MARK: - Public Native iOS Health Metrics Monitoring
 
   /// Start monitoring one or more health metric types.
