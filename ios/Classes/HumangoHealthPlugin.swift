@@ -20,8 +20,8 @@ public class HumangoHealthPlugin: NSObject, FlutterPlugin {
   public func startAllBackgroundMonitoring() {
       guard guardMonitoringPreconditions("startAllBackgroundMonitoring") else { return }
       SleepRemoteLogger.log(.info, step: "startAllBackgroundMonitoring", message: "starting all subsystems", context: ["class": "HumangoHealthPlugin", "method": "startAllBackgroundMonitoring"])
-      MonitoringConfig.shared.workoutsEnabled = true
-      MonitoringConfig.shared.sleepEnabled    = true
+     
+     
       workoutReadChannel.autoStartIfConfigured()
       SleepDataManager.shared.autoStartIfConfigured()
       HealthMetricsManager.shared.autoStartIfConfigured()
@@ -33,7 +33,7 @@ public class HumangoHealthPlugin: NSObject, FlutterPlugin {
   public func startActivityBackgroundMonitoring() {
       guard guardMonitoringPreconditions("startActivityBackgroundMonitoring") else { return }
       SleepRemoteLogger.log(.info, step: "startActivityBackgroundMonitoring", message: "starting activity subsystem", context: ["class": "HumangoHealthPlugin", "method": "startActivityBackgroundMonitoring"])
-      MonitoringConfig.shared.workoutsEnabled = true
+     
       workoutReadChannel.autoStartIfConfigured()
   }
 
@@ -43,7 +43,7 @@ public class HumangoHealthPlugin: NSObject, FlutterPlugin {
   public func startSleepBackgroundMonitoring() {
       guard guardMonitoringPreconditions("startSleepBackgroundMonitoring") else { return }
       SleepRemoteLogger.log(.info, step: "startSleepBackgroundMonitoring", message: "starting sleep subsystem", context: ["class": "HumangoHealthPlugin", "method": "startSleepBackgroundMonitoring"])
-      MonitoringConfig.shared.sleepEnabled = true
+  
       SleepDataManager.shared.autoStartIfConfigured()
   }
 
@@ -60,6 +60,30 @@ public class HumangoHealthPlugin: NSObject, FlutterPlugin {
           return false
       }
       return true
+  }
+
+  // MARK: - Internal: Auto-Start from Persisted Flags (called by register())
+
+  /// Called once from `register(with:)` on every app launch.
+  /// Reads `MonitoringConfig` flags and starts only the subsystems that were
+  /// previously armed by an explicit client call. Does **NOT** write / arm any flags.
+  func autoStartPersistedSubsystems() {
+      guard guardMonitoringPreconditions("autoStartPersistedSubsystems") else { return }
+      SleepRemoteLogger.log(.info, step: "autoStartPersistedSubsystems", message: "checking persisted flags", context: [
+          "class": "HumangoHealthPlugin",
+          "workoutsEnabled": "\(MonitoringConfig.shared.workoutsEnabled)",
+          "sleepEnabled": "\(MonitoringConfig.shared.sleepEnabled)",
+          "metricKeys": "\(MonitoringConfig.shared.enabledMetricKeys)",
+      ])
+      if MonitoringConfig.shared.workoutsEnabled {
+          workoutReadChannel.autoStartIfConfigured()
+      }
+      if MonitoringConfig.shared.sleepEnabled {
+          SleepDataManager.shared.autoStartIfConfigured()
+      }
+      if !MonitoringConfig.shared.enabledMetricKeys.isEmpty {
+          HealthMetricsManager.shared.autoStartIfConfigured()
+      }
   }
 
   public static func register(with registrar: FlutterPluginRegistrar) {
@@ -96,8 +120,9 @@ public class HumangoHealthPlugin: NSObject, FlutterPlugin {
     permissionEventChannel.setStreamHandler(PermissionStreamHandler())
     
     // MARK: - Auto-Start Monitoring
-        // Workouts / Sleep: only when user is logged in and the subsystem was armed / enabled.
-    instance.startAllBackgroundMonitoring()
+        // Reads persisted MonitoringConfig flags — only starts subsystems that were
+        // previously armed by the client. Does NOT arm any new flags.
+    instance.autoStartPersistedSubsystems()
   }
 
   public func handle(_ call: FlutterMethodCall, result: @escaping FlutterResult) {

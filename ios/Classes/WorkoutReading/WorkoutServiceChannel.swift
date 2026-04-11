@@ -495,6 +495,7 @@ class WorkoutServiceChannel: NSObject {
         }
         
         if workoutService == nil {
+            MonitoringConfig.shared.workoutsEnabled = true
             SleepRemoteLogger.log(.info, step: "startMonitoring.start", message: "starting workout monitoring", context: [
                 "class": "WorkoutServiceChannel",
                 "method": "handleStartMonitoring",
@@ -686,16 +687,12 @@ class WorkoutServiceChannel: NSObject {
             SleepRemoteLogger.log(.warn, step: "workout.autoStart", message: "skipped — delegate nil", context: ["class": "WorkoutServiceChannel", "method": "autoStartIfConfigured"], subsystem: "WorkoutService")
             return
         }
-        guard MonitoringConfig.shared.workoutsEnabled else {
-            debugPrint("[Humango] WorkoutService: autoStart skipped — workouts monitoring not enabled (call startActivityBackgroundMonitoring first)")
-            SleepRemoteLogger.log(.info, step: "workout.autoStart", message: "skipped — workoutsEnabled flag is false", context: ["class": "WorkoutServiceChannel", "method": "autoStartIfConfigured"], subsystem: "WorkoutService")
-            return
-        }
         guard workoutService == nil else {
             debugPrint("[Humango] WorkoutService: autoStart skipped — monitoring already active")
             SleepRemoteLogger.log(.info, step: "workout.autoStart", message: "skipped — already active", context: ["class": "WorkoutServiceChannel", "method": "autoStartIfConfigured"], subsystem: "WorkoutService")
             return
         }
+         MonitoringConfig.shared.workoutsEnabled = true
         
         let startDate = Date().addingTimeInterval(-24 * 60 * 60) // 24h lookback
         let mode = AppLifecycleManager.shared.isInForeground ? "foreground" : "background"

@@ -199,7 +199,6 @@ public class WorkoutPlanManager: NSObject {
         switch authState {
         case .notDetermined:
             do {
-                await ensureHealthKitWorkoutTypesAuthorized()
                 try await WorkoutScheduler.shared.requestAuthorization()
                 let newState = await WorkoutScheduler.shared.authorizationState
                 return authorizationStatusMap(from: newState)

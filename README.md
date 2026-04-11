@@ -2,7 +2,7 @@
 
 A comprehensive Flutter plugin for integrating iOS HealthKit and WorkoutKit functionalities natively into the Humango platform.
 
-> **Version 0.0.34** — See [CHANGELOG](CHANGELOG.md) for what's new.
+> **Version 0.0.35** — See [CHANGELOG](CHANGELOG.md) for what's new.
 
 ## Table of Contents
 
@@ -40,7 +40,7 @@ A comprehensive Flutter plugin for integrating iOS HealthKit and WorkoutKit func
 
 The plugin **reads HealthKit on the device**. Completed workout and finalized sleep session JSON is pushed to your host app via the **`HumangoHealthDataDelegate`** protocol. Health metrics are **not** pushed; clients query them explicitly through `HealthMetricsManager`. The plugin performs no HTTP and maintains no persistent queues.
 
-Implement `HumangoHealthDataDelegate` in your Runner (see [Delegate Delivery](#delegate-delivery)). After auth, the **host app** (native) must set `UserAuthStateManager.shared.isLoggedIn`, assign `HumangoHealthPlugin.delegate`, and call `HumangoHealthPlugin.shared?.startAllBackgroundMonitoring()` (or start individual subsystems with `startActivityBackgroundMonitoring()`, `startSleepBackgroundMonitoring()`) — there is **no** `UserSessionManager.setUserLoggedIn` in the published Dart API. The bundled app uses **`ExampleSessionChannel`** (`com.humango.example/session`) as a reference; copy that pattern in production. See **[example/](example/)** and [`example/README.md`](example/README.md).
+Implement `HumangoHealthDataDelegate` in your Runner (see [Delegate Delivery](#delegate-delivery)). After auth, the **host app** (native) must set `UserAuthStateManager.shared.isLoggedIn`, assign `HumangoHealthPlugin.delegate`, and call `HumangoHealthPlugin.shared?.startAllBackgroundMonitoring()` (or start individual subsystems with `startActivityBackgroundMonitoring()`, `startSleepBackgroundMonitoring()`) — there is **no** `UserSessionManager.setUserLoggedIn` in the published Dart API. Each start call **arms a persisted flag** in `MonitoringConfig` so only those subsystems auto-restart on subsequent relaunches. The bundled app uses **`ExampleSessionChannel`** (`com.humango.example/session`) as a reference; copy that pattern in production. See **[example/](example/)** and [`example/README.md`](example/README.md).
 
 ## Documentation
 
@@ -121,6 +121,9 @@ App Launch / Background Wake
 HumangoHealthPlugin.register()
         │
         ▼
+autoStartPersistedSubsystems()   ← reads flags only, never arms
+        │
+        ▼
 ┌─────────────────────────────────────────────────────────────────────────┐
 │  UserAuthStateManager.isLoggedIn?                                       │
 │                                                                         │
@@ -150,14 +153,15 @@ The host app must re-arm subsystems after each login.
 ```
 User installs app
   → Logs in → native sets UserAuthStateManager.shared.isLoggedIn = true
+       (triggers MonitoringConfig.clearAll() — all flags reset to false)
   → AppDelegate sets HumangoHealthPlugin.delegate = ExampleHealthDataHandler()
-  → startAllBackgroundMonitoring() runs (or your session channel does the same)
+  → startAllBackgroundMonitoring() arms workoutsEnabled + sleepEnabled
   → Kills app
 
 Next launch:
   → isLoggedIn = true  ✅
   → Delegate set  ✅
-  → Workout + sleep observers auto-start
+  → autoStartPersistedSubsystems() reads flags → workouts + sleep auto-start
   → Workouts / sleep sessions delivered via delegate callbacks
 ```
 

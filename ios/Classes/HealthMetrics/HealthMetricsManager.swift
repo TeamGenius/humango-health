@@ -213,11 +213,6 @@ public class HealthMetricsManager: NSObject {
             return
         }
         let enabledKeys = MonitoringConfig.shared.enabledMetricKeys
-        guard !enabledKeys.isEmpty else {
-            debugPrint("[Humango] HealthMetricsManager: autoStart skipped — no metric types enabled")
-            SleepRemoteLogger.log(.info, step: "metrics.autoStart", message: "skipped — enabledMetricKeys is empty", context: ["class": "HealthMetricsManager", "method": "autoStartIfConfigured"], subsystem: "HealthMetrics")
-            return
-        }
         let types = HealthMetricType.allCases.filter { enabledKeys.contains($0.key) }
         debugPrint("[Humango] HealthMetricsManager: autoStart — restarting \(types.count) metric monitor(s): \(types.map { $0.key })")
         SleepRemoteLogger.log(.info, step: "metrics.autoStart", message: "restarting metric monitors", context: [
@@ -423,6 +418,7 @@ public class HealthMetricsManager: NSObject {
             return
         }
         startMonitoring(metricType)
+        MonitoringConfig.shared.enableMetric(metricType.key)
         result(nil)
     }
 
@@ -437,6 +433,7 @@ public class HealthMetricsManager: NSObject {
             return
         }
         stopMonitoring(metricType)
+        MonitoringConfig.shared.disableMetric(metricType.key)
         result(nil)
     }
 

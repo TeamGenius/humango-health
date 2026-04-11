@@ -1,3 +1,25 @@
+## 0.0.35 — 2026-04-11
+
+### Bug Fixes
+
+#### `requestAuthorizationForWorkoutPush` — removed unnecessary HealthKit authorization
+
+`requestWorkoutPushAuthorization()` in `WorkoutPlanManager` was calling
+`ensureHealthKitWorkoutTypesAuthorized()` before requesting WorkoutKit authorization.
+Since this method is purely for WorkoutKit scheduling permissions, the HealthKit
+pre-authorization step was unnecessary and could present a confusing HealthKit
+permission dialog to the user.
+
+**Before:** Requested HealthKit write (`HKWorkoutType`) + read (`HKWorkoutType`,
+`HKWorkoutRoute`) authorization, then WorkoutKit scheduling authorization.
+
+**After:** Requests only `WorkoutScheduler.shared.requestAuthorization()` (WorkoutKit).
+
+> The HealthKit pre-authorization call remains in the scheduling path
+> (`scheduleWorkoutsFromFlutter`) where it is still needed.
+
+---
+
 ## 0.0.34 — 2026-04-10
 
 ### Features
@@ -11,13 +33,14 @@ HealthKit observers auto-restart on every app relaunch.
 
 Previous behaviour — every relaunch with `isLoggedIn = true` and a delegate set would auto-start
 **all** subsystems unconditionally. The new behaviour requires the host app to deliberately arm
-each subsystem at least once before it can auto-restart.
+each subsystem at least once (via a native iOS call or a Flutter method channel call) before
+it can auto-restart.
 
-| Flag | Key | Controlled by |
-|---|---|---|
-| `workoutsEnabled` | `com.humango.health.monitoring.workouts` | `startActivityBackgroundMonitoring()` / `startAllBackgroundMonitoring()` |
-| `sleepEnabled` | `com.humango.health.monitoring.sleep` | `startSleepBackgroundMonitoring()` / `startAllBackgroundMonitoring()` |
-| `enabledMetricKeys: Set<String>` | `com.humango.health.monitoring.metricKeys` | `startMetricsMonitoring(for:)` / `stopMetricsMonitoring(for:)` |
+| Flag | Key | Armed by (native iOS) | Armed by (Flutter channel) |
+|---|---|---|---|
+| `workoutsEnabled` | `com.humango.health.monitoring.workouts` | `startActivityBackgroundMonitoring()` / `startAllBackgroundMonitoring()` | `startWorkoutMonitoring` |
+| `sleepEnabled` | `com.humango.health.monitoring.sleep` | `startSleepBackgroundMonitoring()` / `startAllBackgroundMonitoring()` | `startSleepMonitoring` |
+| `enabledMetricKeys: Set<String>` | `com.humango.health.monitoring.metricKeys` | `startMetricsMonitoring(for:)` / `stopMetricsMonitoring(for:)` | `startMetricMonitoring` / `stopMetricMonitoring` |
 
 Supported individual metric keys (match `HealthMetricType.key`):
 `heartRateVariabilitySDNN`, `restingHeartRate`, `bodyFatPercentage`, `bodyMass`, `height`
@@ -28,7 +51,12 @@ This ensures each new login starts from a clean slate — subsystems must be re-
 
 **`HumangoHealthPlugin`** (`ios/Classes/HumangoHealthPlugin.swift`)
 
-All start methods now both arm the flag **and** start the observer in one call:
+**Key change: `register(with:)` now calls `autoStartPersistedSubsystems()` (internal, reads-only)**
+instead of the public `startAllBackgroundMonitoring()`. This means on every app launch the plugin
+only reads the persisted flags — it never arms them. Observers only auto-restart for subsystems
+that were previously armed by the client.
+
+Public start methods still both arm the flag **and** start the observer:
 
 ```swift
 // Arms workoutsEnabled + sleepEnabled, restarts metric monitors for persisted keys
@@ -47,19 +75,43 @@ HumangoHealthPlugin.shared?.startMetricsMonitoring(for: [.restingHeartRate, .bod
 HumangoHealthPlugin.shared?.stopMetricsMonitoring(for: [.restingHeartRate])
 ```
 
+**Flutter method channel handlers now arm flags too:**
+
+| Flutter channel method | Flag armed |
+|---|---|
+| `startWorkoutMonitoring` | `workoutsEnabled = true` |
+| `startSleepMonitoring` | `sleepEnabled = true` |
+| `startMetricMonitoring` | adds metric key to `enabledMetricKeys` |
+| `stopMetricMonitoring` | removes metric key from `enabledMetricKeys` |
+
 **`autoStartIfConfigured()` guard chain** (WorkoutServiceChannel, SleepDataManager, HealthMetricsManager)
 
-Each manager now guards with its flag before starting:
+Each manager guards with its flag before starting:
 ```
 1. isLoggedIn == true            → else skip
 2. delegate != nil               → else skip
-3. <subsystem flag> == true      → else skip  ← NEW
+3. <subsystem flag> == true      → else skip
 4. not already running           → else skip
 5. → start observer
 ```
 
-**`HealthMetricsManager.autoStartIfConfigured()`** — new method called from `startAllBackgroundMonitoring()`.
-Re-starts monitors for all types in `MonitoringConfig.enabledMetricKeys` on every app launch.
+**`autoStartPersistedSubsystems()`** (new internal method on `HumangoHealthPlugin`)
+— Called by `register(with:)`. Reads `MonitoringConfig` flags and calls each manager's
+`autoStartIfConfigured()`. Never writes flags — purely read-only.
+
+**`HealthMetricsManager.autoStartIfConfigured()`** — Re-starts monitors for all types
+in `MonitoringConfig.enabledMetricKeys`.
+
+**Lifecycle:**
+
+| Event | Flags | Observers |
+|---|---|---|
+| Fresh install, first launch | all `false` | none start |
+| Client calls `startAllBackgroundMonitoring()` | workouts + sleep armed | start |
+| Client calls `startSleepBackgroundMonitoring()` | sleep armed only | sleep starts |
+| Flutter calls `startWorkoutMonitoring` | workouts armed | starts |
+| Kill + relaunch | flags read from UserDefaults | only armed subsystems restart |
+| New login (`false → true`) | `clearAll()` → all `false` | must re-arm |
 
 ---
 
