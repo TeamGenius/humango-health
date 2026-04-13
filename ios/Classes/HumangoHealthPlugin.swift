@@ -136,7 +136,7 @@ public class HumangoHealthPlugin: NSObject, FlutterPlugin {
           workoutReadChannel.handle(call, result: result)
       } else if ["scheduleWorkoutsFromFlutter", "clearAppleScheduledWorkouts", "requestAuthorizationForWorkoutPush", "getScheduledWorkouts", "computeWorkoutJsonHash", "removeAllScheduledWorkouts", "removeScheduledWorkouts"].contains(call.method) {
           WorkoutPlanManager.shared.handle(call, result: result)
-      } else if ["getSleepData", "startSleepMonitoring", "stopSleepMonitoring", "calculateSleepPayload"].contains(call.method) {
+      } else if ["getSleepData", "calculateSleepPayload", "fetchSleepSamples"].contains(call.method) {
           SleepDataManager.shared.handle(call, result: result)
       } else if ["fetchHealthMetric", "startMetricMonitoring", "stopMetricMonitoring", "stopAllMetricMonitoring"].contains(call.method) {
           HealthMetricsManager.shared.handle(call, result: result)

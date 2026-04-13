@@ -148,7 +148,7 @@ public class SleepDataManager: NSObject, AppLifecycleObserver {
     public func handle(_ call: FlutterMethodCall, result: @escaping FlutterResult) {
         let method = call.method
         let requiresLogin = [
-            "getSleepData", "startSleepMonitoring", "calculateSleepPayload",
+            "getSleepData", "calculateSleepPayload", "fetchSleepSamples",
         ].contains(method)
         if requiresLogin {
             guard UserAuthStateManager.shared.guardLoggedInForHealthData(result: result) else { return }
@@ -156,16 +156,13 @@ public class SleepDataManager: NSObject, AppLifecycleObserver {
         switch method {
         case "getSleepData":
             handleGetSleepData(call, result: result)
-            
-        case "startSleepMonitoring":
-            handleStartMonitoring(call, result: result)
-            
-        case "stopSleepMonitoring":
-            handleStopMonitoring(result: result)
 
         case "calculateSleepPayload":
             handleCalculateSleepPayload(call, result: result)
-            
+
+        case "fetchSleepSamples":
+            handleFetchSleepSamples(call, result: result)
+
         default:
             result(FlutterMethodNotImplemented)
         }
@@ -204,42 +201,45 @@ public class SleepDataManager: NSObject, AppLifecycleObserver {
         }
     }
     
-    private func handleStartMonitoring(_ call: FlutterMethodCall, result: @escaping FlutterResult) {
-        // Parse start date from arguments (defaults to 24 hours ago)
-        var startDate = Date().addingTimeInterval(-24 * 60 * 60)
-        
-        if let args = call.arguments as? [String: Any],
-           let startStr = args["startDate"] as? String {
-            if let parsed = DateUtils.parseDate(from: startStr) {
-                startDate = parsed
+    /// Exposes `fetchSleepSamples(from:to:)` over the Flutter method channel.
+    /// Returns the raw HealthKit `HKCategorySample` array serialised as a list of
+    /// sample dictionaries — the same shape as the `samples` array inside
+    /// `getSleepData`, but without any aggregation.
+    private func handleFetchSleepSamples(_ call: FlutterMethodCall, result: @escaping FlutterResult) {
+        var startDate: Date?
+        var endDate: Date?
+
+        if let args = call.arguments as? [String: Any] {
+            if let startStr = args["startDate"] as? String {
+                startDate = DateUtils.parseDate(from: startStr)
+            }
+            if let endStr = args["endDate"] as? String {
+                endDate = DateUtils.parseDate(from: endStr)
             }
         }
-        
-        monitorStartDate = startDate
-        MonitoringConfig.shared.sleepEnabled = true
-        
-        // Both API and localStorage modes use the same foreground/background strategy:
-        // Foreground → HKAnchoredObjectQueryDescriptor (live streaming)
-        // Background → HKObserverQuery
-        // The delivery mode (API vs EventChannel) is handled inside each path.
-        if AppLifecycleManager.shared.isInForeground {
-            startLiveUpdates()
-        } else {
-            startBackgroundMonitoring()
+
+        let queryEndDate   = endDate   ?? Date()
+        let queryStartDate = startDate ?? Calendar.current.date(byAdding: .hour, value: -24, to: queryEndDate)!
+
+        Task {
+            do {
+                let samples = try await fetchSleepSamples(from: queryStartDate, to: queryEndDate)
+                let serialised: [[String: Any]] = samples.map { self.convertSampleToDict($0) }
+                DispatchQueue.main.async {
+                    result(serialised)
+                }
+            } catch {
+                DispatchQueue.main.async {
+                    result(FlutterError(
+                        code: "SLEEP_FETCH_ERROR",
+                        message: error.localizedDescription,
+                        details: nil
+                    ))
+                }
+            }
         }
-        
-        debugPrint("🛍️ [SleepDataManager] started monitoring from \(isoFormatter.string(from: startDate))")
-        result(["status": "started", "startDate": isoFormatter.string(from: startDate)])
     }
 
-    private func handleStopMonitoring(result: @escaping FlutterResult) {
-        stopLiveUpdates()
-        stopBackgroundMonitoring()
-        monitorStartDate = nil
-        debugPrint("🛏️ [SleepDataManager] stopped monitoring")
-        result(["status": "stopped"])
-    }
-    
     /// Exposes `calculateSleepPayload(from:)` over the Flutter method channel.
     /// Accepts optional `startDate`/`endDate` ISO8601 strings; defaults to the
     /// current 6 PM window when omitted.
@@ -301,94 +301,52 @@ public class SleepDataManager: NSObject, AppLifecycleObserver {
                 NSLocalizedDescriptionKey: "HealthKit is not available on this device"
             ])
         }
-        
-        guard let sleepType = HKObjectType.categoryType(forIdentifier: .sleepAnalysis) else {
-            throw NSError(domain: "SleepData", code: 2, userInfo: [
-                NSLocalizedDescriptionKey: "Sleep analysis type is not available"
-            ])
-        }
-        
-        // Note: We cannot check read authorization status - Apple's privacy model
-        // returns .notDetermined even if user granted/denied read access.
-        // We simply query the data and return empty results if access is denied.
-        
-        // Define time range: use provided dates or default to last 24 hours
-        let queryEndDate = endDate ?? Date()
-        let queryStartDate = startDate ?? Calendar.current.date(byAdding: .hour, value: -24, to: queryEndDate)!
-        
-        // Use [] (overlap) so any sample that overlaps the window is included.
-        // .strictStartDate would exclude sessions that started before the window
-        // (e.g. sleep beginning before midnight when querying from midnight).
-        let predicate = HKQuery.predicateForSamples(
-            withStart: queryStartDate,
-            end: queryEndDate,
-            options: []
-        )
-        
-        let sortDescriptor = NSSortDescriptor(
-            key: HKSampleSortIdentifierStartDate,
-            ascending: true
-        )
-        
-        // Execute query
-        let samples = try await withCheckedThrowingContinuation { (continuation: CheckedContinuation<[HKCategorySample], Error>) in
-            let query = HKSampleQuery(
-                sampleType: sleepType,
-                predicate: predicate,
-                limit: HKObjectQueryNoLimit,
-                sortDescriptors: [sortDescriptor]
-            ) { _, results, error in
-                if let error = error {
-                    continuation.resume(throwing: error)
-                    return
-                }
-                
-                let categorySamples = results as? [HKCategorySample] ?? []
-                continuation.resume(returning: categorySamples)
-            }
-            
-            healthStore.execute(query)
-        }
-        
-        // Convert samples to JSON
-        var sleepSamples: [[String: Any]] = []
-        var totalSleepSeconds: Double = 0
-        var stageTotals: [String: Double] = [
-            "inBed": 0,
-            "asleepUnspecified": 0,
-            "awake": 0,
-            "asleepCore": 0,
-            "asleepDeep": 0,
-            "asleepREM": 0
-        ]
-        
-        for sample in samples {
-            let sampleDict = convertSampleToDict(sample)
-            sleepSamples.append(sampleDict)
 
-            // Keep raw duration as provided by HealthKit with no library-side rounding.
-            let durationSeconds = sample.endDate.timeIntervalSince(sample.startDate)
-            let stageName = sleepStageString(from: sample.value)
-            
-            // Accumulate totals (exclude "inBed" and "awake" from total sleep)
-            stageTotals[stageName, default: 0] += durationSeconds
-            
-            if stageName != "inBed" && stageName != "awake" {
-                totalSleepSeconds += durationSeconds
-            }
+        let queryEndDate   = endDate   ?? Date()
+        let queryStartDate = startDate ?? Calendar.current.date(byAdding: .hour, value: -24, to: queryEndDate)!
+
+        // Single canonical HealthKit query path shared with the monitoring pipeline.
+        let rawSamples = try await fetchSleepSamples(from: queryStartDate, to: queryEndDate)
+
+        // Delegate all duration/aggregation logic to calculateSleepPayload —
+        // this applies the Apple-source filter, gap-based session grouping,
+        // and stage-level totals, identical to the background monitoring path.
+        let payload = calculateSleepPayload(from: rawSamples)
+
+        let totalSleepSeconds = payload?["TOTAL_SLEEP"]       as? Double ?? 0
+        let sleepInBed        = payload?["SLEEP_IN_BED"]      as? Double ?? 0
+        let sleepCore         = payload?["SLEEP_LIGHT"]        as? Double ?? 0
+        let sleepDeep         = payload?["SLEEP_DEEP"]         as? Double ?? 0
+        let sleepREM          = payload?["SLEEP_REM"]          as? Double ?? 0
+        let sleepUnspecified  = payload?["SLEEP_UNSPECIFIED"]  as? Double ?? 0
+        let sleepAwake        = payload?["SLEEP_AWAKE"]        as? Double ?? 0
+
+        // Build the per-sample list using the same Apple-source filter applied
+        // internally by calculateSleepPayload so sample list and totals are consistent.
+        let appleSamples = rawSamples.filter {
+            $0.sourceRevision.source.bundleIdentifier.hasPrefix("com.apple.health")
         }
-        
-        debugPrint("🛏️ [SleepDataManager] fetched \(samples.count) samples from \(isoFormatter.string(from: queryStartDate)) to \(isoFormatter.string(from: queryEndDate))")
-        
+        let filteredSamples: [HKCategorySample] = appleSamples.isEmpty ? rawSamples : appleSamples
+        let sleepSamples = filteredSamples.map { convertSampleToDict($0) }
+
+        debugPrint("🛏️ [SleepDataManager] fetchSleepData: \(filteredSamples.count) samples (raw=\(rawSamples.count)) totalSleep=\(Int(totalSleepSeconds))s from \(isoFormatter.string(from: queryStartDate)) to \(isoFormatter.string(from: queryEndDate))")
+
         return [
-            "samples": sleepSamples,
-            "sampleCount": samples.count,
-            "totalSleepSeconds": totalSleepSeconds,
-            "totalSleepMinutes": totalSleepSeconds / 60.0,
-            "totalSleepHours": totalSleepSeconds / 3600.0,
-            "stageTotals": stageTotals.mapValues { ["seconds": $0, "minutes": $0 / 60.0] },
+            "samples":            sleepSamples,
+            "sampleCount":        filteredSamples.count,
+            "totalSleepSeconds":  totalSleepSeconds,
+            "totalSleepMinutes":  totalSleepSeconds / 60.0,
+            "totalSleepHours":    totalSleepSeconds / 3600.0,
+            "stageTotals": [
+                "inBed":             ["seconds": sleepInBed,        "minutes": sleepInBed        / 60.0],
+                "asleepUnspecified": ["seconds": sleepUnspecified,  "minutes": sleepUnspecified  / 60.0],
+                "awake":             ["seconds": sleepAwake,        "minutes": sleepAwake        / 60.0],
+                "asleepCore":        ["seconds": sleepCore,         "minutes": sleepCore         / 60.0],
+                "asleepDeep":        ["seconds": sleepDeep,         "minutes": sleepDeep         / 60.0],
+                "asleepREM":         ["seconds": sleepREM,          "minutes": sleepREM          / 60.0],
+            ] as [String: Any],
             "fetchedFrom": isoFormatter.string(from: queryStartDate),
-            "fetchedTo": isoFormatter.string(from: queryEndDate)
+            "fetchedTo":   isoFormatter.string(from: queryEndDate)
         ]
     }
     
@@ -556,6 +514,7 @@ public class SleepDataManager: NSObject, AppLifecycleObserver {
     // MARK: - Payload Delivery
 
     func deliverPayload(samples: [HKCategorySample], queryStart: Date, queryEnd: Date) async {
+        
         guard let payload = calculateSleepPayload(from: samples) else {
             SleepRemoteLogger.log(.info, step: "payload", message: "calculateSleepPayload returned nil (no valid groups)", context: ["class": "SleepDataManager", "method": "deliverPayload"])
             return
@@ -648,7 +607,7 @@ public class SleepDataManager: NSObject, AppLifecycleObserver {
 
     // MARK: - Raw Sample Fetch (async, throws)
 
-    private func fetchSleepSamples(from start: Date, to end: Date) async throws -> [HKCategorySample] {
+    func fetchSleepSamples(from start: Date, to end: Date) async throws -> [HKCategorySample] {
         guard let sleepType = HKObjectType.categoryType(forIdentifier: .sleepAnalysis) else {
             throw NSError(domain: "SleepData", code: 2, userInfo: [NSLocalizedDescriptionKey: "Sleep analysis type unavailable"])
         }
@@ -661,6 +620,20 @@ public class SleepDataManager: NSObject, AppLifecycleObserver {
                 if let error = error { cont.resume(throwing: error); return }
                 let samples = results as? [HKCategorySample] ?? []
                 debugPrint("🛏️ [SleepDataManager] fetchSleepSamples: \(samples.count) samples from \(self.isoFormatter.string(from: start)) to \(self.isoFormatter.string(from: end))")
+                for (i, s) in samples.enumerated() {
+                    let dur = s.endDate.timeIntervalSince(s.startDate)
+                    let stage: String
+                    switch HKCategoryValueSleepAnalysis(rawValue: s.value) {
+                    case .inBed:             stage = "inBed"
+                    case .asleepUnspecified: stage = "asleepUnspecified"
+                    case .awake:             stage = "awake"
+                    case .asleepCore:        stage = "asleepCore"
+                    case .asleepDeep:        stage = "asleepDeep"
+                    case .asleepREM:         stage = "asleepREM"
+                    default:                 stage = "unknown(\(s.value))"
+                    }
+                    debugPrint("🛏️ [SleepDataManager]   [\(i)] \(stage) | \(self.isoFormatter.string(from: s.startDate)) → \(self.isoFormatter.string(from: s.endDate)) | \(Int(dur / 60))m | src=\(s.sourceRevision.source.name) (\(s.sourceRevision.source.bundleIdentifier))")
+                }
                 cont.resume(returning: samples)
             }
             healthStore.execute(q)
@@ -681,35 +654,13 @@ public class SleepDataManager: NSObject, AppLifecycleObserver {
     /// regardless of the user-visible device name — all third-party samples are discarded
     /// before aggregation. If no Apple samples exist, all samples are used (third-party only).
     private func buildAggregatedPayload(samples: [HKCategorySample], queryStart: Date, queryEnd: Date) -> [String: Any]? {
-        // --- Source priority filter ---
-        // Bundle IDs are stable regardless of user-assigned device names:
-        //   Apple Watch  → "com.apple.health.<device-UUID>"
-        //   iPhone Health app → "com.apple.health"
-        //   Third-party apps → any other prefix (e.g. "com.garmin.connect")
-        // When Apple-platform samples are present, ignore all third-party samples.
-        let appleSamples = samples.filter {
-            $0.sourceRevision.source.bundleIdentifier.hasPrefix("com.apple.health")
-        }
-        let activeSamples: [HKCategorySample]
-        if appleSamples.isEmpty {
-            activeSamples = samples
-            debugPrint("\u{1F6CF}\u{FE0F} [SleepDataManager] buildAggregatedPayload: no Apple source — using all \(samples.count) sample(s)")
-        } else {
-            activeSamples = appleSamples
-            let droppedCount = samples.count - appleSamples.count
-            if droppedCount > 0 {
-                let droppedBundles = Set(
-                    samples
-                        .filter { !$0.sourceRevision.source.bundleIdentifier.hasPrefix("com.apple.health") }
-                        .map { $0.sourceRevision.source.bundleIdentifier }
-                )
-                debugPrint("\u{1F6CF}\u{FE0F} [SleepDataManager] buildAggregatedPayload: dropped \(droppedCount) third-party sample(s) from: \(droppedBundles.joined(separator: ", "))")
-            }
-        }
+        // Note: Apple-platform source priority filtering is applied upstream in
+        // calculateSleepPayload before this function is called. All samples
+        // passed here are already from a single source tier.
 
         // --- Group by source name ---
         var bySource: [String: [HKCategorySample]] = [:]
-        for s in activeSamples {
+        for s in samples {
             let name = s.sourceRevision.source.name
             bySource[name, default: []].append(s)
         }
@@ -805,8 +756,35 @@ public class SleepDataManager: NSObject, AppLifecycleObserver {
     func calculateSleepPayload(from samples: [HKCategorySample]) -> [String: Any]? {
         guard !samples.isEmpty else { return nil }
 
+        // ── Apple-platform source priority filter ──────────────────────────────
+        // If ANY sample originates from an Apple-platform source (bundle prefix
+        // `com.apple.health` covers both Apple Watch `com.apple.health.<device-UUID>`
+        // and the iPhone Health app) all third-party samples are discarded before
+        // grouping. This prevents third-party app data from contaminating session
+        // detection or the aggregated payload. If no Apple samples exist, all
+        // samples are used (third-party only).
+        let appleSamples = samples.filter {
+            $0.sourceRevision.source.bundleIdentifier.hasPrefix("com.apple.health")
+        }
+        let filteredSamples: [HKCategorySample]
+        if appleSamples.isEmpty {
+            filteredSamples = samples
+            debugPrint("🛏️ [SleepDataManager] calculateSleepPayload: no Apple source — using all \(samples.count) sample(s)")
+        } else {
+            filteredSamples = appleSamples
+            let droppedCount = samples.count - appleSamples.count
+            if droppedCount > 0 {
+                let droppedBundles = Set(
+                    samples
+                        .filter { !$0.sourceRevision.source.bundleIdentifier.hasPrefix("com.apple.health") }
+                        .map { $0.sourceRevision.source.bundleIdentifier }
+                )
+                debugPrint("🛏️ [SleepDataManager] calculateSleepPayload: dropped \(droppedCount) third-party sample(s) from: \(droppedBundles.joined(separator: ", "))")
+            }
+        }
+
         // ── Step 1: Sort by startDate ──────────────────────────────────────────
-        let sorted = samples.sorted { $0.startDate < $1.startDate }
+        let sorted = filteredSamples.sorted { $0.startDate < $1.startDate }
 
         // ── Step 2: Group consecutive samples (gap ≤ 2 hours) ─────────────────
         let maxGap: TimeInterval     = 2 * 60 * 60   // 2 hours

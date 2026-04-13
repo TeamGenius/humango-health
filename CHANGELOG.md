@@ -1,3 +1,62 @@
+## 0.0.37 — 2026-04-13
+
+### Breaking Changes
+
+#### Sleep — removed `startMonitoring` / `stopMonitoring` Flutter API
+
+The `startMonitoring({startDate})` and `stopMonitoring()` Dart methods have been
+removed from `SleepDataManager` along with their native counterparts:
+
+- Removed Dart: `SleepDataManager.startMonitoring()`, `SleepDataManager.stopMonitoring()`
+- Removed native handlers: `handleStartMonitoring`, `handleStopMonitoring`
+- Removed channel methods from routing: `startSleepMonitoring`, `stopSleepMonitoring`
+
+Sleep background monitoring is started exclusively through the native iOS API
+(`HumangoHealthPlugin.shared.startSleepBackgroundMonitoring()` /
+`startAllBackgroundMonitoring()`). There is no Flutter-side start/stop API.
+
+### Features
+
+#### Sleep — `getSleepData` now uses `calculateSleepPayload` for duration calculation
+
+`fetchSleepData` (backing the `getSleepData` method channel call) has been refactored
+to use the same calculation pipeline as the background monitoring path:
+
+- Delegates to `fetchSleepSamples(from:to:)` — single canonical HealthKit query with debug logging
+- Delegates duration math to `calculateSleepPayload` — applies Apple-source priority filter
+  (`com.apple.health` prefix), gap-based session grouping (≤ 2 h), and span filter (≥ 3 h)
+- `stageTotals` values now come from `SLEEP_*` payload keys rather than raw per-sample accumulation
+- `samples` array is filtered with the same `com.apple.health` prefix filter so sample list
+  and totals are consistent
+
+**Before:** `getSleepData` had its own duplicate `HKSampleQuery`, no Apple-source filter,
+and manually accumulated stage durations per-sample.
+
+**After:** `getSleepData` → `fetchSleepSamples` → `calculateSleepPayload` — identical
+pipeline to background monitoring.
+
+---
+
+## 0.0.36 — 2026-04-13
+
+### Features
+
+#### Sleep Data — expose raw `fetchSleepSamples` query (Flutter + iOS bridge)
+
+Added a new sleep method-channel API to fetch raw `HKCategorySample` sleep records
+for an explicit date window (without aggregation):
+
+- New channel method: `fetchSleepSamples`
+- Routed in `HumangoHealthPlugin.handle(...)` to `SleepDataManager`
+- New native handler `handleFetchSleepSamples` in `SleepDataManager`
+- Supports optional ISO `startDate` / `endDate` args (defaults to last 24 hours)
+- Returns serialized sample dictionaries in the same shape as
+  `getSleepData().samples`
+- New Dart API: `SleepDataManager.fetchSleepSamples({startDate, endDate})`
+  returning `List<SleepSample>`
+
+---
+
 ## 0.0.35 — 2026-04-11
 
 ### Bug Fixes

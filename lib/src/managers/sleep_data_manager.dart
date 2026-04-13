@@ -18,14 +18,16 @@ import '../models/sleep_sample.dart';
 /// ```dart
 /// final sleepManager = SleepDataManager();
 ///
-/// // One-shot fetch
+/// // One-shot fetch with calculateSleepPayload pipeline applied internally
 /// final response = await sleepManager.getSleepData(
 ///   startDate: DateTime.now().subtract(const Duration(hours: 24)),
 /// );
 ///
-/// // Start monitoring (sessions delivered to HumangoHealthDataDelegate)
-/// await sleepManager.startMonitoring();
-/// await sleepManager.stopMonitoring();
+/// // Raw samples (no aggregation, no source filter)
+/// final samples = await sleepManager.fetchSleepSamples(startDate: ..., endDate: ...);
+///
+/// // Calculated payload (full pipeline)
+/// final payload = await sleepManager.calculateSleepPayload(startDate: ..., endDate: ...);
 /// ```
 class SleepDataManager {
   static const MethodChannel _channel = MethodChannel(
@@ -75,44 +77,39 @@ class SleepDataManager {
     }
   }
 
-  /// Starts monitoring sleep data changes.
+  /// Fetches raw sleep samples from HealthKit for the specified time range
+  /// without any aggregation or grouping.
   ///
-  /// In **foreground**: Uses HKAnchoredObjectQueryDescriptor to accumulate
-  /// samples into session state.
+  /// This is the direct equivalent of calling `fetchSleepSamples(from:to:)` on
+  /// the native `SleepDataManager`. Returns every `HKCategorySample` in the
+  /// window as a list of [SleepSample] objects.
   ///
-  /// In **background**: Uses HKObserverQuery to detect changes and accumulates
-  /// samples into session state.
-  ///
-  /// When the session ends, native code calls
-  /// `HumangoHealthDataDelegate.onSleepSessionReady(json:sessionId:)` — there is
-  /// no Dart stream or local queue to drain for finalized sessions.
-  Future<Map<String, dynamic>> startMonitoring({DateTime? startDate}) async {
+  /// **Parameters:**
+  /// - [startDate]: Start of the time range (defaults to 24 hours ago)
+  /// - [endDate]: End of the time range (defaults to now)
+  Future<List<SleepSample>> fetchSleepSamples({
+    DateTime? startDate,
+    DateTime? endDate,
+  }) async {
+    final effectiveEndDate = endDate ?? DateTime.now();
     final effectiveStartDate =
-        startDate ?? DateTime.now().subtract(const Duration(hours: 24));
+        startDate ?? effectiveEndDate.subtract(const Duration(hours: 24));
 
     try {
-      final result = await _channel.invokeMethod<Map<dynamic, dynamic>>(
-        'startSleepMonitoring',
-        {'startDate': effectiveStartDate.toUtc().toIso8601String()},
-      );
-      return Map<String, dynamic>.from(result ?? {});
+      final result = await _channel
+          .invokeMethod<List<dynamic>>('fetchSleepSamples', {
+            'startDate': effectiveStartDate.toUtc().toIso8601String(),
+            'endDate': effectiveEndDate.toUtc().toIso8601String(),
+          });
+
+      if (result == null) return [];
+      return result
+          .map((e) => SleepSample.fromMap(Map<String, dynamic>.from(e as Map)))
+          .toList();
     } on PlatformException catch (e) {
       throw SleepDataException(
         code: e.code,
-        message: e.message ?? 'Failed to start sleep monitoring',
-        details: e.details,
-      );
-    }
-  }
-
-  /// Stops monitoring sleep data changes.
-  Future<void> stopMonitoring() async {
-    try {
-      await _channel.invokeMethod<Map<dynamic, dynamic>>('stopSleepMonitoring');
-    } on PlatformException catch (e) {
-      throw SleepDataException(
-        code: e.code,
-        message: e.message ?? 'Failed to stop sleep monitoring',
+        message: e.message ?? 'Unknown error fetching sleep samples',
         details: e.details,
       );
     }
