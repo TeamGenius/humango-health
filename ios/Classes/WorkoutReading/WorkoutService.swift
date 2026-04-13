@@ -42,24 +42,56 @@ final class WorkoutService: AppLifecycleObserver {
     // so a cold background relaunch by HealthKit correctly registers the observer.
     func start() async {
         authorized = true
-        // Prime the anchor to the current HealthKit position BEFORE opening the live
-        // stream or installing the background observer. This prevents both paths from
-        // replaying workouts that already exist in HealthKit — only workouts written
-        // AFTER monitoring starts will be delivered to handleWorkouts.
-        await primeAnchor()
-        let mode = AppLifecycleManager.shared.isInForeground ? "foreground" : "background"
-        SleepRemoteLogger.log(.info, step: "workoutService.start", message: "starting workout service", context: [
-            "class": "WorkoutService",
-            "method": "start",
-            "mode": mode,
-            "startDate": startDate.description,
-        ], subsystem: "WorkoutService")
+
         if AppLifecycleManager.shared.isInForeground {
+            // Foreground: no timing pressure. Prime the anchor first so the live stream
+            // only surfaces workouts written after monitoring starts, then enable delivery.
+            await primeAnchor()
+            await enableBackgroundDelivery()
             debugPrint("[Humango] WorkoutService: start → foreground mode")
+            SleepRemoteLogger.log(.info, step: "workoutService.start", message: "starting workout service in foreground", context: [
+                "class": "WorkoutService",
+                "method": "start",
+                "mode": "foreground",
+                "startDate": startDate.description,
+            ], subsystem: "WorkoutService")
             startLiveUpdates()
         } else {
+            // Cold background relaunch: install the HKObserverQuery FIRST so HealthKit
+            // can call its handler without delay. primeAnchor and enableBackgroundDelivery
+            // are called immediately after — still well within the background execution window.
+            // If the observer fires before primeAnchor completes the anchor is nil; the
+            // resulting full-replay is handled by WorkoutDedup in the delegate.
             debugPrint("[Humango] WorkoutService: start → background mode (cold background relaunch)")
-            startBackgroundMonitoring()
+            SleepRemoteLogger.log(.info, step: "workoutService.start", message: "starting workout service in background — installing observer first", context: [
+                "class": "WorkoutService",
+                "method": "start",
+                "mode": "background",
+                "startDate": startDate.description,
+            ], subsystem: "WorkoutService")
+            startBackgroundMonitoring()   // synchronous — HKObserverQuery registered immediately
+            await primeAnchor()
+            await enableBackgroundDelivery()
+        }
+    }
+
+    /// Enables background delivery for workout type once per session. Idempotent —
+    /// calling it again when already enabled is a no-op from HealthKit's perspective.
+    private func enableBackgroundDelivery() async {
+        do {
+            try await healthStore.enableBackgroundDelivery(for: .workoutType(), frequency: .immediate)
+            debugPrint("[Humango] WorkoutService: enableBackgroundDelivery(workoutType) — success (immediate)")
+            SleepRemoteLogger.log(.info, step: "workoutService.enableBackgroundDelivery", message: "background delivery enabled", context: [
+                "class": "WorkoutService",
+                "method": "enableBackgroundDelivery",
+            ], subsystem: "WorkoutService")
+        } catch {
+            debugPrint("[Humango] WorkoutService: enableBackgroundDelivery(workoutType) — failed: \(error)")
+            SleepRemoteLogger.log(.error, step: "workoutService.enableBackgroundDelivery", message: "enableBackgroundDelivery failed", context: [
+                "class": "WorkoutService",
+                "method": "enableBackgroundDelivery",
+                "error": "\(error)",
+            ], subsystem: "WorkoutService")
         }
     }
     
@@ -316,19 +348,8 @@ final class WorkoutService: AppLifecycleObserver {
             debugPrint("[Humango] WorkoutService: startBackgroundMonitoring skipped — not authorized")
             return
         }
-        debugPrint("[Humango] WorkoutService: startBackgroundMonitoring — enabling background delivery + installing observer")
-        SleepRemoteLogger.log(.info, step: "startBackgroundMonitoring", message: "registering background delivery + observer", context: ["class": "WorkoutService", "method": "startBackgroundMonitoring"], subsystem: "WorkoutService")
-
-        Task {
-            do {
-                try await healthStore.enableBackgroundDelivery(for: .workoutType(), frequency: .immediate)
-                debugPrint("[Humango] WorkoutService: enableBackgroundDelivery(workoutType) — success (immediate)")
-                SleepRemoteLogger.log(.info, step: "startBackgroundMonitoring", message: "background delivery enabled", context: ["class": "WorkoutService", "method": "startBackgroundMonitoring"], subsystem: "WorkoutService")
-            } catch {
-                debugPrint("[Humango] WorkoutService: enableBackgroundDelivery(workoutType) — failed: \(error)")
-                SleepRemoteLogger.log(.error, step: "startBackgroundMonitoring", message: "enableBackgroundDelivery failed", context: ["class": "WorkoutService", "method": "startBackgroundMonitoring", "error": "\(error)"], subsystem: "WorkoutService")
-            }
-        }
+        debugPrint("[Humango] WorkoutService: startBackgroundMonitoring — installing background observer")
+        SleepRemoteLogger.log(.info, step: "startBackgroundMonitoring", message: "installing background observer", context: ["class": "WorkoutService", "method": "startBackgroundMonitoring"], subsystem: "WorkoutService")
 
         observer = HKObserverQuery(sampleType: .workoutType(), predicate: nil) { [weak self] _, completion, error in
             guard let self = self else { completion(); return }
@@ -373,15 +394,6 @@ final class WorkoutService: AppLifecycleObserver {
             observer = nil
             debugPrint("[Humango] WorkoutService: stopBackgroundMonitoring — observer removed")
             SleepRemoteLogger.log(.info, step: "bgMonitoring.stop", message: "background observer removed", context: ["class": "WorkoutService", "method": "stopBackgroundMonitoring"], subsystem: "WorkoutService")
-        }
-        healthStore.disableBackgroundDelivery(for: .workoutType()) { ok, err in
-            if let err {
-                debugPrint("[Humango] WorkoutService: disableBackgroundDelivery(workoutType) error — \(err)")
-                SleepRemoteLogger.log(.error, step: "bgMonitoring.disableDelivery", message: "disableBackgroundDelivery error", context: ["class": "WorkoutService", "method": "stopBackgroundMonitoring", "error": "\(err)"], subsystem: "WorkoutService")
-            } else {
-                debugPrint("[Humango] WorkoutService: disableBackgroundDelivery(workoutType) — ok=\(ok)")
-                SleepRemoteLogger.log(.info, step: "bgMonitoring.disableDelivery", message: "background delivery disabled", context: ["class": "WorkoutService", "method": "stopBackgroundMonitoring"], subsystem: "WorkoutService")
-            }
         }
     }
 
@@ -440,7 +452,7 @@ final class WorkoutService: AppLifecycleObserver {
                         "mode": "live",
                     ], subsystem: "WorkoutService")
                 } else {
-                    routeService.startBackgroundMonitoring()
+                    await routeService.startBackgroundMonitoring()
                     debugPrint("[Humango] WorkoutService: handleWorkouts — RouteService background monitoring started for uuid=\(deviceId)")
                     SleepRemoteLogger.log(.info, step: "handleWorkouts.routeMode", message: "RouteService started in background mode", context: [
                         "class": "WorkoutService",

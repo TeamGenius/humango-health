@@ -58,7 +58,7 @@ class RouteService {
     // MARK: - Mode switches
     func enterBackgroundMode() {
         stopLiveUpdates()
-        startBackgroundMonitoring()
+        Task { await startBackgroundMonitoring() }
     }
 
     func enterForegroundMode() {
@@ -177,16 +177,12 @@ class RouteService {
     }
 
     // MARK: - Background observer/wake-ups
-    func startBackgroundMonitoring() {
-        
-        
-        Task {
-                do {
-                    try await healthStore.enableBackgroundDelivery(for: HKSeriesType.workoutRoute(), frequency: .immediate)
-                } catch {
-                    debugPrint("[RouteService] enableBackgroundDelivery(workoutRoute) failed: \(error)")
-                }
-            }
+    func startBackgroundMonitoring() async {
+        do {
+            try await healthStore.enableBackgroundDelivery(for: HKSeriesType.workoutRoute(), frequency: .immediate)
+        } catch {
+            debugPrint("[RouteService] enableBackgroundDelivery(workoutRoute) failed: \(error)")
+        }
 
         observer = HKObserverQuery(sampleType: HKSeriesType.workoutRoute(), predicate: nil) { [weak self] _, completion, error in
                 guard let self = self else { completion(); return }
@@ -219,11 +215,6 @@ class RouteService {
             healthStore.stop(q)
             observer = nil
         }
-        healthStore.disableBackgroundDelivery(for: HKSeriesType.workoutRoute()) { _, err in
-                if let err {
-                    debugPrint("[RouteService] disableBackgroundDelivery(workoutRoute) error: \(err)")
-                }
-            }
     }
 
     // MARK: - Upsert routes + debounced build/push
@@ -247,7 +238,17 @@ class RouteService {
         guard !workoutRoutes.isEmpty else {
             routeDebounceTask?.cancel()
             routeDebounceTask = nil
-            await handleCompleteWorkout(location: [])
+            if AppLifecycleManager.shared.isInForeground {
+                // Foreground: fire-and-forget so fetchWorkoutRoute() returns promptly
+                // and startLiveUpdates() is not blocked waiting for the full delegate
+                // pipeline (which may include long waits in resolveScheduledWorkoutId).
+                // Mirrors the non-empty-routes debounce Task pattern below.
+                Task { [weak self] in await self?.handleCompleteWorkout(location: []) }
+            } else {
+                // Background: must await to keep the app alive until HealthKit's
+                // completion() is signalled after the full push pipeline finishes.
+                await handleCompleteWorkout(location: [])
+            }
             return
         }
 
@@ -328,30 +329,15 @@ class RouteService {
             dictMetaData["dataSource"] = workout.sourceRevision.source.name
             dictMetaData["iosVersion"] = ProcessInfo.processInfo.operatingSystemVersionString
 
-            // Resolve scheduleId via WorkoutPlan ID (primary), fall back to date+type matching
-            let workoutPlan = try? await workout.workoutPlan
-            if let workoutPlan = workoutPlan {
-                let planIdStr = workoutPlan.id.uuidString
-                debugPrint("[RouteService] workoutPlanId: \(planIdStr)")
-                if let scheduleId = ScheduledWorkoutStore.shared.findWorkoutByPlanId(planIdStr) {
-                    dictMetaData["isScheduledWorkout"] = true
-                    dictMetaData["scheduledWorkoutId"] = scheduleId
-                    debugPrint("[RouteService] matched scheduleId: \(scheduleId) via planId: \(planIdStr)")
-                } else {
-                    dictMetaData["isScheduledWorkout"] = false
-                    debugPrint("[RouteService] workoutPlanId: \(planIdStr) — no matching scheduleId in store")
-                }
+            // Lightweight date+type matching only — workoutPlan resolution is deferred
+            // to the client via resolveScheduledWorkoutId(workoutUUID:) to avoid hangs.
+            let scheduledWorkoutId = await getScheduledWorkoutId(workout)
+            dictMetaData["isScheduledWorkout"] = scheduledWorkoutId != nil
+            if let scheduleId = scheduledWorkoutId {
+                dictMetaData["scheduledWorkoutId"] = scheduleId
+                debugPrint("[RouteService] matched scheduleId: \(scheduleId) via date+type")
             } else {
-                // Fallback: date+type matching for workouts without a WorkoutPlan
-                debugPrint("[RouteService] workoutPlanId: nil — falling back to date+type matching")
-                let scheduledWorkoutId = await getScheduledWorkoutId(workout)
-                dictMetaData["isScheduledWorkout"] = scheduledWorkoutId != nil
-                if let scheduleId = scheduledWorkoutId {
-                    dictMetaData["scheduledWorkoutId"] = scheduleId
-                    debugPrint("[RouteService] matched scheduleId: \(scheduleId) via date+type fallback")
-                } else {
-                    debugPrint("[RouteService] scheduledWorkoutId: nil — not a scheduled workout")
-                }
+                debugPrint("[RouteService] scheduledWorkoutId: nil — not a scheduled workout")
             }
 
             let huWorkout = HuWorkout(

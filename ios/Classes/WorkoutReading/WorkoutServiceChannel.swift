@@ -149,8 +149,22 @@ class WorkoutServiceChannel: NSObject {
                 debugPrint("Read Workouts: Processing workout: \(workout.uuid.uuidString) type: \(workout.workoutActivityType.name)")
                debugPrint("Read Workouts: Processing workout:  metadata: \(workout.metadata)")
                
-               let workoutPlan = try? await workout.workoutPlan
-               debugPrint("Read Workouts: Processing workout: workoutPlan: \(String(describing: workoutPlan))")
+               let workoutPlan: WorkoutPlan? = await withCheckedContinuation { continuation in
+                   let lock = NSLock()
+                   var hasResumed = false
+                   func resumeOnce(with value: WorkoutPlan?) {
+                       lock.lock(); defer { lock.unlock() }
+                       guard !hasResumed else { return }
+                       hasResumed = true
+                       continuation.resume(returning: value)
+                   }
+                   Task.detached { resumeOnce(with: try? await workout.workoutPlan) }
+                   Task.detached {
+                       try? await Task.sleep(nanoseconds: 15_000_000_000) // 15s
+                       resumeOnce(with: nil)
+                   }
+               }
+               debugPrint("Read Workouts: Processing workout: workoutPlan: \(workoutPlan.map { $0.id.uuidString } ?? "nil or timed out")")
                 // Skip incomplete workouts
                 guard workout.endDate > workout.startDate else {
                     debugPrint("Read Workouts: Skipping incomplete workout: \(workout.uuid.uuidString)")
@@ -770,6 +784,168 @@ class WorkoutServiceChannel: NSObject {
             "count":  "\(results.count)",
         ], subsystem: "WorkoutReading")
         return results
+    }
+
+    /// Resolve whether a workout was scheduled via WorkoutKit by fetching its `workoutPlan`.
+    /// Returns a dictionary with `workoutPlanId` and `scheduledWorkoutId` (if found).
+    ///
+    /// This is intentionally separated from the read/monitoring pipelines because
+    /// `workout.workoutPlan` is an async WorkoutKit property that can hang indefinitely
+    /// when the network is unavailable. The client iOS app can call this on-demand
+    /// (e.g. after receiving the workout via `onWorkoutReady`) with its own timeout policy.
+    ///
+    /// ```swift
+    /// let result = await HumangoHealthPlugin.shared?.resolveScheduledWorkoutId(
+    ///     workoutUUID: "E3F1A2B4-..."
+    /// )
+    /// // result: ["workoutPlanId": "...", "scheduledWorkoutId": "...", "isScheduledWorkout": true]
+    /// ```
+    func resolveScheduledWorkoutId(workoutUUID: String) async -> [String: Any] {
+        SleepRemoteLogger.log(.info, step: "resolveScheduled.start", message: "resolving scheduled workout", context: [
+            "class": "WorkoutServiceChannel",
+            "method": "resolveScheduledWorkoutId",
+            "uuid": workoutUUID,
+        ], subsystem: "WorkoutReading")
+
+        // Step 1: Parse UUID
+        guard let uuid = UUID(uuidString: workoutUUID) else {
+            debugPrint("[WorkoutServiceChannel] resolveScheduledWorkoutId: ❌ STEP1 invalid UUID — \(workoutUUID)")
+            SleepRemoteLogger.log(.error, step: "resolveScheduled.step1.invalidUUID", message: "invalid UUID string", context: [
+                "class": "WorkoutServiceChannel", "method": "resolveScheduledWorkoutId", "uuid": workoutUUID,
+            ], subsystem: "WorkoutReading")
+            return ["error": "INVALID_UUID", "isScheduledWorkout": false]
+        }
+        debugPrint("[WorkoutServiceChannel] resolveScheduledWorkoutId: ✅ STEP1 UUID parsed: \(uuid)")
+        SleepRemoteLogger.log(.info, step: "resolveScheduled.step1.ok", message: "UUID parsed, querying HKWorkout", context: [
+            "class": "WorkoutServiceChannel", "method": "resolveScheduledWorkoutId", "uuid": workoutUUID,
+        ], subsystem: "WorkoutReading")
+
+        // Step 2: Fetch the HKWorkout by UUID
+        let predicate = HKQuery.predicateForObject(with: uuid)
+        let descriptor = HKSampleQueryDescriptor(
+            predicates: [.workout(predicate)],
+            sortDescriptors: [SortDescriptor(\.startDate, order: .reverse)],
+            limit: 1
+        )
+
+        let workout: HKWorkout
+        do {
+            guard let found = try await descriptor.result(for: healthStore).first else {
+                debugPrint("[WorkoutServiceChannel] resolveScheduledWorkoutId: ❌ STEP2 HKWorkout not found for UUID — \(workoutUUID)")
+                SleepRemoteLogger.log(.warn, step: "resolveScheduled.step2.notFound", message: "HKWorkout not found", context: [
+                    "class": "WorkoutServiceChannel", "method": "resolveScheduledWorkoutId", "uuid": workoutUUID,
+                ], subsystem: "WorkoutReading")
+                return ["error": "WORKOUT_NOT_FOUND", "isScheduledWorkout": false]
+            }
+            workout = found
+        } catch {
+            debugPrint("[WorkoutServiceChannel] resolveScheduledWorkoutId: ❌ STEP2 HKWorkout query threw error — \(error)")
+            SleepRemoteLogger.log(.error, step: "resolveScheduled.step2.queryError", message: "HKWorkout query failed", context: [
+                "class": "WorkoutServiceChannel", "method": "resolveScheduledWorkoutId",
+                "uuid": workoutUUID, "error": error.localizedDescription,
+            ], subsystem: "WorkoutReading")
+            return ["error": "QUERY_ERROR", "isScheduledWorkout": false]
+        }
+
+        debugPrint("[WorkoutServiceChannel] resolveScheduledWorkoutId: ✅ STEP2 HKWorkout found — type=\(workout.workoutActivityType.name) start=\(workout.startDate)")
+        SleepRemoteLogger.log(.info, step: "resolveScheduled.step2.ok", message: "HKWorkout found, fetching workoutPlan", context: [
+            "class": "WorkoutServiceChannel", "method": "resolveScheduledWorkoutId",
+            "uuid": workoutUUID, "type": workout.workoutActivityType.name,
+        ], subsystem: "WorkoutReading")
+
+        // Step 3: Wait until at least 2 minutes have elapsed since workout end before fetching
+        // workoutPlan. WorkoutKit needs time to sync after a workout completes — fetching
+        // too soon causes it to hang waiting for the server.
+        let minWaitSeconds: TimeInterval = 2 * 60
+        let elapsed = Date().timeIntervalSince(workout.endDate)
+        if elapsed < minWaitSeconds {
+            let waitSeconds = minWaitSeconds - elapsed
+            debugPrint("[WorkoutServiceChannel] resolveScheduledWorkoutId: ⏳ STEP3 workout ended \(Int(elapsed))s ago — waiting \(Int(waitSeconds))s before fetching workoutPlan")
+            SleepRemoteLogger.log(.info, step: "resolveScheduled.step3.waiting", message: "waiting before fetching workoutPlan", context: [
+                "class": "WorkoutServiceChannel", "method": "resolveScheduledWorkoutId",
+                "uuid": workoutUUID,
+                "elapsedSinceEnd": "\(Int(elapsed))s",
+                "waitingFor": "\(Int(waitSeconds))s",
+            ], subsystem: "WorkoutReading")
+            try? await Task.sleep(nanoseconds: UInt64(waitSeconds * 1_000_000_000))
+            debugPrint("[WorkoutServiceChannel] resolveScheduledWorkoutId: ✅ STEP3 wait complete — proceeding to fetch workoutPlan")
+        } else {
+            debugPrint("[WorkoutServiceChannel] resolveScheduledWorkoutId: ✅ STEP3 workout ended \(Int(elapsed))s ago — no wait needed")
+        }
+
+        debugPrint("[WorkoutServiceChannel] resolveScheduledWorkoutId: ⏳ STEP3 calling workout.workoutPlan (15s timeout)…")
+        SleepRemoteLogger.log(.info, step: "resolveScheduled.step3.planStart", message: "calling workout.workoutPlan NOW", context: [
+            "class": "WorkoutServiceChannel", "method": "resolveScheduledWorkoutId", "uuid": workoutUUID,
+        ], subsystem: "WorkoutReading")
+
+        // Race workout.workoutPlan against a 15-second hard timeout.
+        // withTaskGroup is NOT used here because it implicitly awaits all child tasks
+        // before returning — even after cancelAll() — so a non-cancellable WorkoutKit
+        // property would still hang. withCheckedContinuation + two detached tasks gives
+        // a true first-wins race; the losing task is abandoned (acceptable leak — it
+        // will complete/fail on its own).
+        let workoutPlan: WorkoutPlan? = await withCheckedContinuation { continuation in
+            let lock = NSLock()
+            var hasResumed = false
+
+            func resumeOnce(with value: WorkoutPlan?) {
+                lock.lock()
+                defer { lock.unlock() }
+                guard !hasResumed else { return }
+                hasResumed = true
+                continuation.resume(returning: value)
+            }
+
+            Task.detached { resumeOnce(with: try? await workout.workoutPlan) }
+            Task.detached {
+                try? await Task.sleep(nanoseconds: 15_000_000_000) // 15s
+                resumeOnce(with: nil)
+            }
+        }
+
+        let timedOut = workoutPlan == nil
+        debugPrint("[WorkoutServiceChannel] resolveScheduledWorkoutId: ✅ STEP3 workout.workoutPlan returned — plan=\(workoutPlan == nil ? (timedOut ? "TIMED OUT" : "nil") : workoutPlan!.id.uuidString)")
+        SleepRemoteLogger.log(.info, step: "resolveScheduled.step3.planDone", message: "workout.workoutPlan returned", context: [
+            "class": "WorkoutServiceChannel", "method": "resolveScheduledWorkoutId",
+            "uuid": workoutUUID,
+            "planId": workoutPlan?.id.uuidString ?? "nil",
+            "timedOut": "\(timedOut)",
+        ], subsystem: "WorkoutReading")
+
+        guard let resolvedPlan = workoutPlan else {
+            return ["isScheduledWorkout": false, "timedOut": timedOut]
+        }
+
+        // Step 4: Look up scheduleId
+        let planIdStr = resolvedPlan.id.uuidString
+        debugPrint("[WorkoutServiceChannel] resolveScheduledWorkoutId: ✅ STEP4 looking up planId=\(planIdStr) in ScheduledWorkoutStore")
+        SleepRemoteLogger.log(.info, step: "resolveScheduled.step4.lookup", message: "looking up planId in store", context: [
+            "class": "WorkoutServiceChannel", "method": "resolveScheduledWorkoutId",
+            "uuid": workoutUUID, "planId": planIdStr,
+        ], subsystem: "WorkoutReading")
+
+        if let scheduleId = ScheduledWorkoutStore.shared.findWorkoutByPlanId(planIdStr) {
+            debugPrint("[WorkoutServiceChannel] resolveScheduledWorkoutId: ✅ STEP4 matched scheduleId=\(scheduleId)")
+            SleepRemoteLogger.log(.info, step: "resolveScheduled.matched", message: "matched scheduled workout", context: [
+                "class": "WorkoutServiceChannel", "method": "resolveScheduledWorkoutId",
+                "uuid": workoutUUID, "planId": planIdStr, "scheduleId": scheduleId,
+            ], subsystem: "WorkoutReading")
+            return [
+                "isScheduledWorkout": true,
+                "workoutPlanId": planIdStr,
+                "scheduledWorkoutId": scheduleId,
+            ]
+        } else {
+            debugPrint("[WorkoutServiceChannel] resolveScheduledWorkoutId: ℹ️ STEP4 planId found but no matching scheduleId in store")
+            SleepRemoteLogger.log(.info, step: "resolveScheduled.noMatch", message: "planId found but no matching scheduleId", context: [
+                "class": "WorkoutServiceChannel", "method": "resolveScheduledWorkoutId",
+                "uuid": workoutUUID, "planId": planIdStr,
+            ], subsystem: "WorkoutReading")
+            return [
+                "isScheduledWorkout": false,
+                "workoutPlanId": planIdStr,
+            ]
+        }
     }
 
     /// Stops all active monitoring.

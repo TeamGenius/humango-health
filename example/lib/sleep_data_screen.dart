@@ -21,8 +21,6 @@ class _SleepDataScreenState extends State<SleepDataScreen> {
   DateTime? _customStartDate;
   DateTime? _customEndDate;
 
-  // Live monitoring state
-  bool _isMonitoring = false;
 
   // ── Calculate
   bool _isCalcLoading = false;
@@ -45,9 +43,6 @@ class _SleepDataScreenState extends State<SleepDataScreen> {
 
   @override
   void dispose() {
-    if (_isMonitoring) {
-      _sleepManager.stopMonitoring();
-    }
     _userIdController.dispose();
     super.dispose();
   }
@@ -219,76 +214,12 @@ class _SleepDataScreenState extends State<SleepDataScreen> {
     _fetchSleepData();
   }
 
-  // MARK: - Live Monitoring
-
-  Future<void> _toggleMonitoring() async {
-    if (_isMonitoring) {
-      await _stopMonitoring();
-    } else {
-      await _startMonitoring();
-    }
-  }
-
-  Future<void> _startMonitoring() async {
-    try {
-      final result = await _sleepManager.startMonitoring(
-        startDate: _getStartDate(),
-      );
-
-      setState(() {
-        _isMonitoring = true;
-      });
-
-      print('🛏️ Started monitoring: $result');
-      if (mounted) {
-        ScaffoldMessenger.of(
-          context,
-        ).showSnackBar(const SnackBar(content: Text('Monitoring started')));
-      }
-    } catch (e) {
-      print('🛏️ Error starting monitoring: $e');
-      if (mounted) {
-        ScaffoldMessenger.of(
-          context,
-        ).showSnackBar(SnackBar(content: Text('Error: $e')));
-      }
-    }
-  }
-
-  Future<void> _stopMonitoring() async {
-    try {
-      await _sleepManager.stopMonitoring();
-
-      setState(() {
-        _isMonitoring = false;
-      });
-
-      print('🛏️ Stopped monitoring');
-      if (mounted) {
-        ScaffoldMessenger.of(
-          context,
-        ).showSnackBar(const SnackBar(content: Text('Monitoring stopped')));
-      }
-    } catch (e) {
-      print('🛏️ Error stopping monitoring: $e');
-    }
-  }
-
   @override
   Widget build(BuildContext context) {
     return Scaffold(
       appBar: AppBar(
         title: const Text('Sleep Data'),
         actions: [
-          // Monitoring toggle
-          IconButton(
-            icon: Icon(
-              _isMonitoring ? Icons.stop_circle : Icons.play_circle,
-              color: _isMonitoring ? Colors.red : null,
-            ),
-            onPressed: _toggleMonitoring,
-            tooltip: _isMonitoring ? 'Stop monitoring' : 'Start monitoring',
-          ),
           // Calculate group-based sleep payload
           IconButton(
             icon: _isCalcLoading
@@ -319,7 +250,6 @@ class _SleepDataScreenState extends State<SleepDataScreen> {
         children: [
           _buildTestSetupCard(),
           _buildDateRangeSelector(),
-          if (_isMonitoring) _buildMonitoringBanner(),
           _buildCalculatePayloadSection(),
           Expanded(child: _buildBody()),
         ],
@@ -393,33 +323,6 @@ class _SleepDataScreenState extends State<SleepDataScreen> {
             ],
           ],
         ),
-      ),
-    );
-  }
-
-  Widget _buildMonitoringBanner() {
-    return Container(
-      width: double.infinity,
-      padding: const EdgeInsets.symmetric(vertical: 8, horizontal: 16),
-      color: Colors.green.shade100,
-      child: Row(
-        children: [
-          Container(
-            width: 10,
-            height: 10,
-            decoration: const BoxDecoration(
-              color: Colors.green,
-              shape: BoxShape.circle,
-            ),
-          ),
-          const SizedBox(width: 8),
-          const Expanded(
-            child: Text(
-              'Live monitoring active - new sleep data will appear automatically',
-              style: TextStyle(fontSize: 12),
-            ),
-          ),
-        ],
       ),
     );
   }
