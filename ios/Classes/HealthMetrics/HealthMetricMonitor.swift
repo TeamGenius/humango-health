@@ -45,7 +45,12 @@ final class HealthMetricMonitor: AppLifecycleObserver {
     }
 
     deinit {
-        AppLifecycleManager.shared.removeObserver(self)
+        // NOTE: Do NOT call AppLifecycleManager.removeObserver(self) here.
+        // removeObserver dispatches an async barrier block that strongly captures the
+        // observer argument, extending its lifetime past deinit and causing a
+        // "deallocated with non-zero retain count" dangling-reference warning.
+        // invalidate() already removes the observer synchronously; NSHashTable.weakObjects()
+        // automatically clears the entry when the object is deallocated.
         debugPrint("[Humango] HealthMetricMonitor(\(metricType.key)): deallocated")
     }
 
@@ -194,19 +199,23 @@ final class HealthMetricMonitor: AppLifecycleObserver {
             "metricType": metricType.key,
         ], subsystem: "HealthMetrics")
 
-        Task {
+        // Capture key by value so the Task does not hold a strong reference to self
+        // after invalidate() has already released it from the monitors registry.
+        let key = metricType.key
+        Task { [weak self] in
+            guard let self else { return }
             do {
-                try await healthStore.enableBackgroundDelivery(for: quantityType, frequency: .immediate)
-                debugPrint("[Humango] HealthMetricMonitor(\(self.metricType.key)): enableBackgroundDelivery — success (immediate)")
+                try await self.healthStore.enableBackgroundDelivery(for: quantityType, frequency: .immediate)
+                debugPrint("[Humango] HealthMetricMonitor(\(key)): enableBackgroundDelivery — success (immediate)")
                 SleepRemoteLogger.log(.info, step: "startBackgroundMonitoring", message: "background delivery enabled", context: [
                     "class": "HealthMetricMonitor",
-                    "metricType": self.metricType.key,
+                    "metricType": key,
                 ], subsystem: "HealthMetrics")
             } catch {
-                debugPrint("[Humango] HealthMetricMonitor(\(self.metricType.key)): enableBackgroundDelivery failed — \(error)")
+                debugPrint("[Humango] HealthMetricMonitor(\(key)): enableBackgroundDelivery failed — \(error)")
                 SleepRemoteLogger.log(.error, step: "startBackgroundMonitoring", message: "enableBackgroundDelivery failed", context: [
                     "class": "HealthMetricMonitor",
-                    "metricType": self.metricType.key,
+                    "metricType": key,
                     "error": "\(error)",
                 ], subsystem: "HealthMetrics")
             }
@@ -263,11 +272,14 @@ final class HealthMetricMonitor: AppLifecycleObserver {
             debugPrint("[Humango] HealthMetricMonitor(\(metricType.key)): background observer removed")
         }
         guard let quantityType = metricType.quantityType else { return }
+        // Capture key by value — the callback must not hold a strong reference to self
+        // because disableBackgroundDelivery may call back after the monitor is deallocated.
+        let key = metricType.key
         healthStore.disableBackgroundDelivery(for: quantityType) { ok, err in
             if let err {
-                debugPrint("[Humango] HealthMetricMonitor(\(self.metricType.key)): disableBackgroundDelivery error — \(err)")
+                debugPrint("[Humango] HealthMetricMonitor(\(key)): disableBackgroundDelivery error — \(err)")
             } else {
-                debugPrint("[Humango] HealthMetricMonitor(\(self.metricType.key)): disableBackgroundDelivery — ok=\(ok)")
+                debugPrint("[Humango] HealthMetricMonitor(\(key)): disableBackgroundDelivery — ok=\(ok)")
             }
         }
     }

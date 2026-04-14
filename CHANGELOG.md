@@ -1,3 +1,38 @@
+## 0.0.38 — 2026-04-14
+
+### Bug Fixes
+
+#### HealthMetricMonitor — dangling reference on logout (`deallocated with non-zero retain count`)
+
+Fixed three memory-management bugs in `HealthMetricMonitor` that together caused the
+`Object deallocated with non-zero retain count 2` warning on every logout.
+
+**Bug 1 (primary):** `deinit` called `AppLifecycleManager.removeObserver(self)`, but
+`removeObserver` dispatches an `async(flags: .barrier)` block that strongly captures the
+observer argument. This extended the retain count past `deinit`, producing the dangling
+reference. The logs confirmed the ordering: `"deallocated"` appeared before
+`"Removed observer"`, meaning the async block ran against already-freed memory.
+
+- **Fix:** Removed `removeObserver` from `deinit`. `invalidate()` already handles
+  deregistration synchronously. `NSHashTable.weakObjects()` clears the entry automatically
+  when the object is deallocated.
+
+**Bug 2:** `stopBackgroundMonitoring()` passed `self.metricType.key` into the
+`disableBackgroundDelivery` completion handler, creating a strong `self` capture. HealthKit
+calls this callback asynchronously, so it could fire against a deallocated object.
+
+- **Fix:** Captured `metricType.key` as a local `let key` constant before registering the
+  closure. No `self` reference inside the callback.
+
+**Bug 3:** `startBackgroundMonitoring()` launched a bare `Task {}` for
+`enableBackgroundDelivery` with an implicit strong `self` capture. If `invalidate()` ran
+before the task completed, `self` was kept alive past its intended lifetime.
+
+- **Fix:** Changed to `Task { [weak self] in guard let self else { return } … }` with the
+  pre-captured `key` used for log messages inside the task.
+
+---
+
 ## 0.0.37 — 2026-04-13
 
 ### Breaking Changes
