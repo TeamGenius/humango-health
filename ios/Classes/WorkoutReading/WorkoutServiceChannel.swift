@@ -317,9 +317,22 @@ class WorkoutServiceChannel: NSObject {
         var dictMetaData = workout.metadata ?? [:]
         dictMetaData["dataSource"] = workout.sourceRevision.source.name
         dictMetaData["iosVersion"] = UIDevice.current.systemVersion
-        // Stamp isUserEnteredWorkout — backend uses this to decide how to handle the workout
-        let wasUserEnteredValue = (workout.metadata?[HKMetadataKeyWasUserEntered] as? NSNumber)?.doubleValue
-        dictMetaData["isUserEnteredWorkout"] = wasUserEnteredValue == 1.0
+        // Stamp isUserEnteredWorkout — backend uses this to decide how to handle the workout.
+        // HKWasUserEntered is stored as an ObjC BOOL boxed in NSNumber; in Swift's [String:Any]
+        // it may surface as NSNumber or Bool depending on the runtime path, so try both.
+        let _hkUserEntered = workout.metadata?[HKMetadataKeyWasUserEntered]
+        let isUserEntered = (_hkUserEntered as? NSNumber)?.boolValue
+                         ?? (_hkUserEntered as? Bool)
+                         ?? false
+        dictMetaData["isUserEnteredWorkout"] = isUserEntered
+
+        // ── DEBUG: raw HK metadata ────────────────────────────────────────
+        debugPrint("[isUserEnteredWorkout] uuid=\(workout.uuid.uuidString)")
+        debugPrint("[isUserEnteredWorkout] HKMetadataKeyWasUserEntered raw value = \(String(describing: _hkUserEntered))")
+        debugPrint("[isUserEnteredWorkout] type = \(type(of: _hkUserEntered as Any))")
+        debugPrint("[isUserEnteredWorkout] resolved isUserEntered = \(isUserEntered)")
+        debugPrint("[isUserEnteredWorkout] full raw metadata = \(String(describing: workout.metadata))")
+        // ─────────────────────────────────────────────────────────────────
 
         // Resolve scheduleId via WorkoutPlan ID
         if let workoutPlan = try? await workout.workoutPlan {

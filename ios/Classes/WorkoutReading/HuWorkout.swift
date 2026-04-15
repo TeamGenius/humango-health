@@ -183,8 +183,9 @@ func formatMetadata(metadata: [String: Any]?) -> [String: Any] {
         case "appVersion":         out["APP_VERSION"]           = value as? String ?? ""
         case "appBuild":           out["APP_BUILD"]             = value as? String ?? ""
         case "iosVersion":         out["IOS_VERSION"]           = value as? String ?? ""
-        case "isScheduledWorkout": out["IS_SCHEDULED_WORKOUT"]  = value as? Bool   ?? false
-        case "scheduledWorkoutId": out["SCHEDULED_WORKOUT_ID"]  = value as? String ?? ""
+        case "isScheduledWorkout":  out["IS_SCHEDULED_WORKOUT"]   = value as? Bool   ?? false
+        case "isUserEnteredWorkout": out["IS_USER_ENTERED_WORKOUT"] = value as? Bool   ?? false
+        case "scheduledWorkoutId":  out["SCHEDULED_WORKOUT_ID"]   = value as? String ?? ""
         default: break
         }
         if #available(iOS 16.0, *) {

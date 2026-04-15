@@ -172,7 +172,6 @@
 				7884E8672EC3CC0400C636F2 /* SceneDelegate.swift */,
 				BB100002BB100002BB100002 /* ExampleSessionChannel.swift */,
 				BB100004BB100004BB100004 /* ExampleHealthDataHandler.swift */,
-
 				74858FAD1ED2DC5600515810 /* Runner-Bridging-Header.h */
 			);
 			path = Runner;
@@ -395,7 +394,6 @@
 				7884E8682EC3CC0700C636F2 /* SceneDelegate.swift in Sources */,
 				BB100001BB100001BB100001 /* ExampleSessionChannel.swift in Sources */,
 				BB100003BB100003BB100003 /* ExampleHealthDataHandler.swift in Sources */,
-
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};

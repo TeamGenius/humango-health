@@ -328,9 +328,14 @@ class RouteService {
             var dictMetaData = workout.metadata ?? [String:Any]()
             dictMetaData["dataSource"] = workout.sourceRevision.source.name
             dictMetaData["iosVersion"] = ProcessInfo.processInfo.operatingSystemVersionString
-            // Stamp isUserEnteredWorkout — backend uses this to decide how to handle the workout
-            let wasUserEnteredValue = (workout.metadata?[HKMetadataKeyWasUserEntered] as? NSNumber)?.doubleValue
-            dictMetaData["isUserEnteredWorkout"] = wasUserEnteredValue == 1.0
+            // Stamp isUserEnteredWorkout — backend uses this to decide how to handle the workout.
+            // HKWasUserEntered is stored as an ObjC BOOL boxed in NSNumber; in Swift's [String:Any]
+            // it may surface as NSNumber or Bool depending on the runtime path, so try both.
+            let _hkUserEntered = workout.metadata?[HKMetadataKeyWasUserEntered]
+            let isUserEntered = (_hkUserEntered as? NSNumber)?.boolValue
+                             ?? (_hkUserEntered as? Bool)
+                             ?? false
+            dictMetaData["isUserEnteredWorkout"] = isUserEntered
 
             // Lightweight date+type matching only — workoutPlan resolution is deferred
             // to the client via resolveScheduledWorkoutId(workoutUUID:) to avoid hangs.
