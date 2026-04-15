@@ -738,40 +738,52 @@ public class SleepDataManager: NSObject, AppLifecycleObserver {
 
     // MARK: - Sample-Based Sleep Calculation
 
+    /// Source bundle prefixes for known fitness-tracker apps.
+    /// Excluded from consideration when no Apple-platform samples are present (Tier 2).
+    private static let excludedThirdPartyBundles: [String] = [
+        "com.whoop",
+        "com.garmin.connect",
+        "com.ouraring.oura",
+        "com.coros.coros",
+        "com.fitbit",
+        "com.sram.hammerhead",
+        "com.hammerhead",
+        "fi.polar",
+        "com.polar",
+        "com.sports-tracker.suunto",
+        "com.suunto",
+        "com.wahoo",
+    ]
+
     /// Calculates a flat aggregated sleep payload directly from a list of raw HealthKit samples.
     ///
-    /// Algorithm:
-    ///   Step 1 — Sort all samples by `startDate` ascending.
+    /// Source-priority tiers (applied in order):
+    ///   Tier 1 — Apple-platform samples (`com.apple.health` prefix): if any exist, use ONLY
+    ///             those and return immediately. No other sources are considered.
+    ///   Tier 2 — Known fitness-tracker bundles (Whoop, Garmin, Oura, Coros, Fitbit, etc.)
+    ///             are stripped from the remaining pool.
+    ///   Tier 3 — Group remaining samples by `sourceBundle` and calculate a payload
+    ///             independently per bundle. Return the payload with the highest TOTAL_SLEEP.
+    ///             Samples from two different bundle IDs are NEVER mixed.
+    ///
+    /// Gap-grouping algorithm (applied per bundle):
+    ///   Step 1 — Sort samples by `startDate` ascending.
     ///   Step 2 — Group consecutive samples where the gap between
     ///             `sample[i].startDate` and `sample[i-1].endDate` is ≤ 2 hours.
     ///             Any group whose span (first.startDate → max(endDate)) is < 3 hours
-    ///             is discarded as a nap or data artifact. `max(endDate)` is used
-    ///             instead of `last.endDate` because sorting is by startDate — the last
-    ///             sample by start may not have the latest end (e.g. a long inBed sample).
-    ///   Step 3 — Merge all valid groups and delegate to `buildAggregatedPayload` for
-    ///             source selection and stage-level duration totals.
+    ///             is discarded as a nap or data artifact.
+    ///   Step 3 — Merge all valid groups and delegate to `buildAggregatedPayload`.
     ///
     /// - Parameter samples: Raw `HKCategorySample` array from HealthKit (any order).
     /// - Returns: Aggregated sleep payload, or `nil` if no valid sleep groups are found.
     func calculateSleepPayload(from samples: [HKCategorySample]) -> [String: Any]? {
         guard !samples.isEmpty else { return nil }
 
-        // ── Apple-platform source priority filter ──────────────────────────────
-        // If ANY sample originates from an Apple-platform source (bundle prefix
-        // `com.apple.health` covers both Apple Watch `com.apple.health.<device-UUID>`
-        // and the iPhone Health app) all third-party samples are discarded before
-        // grouping. This prevents third-party app data from contaminating session
-        // detection or the aggregated payload. If no Apple samples exist, all
-        // samples are used (third-party only).
+        // ── Tier 1: Apple-platform source priority ─────────────────────────────
         let appleSamples = samples.filter {
             $0.sourceRevision.source.bundleIdentifier.hasPrefix("com.apple.health")
         }
-        let filteredSamples: [HKCategorySample]
-        if appleSamples.isEmpty {
-            filteredSamples = samples
-            debugPrint("🛏️ [SleepDataManager] calculateSleepPayload: no Apple source — using all \(samples.count) sample(s)")
-        } else {
-            filteredSamples = appleSamples
+        if !appleSamples.isEmpty {
             let droppedCount = samples.count - appleSamples.count
             if droppedCount > 0 {
                 let droppedBundles = Set(
@@ -779,16 +791,71 @@ public class SleepDataManager: NSObject, AppLifecycleObserver {
                         .filter { !$0.sourceRevision.source.bundleIdentifier.hasPrefix("com.apple.health") }
                         .map { $0.sourceRevision.source.bundleIdentifier }
                 )
-                debugPrint("🛏️ [SleepDataManager] calculateSleepPayload: dropped \(droppedCount) third-party sample(s) from: \(droppedBundles.joined(separator: ", "))")
+                debugPrint("🛏️ [SleepDataManager] calculateSleepPayload: Tier 1 — dropped \(droppedCount) third-party sample(s) from: \(droppedBundles.joined(separator: ", "))")
+            }
+            debugPrint("🛏️ [SleepDataManager] calculateSleepPayload: Tier 1 — using \(appleSamples.count) Apple sample(s)")
+            return runGroupingAndCalculation(on: appleSamples, label: "Apple")
+        }
+
+        // ── Tier 2: Strip known fitness-tracker sources ────────────────────────
+        let excluded = Self.excludedThirdPartyBundles
+        let remaining = samples.filter { sample in
+            let bundle = sample.sourceRevision.source.bundleIdentifier
+            return !excluded.contains(where: { bundle.hasPrefix($0) })
+        }
+        if remaining.count < samples.count {
+            let droppedBundles = Set(
+                samples
+                    .filter { sample in
+                        let bundle = sample.sourceRevision.source.bundleIdentifier
+                        return excluded.contains(where: { bundle.hasPrefix($0) })
+                    }
+                    .map { $0.sourceRevision.source.bundleIdentifier }
+            )
+            debugPrint("🛏️ [SleepDataManager] calculateSleepPayload: Tier 2 — dropped fitness-tracker samples from: \(droppedBundles.joined(separator: ", "))")
+        }
+        guard !remaining.isEmpty else {
+            debugPrint("🛏️ [SleepDataManager] calculateSleepPayload: Tier 2 — all samples excluded, returning nil")
+            return nil
+        }
+
+        // ── Tier 3: Per-bundle grouping; pick highest TOTAL_SLEEP ─────────────
+        let byBundle = Dictionary(grouping: remaining) { $0.sourceRevision.source.bundleIdentifier }
+        debugPrint("🛏️ [SleepDataManager] calculateSleepPayload: Tier 3 — \(byBundle.keys.count) bundle(s): \(byBundle.keys.sorted().joined(separator: ", "))")
+
+        var bestPayload: [String: Any]? = nil
+        var bestTotalSleep: Double = -1
+
+        for (bundle, bundleSamples) in byBundle {
+            guard let payload = runGroupingAndCalculation(on: bundleSamples, label: bundle) else {
+                debugPrint("🛏️ [SleepDataManager] calculateSleepPayload: Tier 3 — bundle '\(bundle)' yielded no valid payload")
+                continue
+            }
+            let totalSleep = payload["TOTAL_SLEEP"] as? Double ?? 0
+            debugPrint("🛏️ [SleepDataManager] calculateSleepPayload: Tier 3 — bundle '\(bundle)' TOTAL_SLEEP=\(totalSleep)")
+            if totalSleep > bestTotalSleep {
+                bestTotalSleep = totalSleep
+                bestPayload = payload
             }
         }
 
+        return bestPayload
+    }
+
+    /// Runs the gap-grouping + span-filter + `buildAggregatedPayload` pipeline on a
+    /// **single-source** sample array. All samples MUST share the same source bundle.
+    ///
+    /// - Parameters:
+    ///   - samples: Samples from a single bundle (or the Apple-platform subset).
+    ///   - label:   Debug label (bundle identifier or "Apple") used in log output.
+    /// - Returns: Aggregated sleep payload, or `nil` if no valid sleep groups are found.
+    private func runGroupingAndCalculation(on samples: [HKCategorySample], label: String) -> [String: Any]? {
         // ── Step 1: Sort by startDate ──────────────────────────────────────────
-        let sorted = filteredSamples.sorted { $0.startDate < $1.startDate }
+        let sorted = samples.sorted { $0.startDate < $1.startDate }
 
         // ── Step 2: Group consecutive samples (gap ≤ 2 hours) ─────────────────
-        let maxGap: TimeInterval     = 2 * 60 * 60   // 2 hours
-        let minGroupSpan: TimeInterval = 3 * 60 * 60 // 3 hours
+        let maxGap: TimeInterval       = 2 * 60 * 60  // 2 hours
+        let minGroupSpan: TimeInterval = 3 * 60 * 60  // 3 hours
 
         var groups: [[HKCategorySample]] = []
         var currentGroup: [HKCategorySample] = [sorted[0]]
@@ -796,20 +863,17 @@ public class SleepDataManager: NSObject, AppLifecycleObserver {
         for i in 1 ..< sorted.count {
             let gap = sorted[i].startDate.timeIntervalSince(currentGroup.last!.endDate)
             if gap <= maxGap {
-                // Within 2-hour tolerance — belongs to the same session group
                 currentGroup.append(sorted[i])
             } else {
-                // Gap exceeds 2 hours — flush current group and start a new one
                 groups.append(currentGroup)
                 currentGroup = [sorted[i]]
             }
         }
-        groups.append(currentGroup) // flush final group
+        groups.append(currentGroup)
 
-        // Discard groups whose total span (first.startDate → maxEndDate) < 3 hours.
-        // Use max(endDate) across the group — NOT group.last — because sorting is by
-        // startDate, so group.last has the latest start but NOT necessarily the latest end.
-        // (e.g. an inBed sample starting early but ending after all stage samples)
+        // Discard groups whose span < 3 hours (naps / data artifacts).
+        // Use max(endDate) — NOT group.last!.endDate — because sorting is by startDate,
+        // so the last sample by start may not have the latest end.
         let validGroups = groups.filter { group -> Bool in
             guard let first = group.first else { return false }
             let maxEnd = group.max(by: { $0.endDate < $1.endDate })!.endDate
@@ -817,17 +881,16 @@ public class SleepDataManager: NSObject, AppLifecycleObserver {
         }
 
         guard !validGroups.isEmpty else {
-            debugPrint("🛏️ [SleepDataManager] calculateSleepPayload: no valid sleep groups (all < 3h span)")
+            debugPrint("🛏️ [SleepDataManager] [\(label)] runGroupingAndCalculation: no valid sleep groups (all < 3h span)")
             return nil
         }
 
-        let totalGroups = groups.count
         let validSamples = validGroups.flatMap { $0 }
-        debugPrint("🛏️ [SleepDataManager] calculateSleepPayload: \(validGroups.count)/\(totalGroups) group(s) valid, \(validSamples.count) samples retained")
+        debugPrint("🛏️ [SleepDataManager] [\(label)] runGroupingAndCalculation: \(validGroups.count)/\(groups.count) group(s) valid, \(validSamples.count) sample(s)")
 
         // ── Step 3: Merge valid groups → build aggregated payload ──────────────
-        // queryStart: earliest startDate (validSamples is sorted by startDate, so .first is correct)
-        // queryEnd:   latest endDate across ALL valid samples — again must use max(endDate),
+        // queryStart: earliest startDate (.first is correct — sorted is by startDate)
+        // queryEnd:   latest endDate across ALL valid samples — must use max(endDate),
         //             not .last!.endDate, for the same reason as the span filter above.
         let queryStart = validSamples.first!.startDate
         let queryEnd   = validSamples.max(by: { $0.endDate < $1.endDate })!.endDate

@@ -1,3 +1,36 @@
+## 0.0.39 — 2026-04-15
+
+### Enhancements
+
+#### SleepDataManager — 3-tier source-priority filter in `calculateSleepPayload`
+
+Rewrote `calculateSleepPayload(from:)` to apply a strict source-priority hierarchy before
+gap-grouping, ensuring that data from different devices/apps is never mixed into a single
+aggregated payload.
+
+**Tier 1 — Apple-platform samples (highest priority):**  
+If any sample has a `sourceBundle` prefixed with `com.apple.health` (covers Apple Watch and
+the iPhone Health app), **only those samples** are used. All third-party samples are discarded
+and the method returns immediately. This is the common case for users wearing Apple Watch.
+
+**Tier 2 — Known fitness-tracker exclusion:**  
+If no Apple samples exist, samples from known fitness-tracker bundles (Whoop, Garmin Connect,
+Oura, Coros, Fitbit, Hammerhead, Polar, Suunto, Wahoo) are stripped from the pool before
+proceeding. These sources have historically produced unreliable or duplicate data.
+
+**Tier 3 — Per-bundle independent calculation:**  
+The remaining samples are grouped by `sourceBundle`. Gap-grouping and `buildAggregatedPayload`
+are run **independently per bundle**. The payload with the highest `TOTAL_SLEEP` is returned.
+Samples from two different bundle IDs are never passed to `buildAggregatedPayload` together.
+
+Added private helper `runGroupingAndCalculation(on:label:)` containing the extracted
+gap-grouping + span-filter + `buildAggregatedPayload` pipeline (called by Tier 1 and each
+Tier 3 bundle iteration).
+
+Added private static constant `excludedThirdPartyBundles` listing all Tier 2 prefixes.
+
+---
+
 ## 0.0.38 — 2026-04-14
 
 ### Bug Fixes
