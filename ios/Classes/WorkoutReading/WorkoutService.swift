@@ -33,7 +33,12 @@ final class WorkoutService: AppLifecycleObserver {
     }
     
     deinit {
-        AppLifecycleManager.shared.removeObserver(self)
+        // NOTE: Do NOT call AppLifecycleManager.removeObserver(self) here.
+        // removeObserver dispatches an async(flags: .barrier) block that strongly captures
+        // the observer argument, extending its lifetime past deinit and causing a
+        // "deallocated with non-zero retain count" dangling-reference warning.
+        // invalidate() removes the observer explicitly before the strong ref is released;
+        // NSHashTable.weakObjects() clears any remaining stale entry on dealloc.
         debugPrint("[Humango] WorkoutService: deallocated")
     }
     
@@ -395,6 +400,21 @@ final class WorkoutService: AppLifecycleObserver {
             debugPrint("[Humango] WorkoutService: stopBackgroundMonitoring — observer removed")
             SleepRemoteLogger.log(.info, step: "bgMonitoring.stop", message: "background observer removed", context: ["class": "WorkoutService", "method": "stopBackgroundMonitoring"], subsystem: "WorkoutService")
         }
+    }
+
+    /// Tear down this service cleanly.
+    /// Sets `authorized = false` so all lifecycle guards (enterForegroundMode /
+    /// enterBackgroundMode) become no-ops immediately, stops both monitoring paths,
+    /// and removes the lifecycle observer. Call this BEFORE releasing the strong
+    /// reference to the service (e.g. `workoutService = nil`) so that removeObserver's
+    /// async barrier fires while the object is still valid.
+    func invalidate() {
+        authorized = false
+        stopLiveUpdates()
+        stopBackgroundMonitoring()
+        AppLifecycleManager.shared.removeObserver(self)
+        debugPrint("[Humango] WorkoutService: invalidated")
+        SleepRemoteLogger.log(.info, step: "invalidate", message: "WorkoutService invalidated", context: ["class": "WorkoutService", "method": "invalidate"], subsystem: "WorkoutService")
     }
 
     // MARK: - Decide per-workout behavior (one-shot vs retained live)

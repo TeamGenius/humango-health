@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 import 'package:url_launcher/url_launcher.dart';
 import 'health_permissions_provider.dart';
+import 'example_session_manager.dart';
 import 'workout_push_screen.dart' as workouts;
 import 'workout_read_screen.dart' as readworkouts;
 import 'sleep_data_screen.dart' as sleep;
@@ -51,8 +52,48 @@ class _MyAppState extends State<MyApp> with WidgetsBindingObserver {
   }
 }
 
-class HealthPermissionsScreen extends StatelessWidget {
+class HealthPermissionsScreen extends StatefulWidget {
   const HealthPermissionsScreen({super.key});
+
+  @override
+  State<HealthPermissionsScreen> createState() => _HealthPermissionsScreenState();
+}
+
+class _HealthPermissionsScreenState extends State<HealthPermissionsScreen> {
+  bool _isLoggedIn = false;
+  bool _sessionBusy = false;
+
+  Future<void> _login() async {
+    setState(() => _sessionBusy = true);
+    try {
+      await ExampleSessionManager.setLoggedIn();
+      if (mounted) setState(() => _isLoggedIn = true);
+    } catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('Login failed: $e'), backgroundColor: Colors.red),
+        );
+      }
+    } finally {
+      if (mounted) setState(() => _sessionBusy = false);
+    }
+  }
+
+  Future<void> _logout() async {
+    setState(() => _sessionBusy = true);
+    try {
+      await ExampleSessionManager.setLoggedOut();
+      if (mounted) setState(() => _isLoggedIn = false);
+    } catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('Logout failed: $e'), backgroundColor: Colors.red),
+        );
+      }
+    } finally {
+      if (mounted) setState(() => _sessionBusy = false);
+    }
+  }
 
   void _showPermissionDeniedDialog(BuildContext context) {
     showDialog(
@@ -107,6 +148,55 @@ class HealthPermissionsScreen extends StatelessWidget {
                 return Column(
                   crossAxisAlignment: CrossAxisAlignment.stretch,
                   children: [
+                    // ── Session (Login / Logout) ──────────────────────────
+                    Card(
+                      color: _isLoggedIn ? Colors.green[50] : Colors.grey[100],
+                      child: Padding(
+                        padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+                        child: Row(
+                          children: [
+                            Icon(
+                              _isLoggedIn ? Icons.verified_user : Icons.no_accounts,
+                              color: _isLoggedIn ? Colors.green[700] : Colors.grey[600],
+                            ),
+                            const SizedBox(width: 12),
+                            Expanded(
+                              child: Text(
+                                _isLoggedIn ? 'Logged in — monitoring active' : 'Logged out',
+                                style: TextStyle(
+                                  fontWeight: FontWeight.w600,
+                                  color: _isLoggedIn ? Colors.green[800] : Colors.grey[700],
+                                ),
+                              ),
+                            ),
+                            const SizedBox(width: 8),
+                            _sessionBusy
+                                ? const SizedBox(
+                                    width: 24,
+                                    height: 24,
+                                    child: CircularProgressIndicator(strokeWidth: 2),
+                                  )
+                                : _isLoggedIn
+                                    ? OutlinedButton.icon(
+                                        onPressed: _logout,
+                                        icon: const Icon(Icons.logout, size: 18),
+                                        label: const Text('Logout'),
+                                        style: OutlinedButton.styleFrom(
+                                          foregroundColor: Colors.red[700],
+                                          side: BorderSide(color: Colors.red[300]!),
+                                        ),
+                                      )
+                                    : FilledButton.icon(
+                                        onPressed: _login,
+                                        icon: const Icon(Icons.login, size: 18),
+                                        label: const Text('Login'),
+                                      ),
+                          ],
+                        ),
+                      ),
+                    ),
+                    const SizedBox(height: 12),
+                    // ── Permissions ───────────────────────────────────────
                     ElevatedButton(
                       onPressed: () async {
                         final perm = context.read<HealthPermissionsProvider>();
@@ -241,9 +331,33 @@ class _AppTabsScreenState extends State<_AppTabsScreen> {
     const rawsamples.SleepRawSamplesScreen(),
   ];
 
+  Future<void> _logout() async {
+    try {
+      await ExampleSessionManager.setLoggedOut();
+    } catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('Logout failed: $e'), backgroundColor: Colors.red),
+        );
+        return;
+      }
+    }
+    if (mounted) Navigator.of(context).pop();
+  }
+
   @override
   Widget build(BuildContext context) {
     return Scaffold(
+      appBar: AppBar(
+        title: const Text('Humango Health'),
+        actions: [
+          IconButton(
+            icon: const Icon(Icons.logout),
+            tooltip: 'Logout',
+            onPressed: _logout,
+          ),
+        ],
+      ),
       body: _pages[_currentIndex],
       bottomNavigationBar: BottomNavigationBar(
         type: BottomNavigationBarType.fixed,

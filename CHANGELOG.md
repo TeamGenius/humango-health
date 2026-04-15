@@ -2,6 +2,29 @@
 
 ### Bug Fixes
 
+#### WorkoutService — dangling reference on logout (`deallocated with non-zero retain count`)
+
+Fixed the same class of memory-management bug as `HealthMetricMonitor` in `WorkoutService`.
+
+**Bug 1 (primary):** `deinit` called `AppLifecycleManager.removeObserver(self)`, which dispatches
+an `async(flags: .barrier)` block that strongly captures `self`, extending its retain count past
+`deinit` and producing the dangling-reference warning.
+
+- **Fix:** Removed `removeObserver` from `deinit`. Added an `invalidate()` method (mirrors
+  `HealthMetricMonitor.invalidate()`) that sets `authorized = false`, stops both monitoring paths,
+  and calls `removeObserver` explicitly — all while the strong reference from `WorkoutServiceChannel`
+  still holds the object alive, so the async capture is safe.
+
+**Bug 2 (secondary):** `WorkoutServiceChannel.stopAndClearAll()` called `stopLiveUpdates()` and
+`stopBackgroundMonitoring()` separately then nilled the reference, but never set `authorized = false`.
+Any in-flight lifecycle callback (`appDidEnterForeground` / `appDidEnterBackground`) dispatched
+between the two stop calls and `workoutService = nil` could restart monitoring mid-logout.
+
+- **Fix:** `stopAndClearAll()` now calls `workoutService?.invalidate()` (which sets `authorized = false`
+  as its first action) before releasing the reference.
+
+---
+
 #### HealthMetricMonitor — dangling reference on logout (`deallocated with non-zero retain count`)
 
 Fixed three memory-management bugs in `HealthMetricMonitor` that together caused the

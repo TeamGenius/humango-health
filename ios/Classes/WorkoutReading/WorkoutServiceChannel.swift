@@ -951,8 +951,7 @@ class WorkoutServiceChannel: NSObject {
     /// Stops all active monitoring.
     /// Called on user logout to ensure no background activity continues.
     func stopAndClearAll() {
-        workoutService?.stopLiveUpdates()
-        workoutService?.stopBackgroundMonitoring()
+        workoutService?.invalidate()
         workoutService = nil
         debugPrint("[Humango] WorkoutService: ✅ Stopped monitoring on logout")
         SleepRemoteLogger.log(.info, step: "workout.stopAll", message: "stopped on logout", context: ["class": "WorkoutServiceChannel", "method": "stopAndClearAll"], subsystem: "WorkoutService")
