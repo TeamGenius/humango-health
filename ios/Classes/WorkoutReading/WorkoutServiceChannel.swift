@@ -147,7 +147,6 @@ class WorkoutServiceChannel: NSObject {
             // Process each workout in the batch
             for workout in results.addedSamples {
                 debugPrint("Read Workouts: Processing workout: \(workout.uuid.uuidString) type: \(workout.workoutActivityType.name)")
-               debugPrint("Read Workouts: Processing workout:  metadata: \(workout.metadata)")
                
                let workoutPlan: WorkoutPlan? = await withCheckedContinuation { continuation in
                    let lock = NSLock()
@@ -247,7 +246,7 @@ class WorkoutServiceChannel: NSObject {
             "start": workout.startDate.description,
             "end": workout.endDate.description,
         ], subsystem: "WorkoutReading")
-        
+
         // Fetch all quantity series data (gracefully handle authorization errors)
         let series: [[HKQuantitySample]]
         do {
@@ -318,6 +317,9 @@ class WorkoutServiceChannel: NSObject {
         var dictMetaData = workout.metadata ?? [:]
         dictMetaData["dataSource"] = workout.sourceRevision.source.name
         dictMetaData["iosVersion"] = UIDevice.current.systemVersion
+        // Stamp isUserEnteredWorkout — backend uses this to decide how to handle the workout
+        let wasUserEnteredValue = (workout.metadata?[HKMetadataKeyWasUserEntered] as? NSNumber)?.doubleValue
+        dictMetaData["isUserEnteredWorkout"] = wasUserEnteredValue == 1.0
 
         // Resolve scheduleId via WorkoutPlan ID
         if let workoutPlan = try? await workout.workoutPlan {
