@@ -10,8 +10,7 @@
 //  exactly as a production host app would (e.g. humango_workouts).
 //
 //  Methods:
-//    setLoggedIn   → UserAuthStateManager.isLoggedIn = true,
-//                    injects ExampleHealthDataHandler delegate,
+//    setLoggedIn   → injects ExampleHealthDataHandler delegate,
 //                    starts all background monitoring
 //    setLoggedOut  → calls HumangoHealthPlugin.shared?.logout()
 //                    which stops all monitors and clears stored data
@@ -40,15 +39,32 @@ final class ExampleSessionChannel: NSObject, FlutterPlugin {
         switch call.method {
 
         case "setLoggedIn":
-            UserAuthStateManager.shared.isLoggedIn = true
-            HumangoHealthPlugin.delegate = ExampleHealthDataHandler()
-            HumangoHealthPlugin.shared?.startAllBackgroundMonitoring()
-            print("[Example][Session] ✅ User logged in — monitoring started")
+            UserDefaults.standard.set(true, forKey: "com.humango.example.isLoggedIn")
+             print("[Example][Session] ✅ User logged in — flag saved, monitoring started")
             result(nil)
 
         case "setLoggedOut":
+            UserDefaults.standard.set(false, forKey: "com.humango.example.isLoggedIn")
             HumangoHealthPlugin.shared?.logout()
-            print("[Example][Session] 🔒 User logged out — monitoring stopped")
+            HumangoHealthPlugin.delegate = nil
+            print("[Example][Session] 🔒 User logged out — flag cleared, monitoring stopped")
+            result(nil)
+
+        case "startBackgroundMonitoring":
+            UserDefaults.standard.set(true, forKey: "com.humango.example.isLoggedIn")
+            HumangoHealthPlugin.delegate = ExampleHealthDataHandler()
+            HumangoHealthPlugin.shared?.startActivityBackgroundMonitoring()
+            HumangoHealthPlugin.shared?.startSleepBackgroundMonitoring()
+            HumangoHealthPlugin.shared?.startMetricsMonitoring(for: [.restingHeartRate, .bodyFatPercentage,.bodyMass])
+            print("VINAY: [Example][Session] ▶️ startBackgroundMonitoring called — delegate set, monitoring started")
+            result(nil)
+
+        case "stopBackgroundMonitoring":
+            UserDefaults.standard.set(false, forKey: "com.humango.example.isLoggedIn")
+            // HumangoHealthPlugin.shared?.stopActivityBackgroundMonitoring()
+            // HumangoHealthPlugin.shared?.stopSleepBackgroundMonitoring()
+            HumangoHealthPlugin.shared?.stopAllMetricsMonitoring()
+            print("VINAY: [Example][Session] ⏹️ stopBackgroundMonitoring called")
             result(nil)
 
         default:

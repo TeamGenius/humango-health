@@ -22,4 +22,15 @@ class ExampleSessionManager {
   static Future<void> setLoggedOut() async {
     await _channel.invokeMethod('setLoggedOut');
   }
+
+  /// Starts all background monitoring (workouts + sleep).
+  /// Requires that the delegate is already set (i.e. user is logged in).
+  static Future<void> startBackgroundMonitoring() async {
+    await _channel.invokeMethod('startBackgroundMonitoring');
+  }
+
+  /// Stops all background monitoring.
+  static Future<void> stopBackgroundMonitoring() async {
+    await _channel.invokeMethod('stopBackgroundMonitoring');
+  }
 }

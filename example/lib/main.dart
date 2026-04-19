@@ -8,6 +8,7 @@ import 'workout_read_screen.dart' as readworkouts;
 import 'sleep_data_screen.dart' as sleep;
 import 'health_metrics_screen.dart';
 import 'today_activities_screen.dart' as activities;
+import 'monitoring_screen.dart' as monitoring;
 import 'package:humango_health/humango_health.dart';
 
 void main() {
@@ -324,11 +325,13 @@ class _AppTabsScreenState extends State<_AppTabsScreen> {
   int _currentIndex = 0;
 
   final List<Widget> _pages = [
-    const workouts.WorkoutPushScreen(),
+     const monitoring.MonitoringScreen(),
+const workouts.WorkoutPushScreen(),
     const readworkouts.WorkoutReadScreen(),
     const sleep.SleepDataScreen(),
     const HealthMetricsScreen(),
     const activities.TodayActivitiesScreen(),
+   
   ];
 
   Future<void> _logout() async {
@@ -368,6 +371,10 @@ class _AppTabsScreenState extends State<_AppTabsScreen> {
           });
         },
         items: const [
+           BottomNavigationBarItem(
+            icon: Icon(Icons.sensors),
+            label: 'Monitoring',
+          ),
           BottomNavigationBarItem(
             icon: Icon(Icons.sports_score),
             label: 'Push',
@@ -382,6 +389,7 @@ class _AppTabsScreenState extends State<_AppTabsScreen> {
             icon: Icon(Icons.directions_run),
             label: 'Activities',
           ),
+         
         ],
       ),
     );

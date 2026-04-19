@@ -1,8 +1,6 @@
 import 'dart:convert';
-import 'dart:io';
 import 'package:flutter/material.dart';
 import 'package:humango_health/humango_health.dart';
-import 'example_session_manager.dart';
 
 class WorkoutReadScreen extends StatefulWidget {
   const WorkoutReadScreen({super.key});
@@ -25,27 +23,6 @@ class _WorkoutReadScreenState extends State<WorkoutReadScreen> {
   bool _importRunning = true;
   bool _importCycling = true;
   bool _importSwimming = true;
-
-  // ── Session + Activities test ───────────────────────────────────────────────
-  static String _randomAthleteId() {
-    final n = DateTime.now().millisecondsSinceEpoch % 100000;
-    return 'test-athlete-$n';
-  }
-
-  late final TextEditingController _athleteIdController = TextEditingController(
-    text: _randomAthleteId(),
-  );
-
-  bool _sessionLoading = false;
-  String? _sessionStatus;
-  bool _activitiesLoading = false;
-  String? _activitiesResult;
-
-  @override
-  void dispose() {
-    _athleteIdController.dispose();
-    super.dispose();
-  }
 
   // ── Import preferences ──────────────────────────────────────────────────────
 
@@ -127,7 +104,6 @@ class _WorkoutReadScreenState extends State<WorkoutReadScreen> {
 
   // ── Live monitoring ──────────────────────────────────────────────────────────
 
-  /// Live monitoring; background delivery is configured before login.
   Future<void> _startMonitoring() async {
     setState(() {
       _isLoading = true;
@@ -158,92 +134,6 @@ class _WorkoutReadScreenState extends State<WorkoutReadScreen> {
       _isMonitoring = false;
       _statusMessage = 'Monitoring stopped.';
     });
-  }
-
-  // ── Session ──────────────────────────────────────────────────────────────────
-
-  Future<void> _setLoggedIn() async {
-    setState(() {
-      _sessionLoading = true;
-      _sessionStatus = null;
-    });
-    try {
-      await ExampleSessionManager.setLoggedIn();
-      setState(
-        () => _sessionStatus =
-            '✅ Logged in — subsystems armed + monitoring started',
-      );
-    } catch (e) {
-      setState(() => _sessionStatus = '❌ Error: $e');
-    } finally {
-      setState(() => _sessionLoading = false);
-    }
-  }
-
-  Future<void> _setLoggedOut() async {
-    setState(() {
-      _sessionLoading = true;
-      _sessionStatus = null;
-    });
-    try {
-      await ExampleSessionManager.setLoggedOut();
-      setState(() => _sessionStatus = '🔒 Logged out — monitoring stopped');
-    } catch (e) {
-      setState(() => _sessionStatus = '❌ Error: $e');
-    } finally {
-      setState(() => _sessionLoading = false);
-    }
-  }
-
-  // ── Activities API fetch ─────────────────────────────────────────────────────
-
-  Future<void> _fetchActivities() async {
-    final athleteId = _athleteIdController.text.trim();
-    if (athleteId.isEmpty) return;
-
-    setState(() {
-      _activitiesLoading = true;
-      _activitiesResult = null;
-    });
-
-    const baseUrl =
-        'https://humango-api-629346406456.us-central1.run.app/activities';
-    try {
-      final uri = Uri.parse('$baseUrl/$athleteId');
-      final client = HttpClient();
-      final req = await client.getUrl(uri);
-      req.headers.set(HttpHeaders.acceptHeader, 'application/json');
-      final resp = await req.close();
-      final body = await resp.transform(const Utf8Decoder()).join();
-      client.close();
-
-      String preview;
-      try {
-        final decoded = jsonDecode(body);
-        preview = const JsonEncoder.withIndent('  ')
-            .convert(decoded)
-            .substring(
-              0,
-              (const JsonEncoder.withIndent(
-                '  ',
-              ).convert(decoded).length).clamp(0, 600),
-            );
-        if ((const JsonEncoder.withIndent('  ').convert(decoded).length) >
-            600) {
-          preview += '\n…(truncated)';
-        }
-      } catch (_) {
-        preview = body.length > 600 ? '${body.substring(0, 600)}…' : body;
-      }
-
-      setState(() {
-        _activitiesResult = 'HTTP ${resp.statusCode}\n\n$preview';
-      });
-    } catch (e) {
-      setState(() => _activitiesResult = '❌ Request failed: $e');
-    } finally {
-      setState(() => _activitiesLoading = false);
-    }
   }
 
   // ── UI helpers ───────────────────────────────────────────────────────────────
@@ -362,10 +252,6 @@ class _WorkoutReadScreenState extends State<WorkoutReadScreen> {
             _buildImportPreferences(),
             const SizedBox(height: 10),
 
-            // ── Session + Activities test ──────────────────────────────────
-            _buildSessionCard(),
-            const SizedBox(height: 10),
-
             // ── Action buttons ─────────────────────────────────────────────
             Row(
               children: [
@@ -418,14 +304,11 @@ class _WorkoutReadScreenState extends State<WorkoutReadScreen> {
               child: _isLoading
                   ? const Center(child: CircularProgressIndicator())
                   : _fetchedWorkouts.isEmpty
-                  ? Center(
+                  ? const Center(
                       child: Text(
                         'No workouts fetched yet.\nTap "Fetch Past 7 Days" to load.',
                         textAlign: TextAlign.center,
-                        style: const TextStyle(
-                          color: Colors.grey,
-                          fontSize: 13,
-                        ),
+                        style: TextStyle(color: Colors.grey, fontSize: 13),
                       ),
                     )
                   : ListView.builder(
@@ -434,122 +317,6 @@ class _WorkoutReadScreenState extends State<WorkoutReadScreen> {
                           _buildWorkoutCard(_fetchedWorkouts[index]),
                     ),
             ),
-          ],
-        ),
-      ),
-    );
-  }
-
-  Widget _buildSessionCard() {
-    return Card(
-      margin: EdgeInsets.zero,
-      color: Colors.teal.shade50,
-      child: Padding(
-        padding: const EdgeInsets.all(12),
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            const Text(
-              '🧪 Session + Activities API test',
-              style: TextStyle(fontWeight: FontWeight.bold, fontSize: 13),
-            ),
-            const SizedBox(height: 8),
-
-            // ── Athlete ID field ─────────────────────────────────────────
-            TextField(
-              controller: _athleteIdController,
-              decoration: const InputDecoration(
-                labelText: 'Athlete ID',
-                border: OutlineInputBorder(),
-                isDense: true,
-                contentPadding: EdgeInsets.symmetric(
-                  horizontal: 10,
-                  vertical: 8,
-                ),
-              ),
-              style: const TextStyle(fontSize: 13),
-            ),
-            const SizedBox(height: 8),
-
-            // ── Login / Logout buttons ───────────────────────────────────
-            Row(
-              children: [
-                Expanded(
-                  child: FilledButton.icon(
-                    icon: const Icon(Icons.login, size: 16),
-                    label: const Text('Set Logged In'),
-                    onPressed: _sessionLoading ? null : _setLoggedIn,
-                    style: FilledButton.styleFrom(
-                      backgroundColor: Colors.green,
-                      padding: const EdgeInsets.symmetric(vertical: 6),
-                    ),
-                  ),
-                ),
-                const SizedBox(width: 8),
-                Expanded(
-                  child: FilledButton.icon(
-                    icon: const Icon(Icons.logout, size: 16),
-                    label: const Text('Set Logged Out'),
-                    onPressed: _sessionLoading ? null : _setLoggedOut,
-                    style: FilledButton.styleFrom(
-                      backgroundColor: Colors.red,
-                      padding: const EdgeInsets.symmetric(vertical: 6),
-                    ),
-                  ),
-                ),
-              ],
-            ),
-
-            // ── Session status ───────────────────────────────────────────
-            if (_sessionLoading) ...[
-              const SizedBox(height: 6),
-              const LinearProgressIndicator(),
-            ] else if (_sessionStatus != null) ...[
-              const SizedBox(height: 4),
-              Text(
-                _sessionStatus!,
-                style: const TextStyle(fontSize: 11, color: Colors.teal),
-              ),
-            ],
-            const SizedBox(height: 8),
-
-            // ── Fetch Activities button ──────────────────────────────────
-            SizedBox(
-              width: double.infinity,
-              child: FilledButton.icon(
-                icon: const Icon(Icons.cloud_download, size: 16),
-                label: Text(
-                  'GET /activities/${_athleteIdController.text.trim().isEmpty ? "<id>" : _athleteIdController.text.trim()}',
-                  overflow: TextOverflow.ellipsis,
-                ),
-                onPressed: _activitiesLoading ? null : _fetchActivities,
-                style: FilledButton.styleFrom(
-                  backgroundColor: Colors.teal.shade700,
-                  padding: const EdgeInsets.symmetric(vertical: 6),
-                ),
-              ),
-            ),
-
-            // ── API result ───────────────────────────────────────────────
-            if (_activitiesLoading) ...[
-              const SizedBox(height: 6),
-              const LinearProgressIndicator(),
-            ] else if (_activitiesResult != null) ...[
-              const SizedBox(height: 6),
-              Container(
-                width: double.infinity,
-                padding: const EdgeInsets.all(8),
-                decoration: BoxDecoration(
-                  color: Colors.white,
-                  borderRadius: BorderRadius.circular(6),
-                  border: Border.all(color: Colors.teal.shade200),
-                ),
-                child: SelectableText(
-                  _activitiesResult!,
-                  style: const TextStyle(fontSize: 11, fontFamily: 'monospace'),
-                ),
-              ),
-            ],
           ],
         ),
       ),

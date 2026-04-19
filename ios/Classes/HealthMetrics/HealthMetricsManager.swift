@@ -25,7 +25,7 @@ import Foundation
 
 @available(iOS 17.0, *)
 public class HealthMetricsManager: NSObject {
-    static let shared = HealthMetricsManager()
+    public static let shared = HealthMetricsManager()
 
     private var healthStore: HKHealthStore { SharedHealthKitStore.shared }
 
@@ -73,12 +73,6 @@ public class HealthMetricsManager: NSObject {
         startDate: Date,
         endDate: Date
     ) async throws -> [String: Any] {
-        SleepRemoteLogger.log(.info, step: "fetchMetric", message: "fetching metric", context: [
-            "class": "HealthMetricsManager",
-            "metricType": metricType.key,
-            "startDate": isoFormatter.string(from: startDate),
-            "endDate": isoFormatter.string(from: endDate),
-        ], subsystem: "HealthMetrics")
         return try await fetchMetricSamples(
             metricType: metricType,
             startDate: startDate,
@@ -90,10 +84,6 @@ public class HealthMetricsManager: NSObject {
 
     /// On-demand query for the most recent sample of a single metric type.
     public func fetchLatestMetric(_ metricType: HealthMetricType) async throws -> [String: Any] {
-        SleepRemoteLogger.log(.info, step: "fetchLatestMetric", message: "fetching latest metric", context: [
-            "class": "HealthMetricsManager",
-            "metricType": metricType.key,
-        ], subsystem: "HealthMetrics")
         return try await fetchMetricSamples(
             metricType: metricType,
             startDate: Date.distantPast,
@@ -106,11 +96,6 @@ public class HealthMetricsManager: NSObject {
     /// On-demand query for all supported metric types within a date range.
     /// Errors per type are collected in the "errors" key rather than thrown.
     public func fetchAllMetrics(startDate: Date, endDate: Date) async -> [String: Any] {
-        SleepRemoteLogger.log(.info, step: "fetchAllMetrics", message: "fetching all metrics", context: [
-            "class": "HealthMetricsManager",
-            "startDate": isoFormatter.string(from: startDate),
-            "endDate": isoFormatter.string(from: endDate),
-        ], subsystem: "HealthMetrics")
 
         var allMetrics: [String: Any] = [:]
         var errors: [String: String] = [:]
@@ -127,11 +112,6 @@ public class HealthMetricsManager: NSObject {
             } catch {
                 errors[type.key] = error.localizedDescription
                 debugPrint("[Humango] HealthMetricsManager: fetchAllMetrics — error for \(type.key): \(error)")
-                SleepRemoteLogger.log(.error, step: "fetchAllMetrics", message: "error fetching metric", context: [
-                    "class": "HealthMetricsManager",
-                    "metricType": type.key,
-                    "error": "\(error)",
-                ], subsystem: "HealthMetrics")
             }
         }
 
@@ -160,10 +140,6 @@ public class HealthMetricsManager: NSObject {
         }
         monitor.start()
         debugPrint("[Humango] HealthMetricsManager: startMonitoring(\(metricType.key)) — monitor started")
-        SleepRemoteLogger.log(.info, step: "startMonitoring", message: "monitor started", context: [
-            "class": "HealthMetricsManager",
-            "metricType": metricType.key,
-        ], subsystem: "HealthMetrics")
     }
 
     /// Stop and remove the monitor for a single metric type.
@@ -173,10 +149,6 @@ public class HealthMetricsManager: NSObject {
             self.monitors.removeValue(forKey: metricType.key)
         }
         debugPrint("[Humango] HealthMetricsManager: stopMonitoring(\(metricType.key)) — monitor stopped")
-        SleepRemoteLogger.log(.info, step: "stopMonitoring", message: "monitor stopped", context: [
-            "class": "HealthMetricsManager",
-            "metricType": metricType.key,
-        ], subsystem: "HealthMetrics")
     }
 
     /// Stop and remove all active monitors.
@@ -184,46 +156,12 @@ public class HealthMetricsManager: NSObject {
         monitorQueue.async(flags: .barrier) {
             let keys = Array(self.monitors.keys)
             debugPrint("[Humango] HealthMetricsManager: stopAllMonitoring — stopping \(keys.count) monitor(s): \(keys)")
-            SleepRemoteLogger.log(.info, step: "stopAllMonitoring", message: "stopping all monitors", context: [
-                "class": "HealthMetricsManager",
-                "count": keys.count,
-            ], subsystem: "HealthMetrics")
             for monitor in self.monitors.values { monitor.invalidate() }
             self.monitors.removeAll()
         }
     }
 
-    // MARK: - Auto-Start on App Launch
-
-    /// Restarts monitors for all metric types that were previously enabled via
-    /// `startMetricsMonitoring(for:)`. Called from `startAllBackgroundMonitoring()`
-    /// on every app launch so persisted metric observers resume automatically.
-    ///
-    /// Skips if the user is not logged in, the delegate is unset, or no metric keys
-    /// are stored in `MonitoringConfig.enabledMetricKeys`.
-    func autoStartIfConfigured() {
-        guard UserAuthStateManager.shared.isLoggedIn else {
-            debugPrint("[Humango] HealthMetricsManager: autoStart skipped — user not logged in")
-            SleepRemoteLogger.log(.warn, step: "metrics.autoStart", message: "skipped — user not logged in", context: ["class": "HealthMetricsManager", "method": "autoStartIfConfigured"], subsystem: "HealthMetrics")
-            return
-        }
-        guard HumangoHealthPlugin.delegate != nil else {
-            debugPrint("[Humango] HealthMetricsManager: autoStart skipped — delegate nil")
-            SleepRemoteLogger.log(.warn, step: "metrics.autoStart", message: "skipped — delegate nil", context: ["class": "HealthMetricsManager", "method": "autoStartIfConfigured"], subsystem: "HealthMetrics")
-            return
-        }
-        let enabledKeys = MonitoringConfig.shared.enabledMetricKeys
-        let types = HealthMetricType.allCases.filter { enabledKeys.contains($0.key) }
-        debugPrint("[Humango] HealthMetricsManager: autoStart — restarting \(types.count) metric monitor(s): \(types.map { $0.key })")
-        SleepRemoteLogger.log(.info, step: "metrics.autoStart", message: "restarting metric monitors", context: [
-            "class": "HealthMetricsManager",
-            "method": "autoStartIfConfigured",
-            "types": types.map { $0.key }.joined(separator: ", "),
-        ], subsystem: "HealthMetrics")
-        types.forEach { startMonitoring($0) }
-    }
-
-    // MARK: - Client iOS Convenience API (completion handler–based)
+    // MARK: - Core HealthKit Fetch (private)
 
     /// Query a single metric by its **string key** (e.g. `"heartRateVariabilitySDNN"`) within a
     /// date range. Bridging convenience for callers that hold the key as a `String` rather than
@@ -418,7 +356,6 @@ public class HealthMetricsManager: NSObject {
             return
         }
         startMonitoring(metricType)
-        MonitoringConfig.shared.enableMetric(metricType.key)
         result(nil)
     }
 
@@ -433,7 +370,6 @@ public class HealthMetricsManager: NSObject {
             return
         }
         stopMonitoring(metricType)
-        MonitoringConfig.shared.disableMetric(metricType.key)
         result(nil)
     }
 
@@ -514,11 +450,6 @@ public class HealthMetricsManager: NSObject {
         let latestSample: [String: Any]? = ascending ? sampleDicts.last : sampleDicts.first
 
         debugPrint("[Humango] HealthMetricsManager: fetchMetricSamples — \(count) \(metricType.key) sample(s) [\(isoFormatter.string(from: startDate)) → \(isoFormatter.string(from: endDate))]")
-        SleepRemoteLogger.log(.info, step: "fetchMetricSamples", message: "samples fetched", context: [
-            "class": "HealthMetricsManager",
-            "metricType": metricType.key,
-            "sampleCount": count,
-        ], subsystem: "HealthMetrics")
 
         return [
             "metricType": metricType.key,

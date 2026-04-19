@@ -53,31 +53,28 @@ final class WorkoutService: AppLifecycleObserver {
             // only surfaces workouts written after monitoring starts, then enable delivery.
             await primeAnchor()
             await enableBackgroundDelivery()
-            debugPrint("[Humango] WorkoutService: start → foreground mode")
-            SleepRemoteLogger.log(.info, step: "workoutService.start", message: "starting workout service in foreground", context: [
-                "class": "WorkoutService",
-                "method": "start",
-                "mode": "foreground",
-                "startDate": startDate.description,
-            ], subsystem: "WorkoutService")
+            debugPrint("VINAY :  [Humango] WorkoutService: start → foreground mode")
             startLiveUpdates()
         } else {
-            // Cold background relaunch: install the HKObserverQuery FIRST so HealthKit
-            // can call its handler without delay. primeAnchor and enableBackgroundDelivery
-            // are called immediately after — still well within the background execution window.
-            // If the observer fires before primeAnchor completes the anchor is nil; the
-            // resulting full-replay is handled by WorkoutDedup in the delegate.
-            debugPrint("[Humango] WorkoutService: start → background mode (cold background relaunch)")
-            SleepRemoteLogger.log(.info, step: "workoutService.start", message: "starting workout service in background — installing observer first", context: [
-                "class": "WorkoutService",
-                "method": "start",
-                "mode": "background",
-                "startDate": startDate.description,
-            ], subsystem: "WorkoutService")
-            startBackgroundMonitoring()   // synchronous — HKObserverQuery registered immediately
+            // Cold background relaunch: the HKObserverQuery may already be registered
+            // by prepareBackgroundObserver() called synchronously before this Task.
+            // Only install it here if it hasn't been set up yet.
+            if observer == nil {
+                startBackgroundMonitoring()
+            }
+            debugPrint("VINAY : [Humango] WorkoutService: start → background mode (cold background relaunch)")
             await primeAnchor()
             await enableBackgroundDelivery()
         }
+    }
+
+    /// Registers the HKObserverQuery synchronously — call this immediately after creating
+    /// the service when the app is in the background so HealthKit can fire the handler
+    /// even if iOS suspends the app before the async `start()` Task runs.
+    func prepareBackgroundObserver() {
+        authorized = true
+        startBackgroundMonitoring()
+        debugPrint("[Humango] WorkoutService: prepareBackgroundObserver — observer registered synchronously")
     }
 
     /// Enables background delivery for workout type once per session. Idempotent —
@@ -86,31 +83,20 @@ final class WorkoutService: AppLifecycleObserver {
         do {
             try await healthStore.enableBackgroundDelivery(for: .workoutType(), frequency: .immediate)
             debugPrint("[Humango] WorkoutService: enableBackgroundDelivery(workoutType) — success (immediate)")
-            SleepRemoteLogger.log(.info, step: "workoutService.enableBackgroundDelivery", message: "background delivery enabled", context: [
-                "class": "WorkoutService",
-                "method": "enableBackgroundDelivery",
-            ], subsystem: "WorkoutService")
         } catch {
             debugPrint("[Humango] WorkoutService: enableBackgroundDelivery(workoutType) — failed: \(error)")
-            SleepRemoteLogger.log(.error, step: "workoutService.enableBackgroundDelivery", message: "enableBackgroundDelivery failed", context: [
-                "class": "WorkoutService",
-                "method": "enableBackgroundDelivery",
-                "error": "\(error)",
-            ], subsystem: "WorkoutService")
         }
     }
     
     // MARK: - AppLifecycleObserver (Native iOS lifecycle)
     
     func appDidEnterForeground() {
-        debugPrint("[Humango] WorkoutService: appDidEnterForeground — switching to foreground mode")
-        SleepRemoteLogger.log(.info, step: "lifecycle", message: "appDidEnterForeground", context: ["class": "WorkoutService", "method": "appDidEnterForeground"], subsystem: "WorkoutService")
+        debugPrint("VINAY:[Humango] WorkoutService: appDidEnterForeground — switching to foreground mode")
         enterForegroundMode()
     }
     
     func appDidEnterBackground() {
-        debugPrint("[Humango] WorkoutService: appDidEnterBackground — switching to background mode")
-        SleepRemoteLogger.log(.info, step: "lifecycle", message: "appDidEnterBackground", context: ["class": "WorkoutService", "method": "appDidEnterBackground"], subsystem: "WorkoutService")
+        debugPrint("VINAY: [Humango] WorkoutService: appDidEnterBackground — switching to background mode")
         enterBackgroundMode()
     }
 
@@ -118,24 +104,25 @@ final class WorkoutService: AppLifecycleObserver {
 
     func enterBackgroundMode() {
         guard authorized else {
-            debugPrint("[Humango] WorkoutService: enterBackgroundMode skipped — not authorized")
-            SleepRemoteLogger.log(.warn, step: "enterBackgroundMode", message: "skipped — not authorized", context: ["class": "WorkoutService", "method": "enterBackgroundMode"], subsystem: "WorkoutService")
+            debugPrint("VINAY: [Humango] WorkoutService: enterBackgroundMode skipped — not authorized")
             return
         }
         let activeRouteCount = routeServices.count
-        debugPrint("[Humango] WorkoutService: enterBackgroundMode — stopping live updates, starting background observer (activeRouteServices=\(activeRouteCount))")
-        SleepRemoteLogger.log(.info, step: "enterBackgroundMode", message: "entering background mode", context: [
-            "class": "WorkoutService",
-            "method": "enterBackgroundMode",
-            "activeRouteServices": "\(activeRouteCount)",
-        ], subsystem: "WorkoutService")
+        debugPrint("VINAY: [Humango] WorkoutService: enterBackgroundMode — stopping live updates, starting background observer (activeRouteServices=\(activeRouteCount))")
         stopLiveUpdates()
         startBackgroundMonitoring()
-        debugPrint("[Humango] WorkoutService: entered BACKGROUND mode")
+        // Re-register background delivery on every foreground→background transition.
+        // enableBackgroundDelivery is idempotent; re-calling it refreshes the HealthKit
+        // wake-up registration so iOS wakes the app when new workouts arrive.
+        Task { [weak self] in
+            guard let self else { return }
+            await self.enableBackgroundDelivery()
+        }
+        debugPrint("VINAY: [Humango] WorkoutService: entered BACKGROUND mode")
 
         routeServiceQueue.async(flags: .barrier) {
             for (id, rs) in self.routeServices {
-                debugPrint("[Humango] WorkoutService: propagating background mode → RouteService(\(id))")
+                debugPrint("VINAY: [Humango] WorkoutService: propagating background mode → RouteService(\(id))")
                 rs.enterBackgroundMode()
             }
         }
@@ -143,24 +130,18 @@ final class WorkoutService: AppLifecycleObserver {
 
     func enterForegroundMode() {
         guard authorized else {
-            debugPrint("[Humango] WorkoutService: enterForegroundMode skipped — not authorized")
-            SleepRemoteLogger.log(.warn, step: "enterForegroundMode", message: "skipped — not authorized", context: ["class": "WorkoutService", "method": "enterForegroundMode"], subsystem: "WorkoutService")
+            debugPrint("VINAY: [Humango] WorkoutService: enterForegroundMode skipped — not authorized")
             return
         }
         let activeRouteCount = routeServices.count
-        debugPrint("[Humango] WorkoutService: enterForegroundMode — stopping background observer, starting live updates (activeRouteServices=\(activeRouteCount))")
-        SleepRemoteLogger.log(.info, step: "enterForegroundMode", message: "entering foreground mode", context: [
-            "class": "WorkoutService",
-            "method": "enterForegroundMode",
-            "activeRouteServices": "\(activeRouteCount)",
-        ], subsystem: "WorkoutService")
+        debugPrint("VINAY: [Humango] WorkoutService: enterForegroundMode — stopping background observer, starting live updates (activeRouteServices=\(activeRouteCount))")
         stopBackgroundMonitoring()
         startLiveUpdates()
-        debugPrint("[Humango] WorkoutService: entered FOREGROUND mode")
+        debugPrint("VINAY: [Humango] WorkoutService: entered FOREGROUND mode")
 
         routeServiceQueue.async(flags: .barrier) {
             for (id, rs) in self.routeServices {
-                debugPrint("[Humango] WorkoutService: propagating foreground mode → RouteService(\(id))")
+                debugPrint("VINAY: [Humango] WorkoutService: propagating foreground mode → RouteService(\(id))")
                 rs.enterForegroundMode()
             }
         }
@@ -172,16 +153,10 @@ final class WorkoutService: AppLifecycleObserver {
 
     func startLiveUpdates() {
         guard authorized else {
-            debugPrint("[Humango] WorkoutService: startLiveUpdates skipped — not authorized")
-            SleepRemoteLogger.log(.warn, step: "liveUpdates.start", message: "startLiveUpdates skipped — not authorized", context: ["class": "WorkoutService", "method": "startLiveUpdates"], subsystem: "WorkoutService")
+            debugPrint("VINAY: [Humango] WorkoutService: startLiveUpdates skipped — not authorized")
             return
         }
-        debugPrint("[Humango] WorkoutService: startLiveUpdates — opening HKAnchoredObjectQueryoror stream from \(startDate)")
-        SleepRemoteLogger.log(.info, step: "liveUpdates.start", message: "opening live workout stream", context: [
-            "class": "WorkoutService",
-            "method": "startLiveUpdates",
-            "startDate": startDate.description,
-        ], subsystem: "WorkoutService")
+        debugPrint("VINAY: [Humango] WorkoutService: startLiveUpdates — opening HKAnchoredObjectQueryoror stream from \(startDate)")
 
         let livePredicate = HKQuery.predicateForSamples(
             withStart: startDate,
@@ -199,39 +174,20 @@ final class WorkoutService: AppLifecycleObserver {
         updateTask = Task { [weak self] in
             guard let self = self else { return }
             debugPrint("[Humango] WorkoutService: live update stream started")
-            SleepRemoteLogger.log(.info, step: "liveUpdates.streaming", message: "live workout stream started", context: ["class": "WorkoutService", "method": "startLiveUpdates"], subsystem: "WorkoutService")
             do {
                 for try await update in stream {
                     self.anchor = update.newAnchor
                     let count = update.addedSamples.count
                     debugPrint("[Humango] WorkoutService: live stream update — \(count) new workout(s)")
-                    SleepRemoteLogger.log(.info, step: "liveUpdates.update", message: "live stream update received", context: [
-                        "class": "WorkoutService",
-                        "method": "startLiveUpdates",
-                        "count": "\(count)",
-                    ], subsystem: "WorkoutService")
                     for w in update.addedSamples {
                         debugPrint("[Humango] WorkoutService: live workout received — uuid=\(w.uuid.uuidString) type=\(w.workoutActivityType.name) start=\(w.startDate) end=\(w.endDate)")
-                        SleepRemoteLogger.log(.info, step: "liveUpdates.workout", message: "live workout received", context: [
-                            "class": "WorkoutService",
-                            "method": "startLiveUpdates",
-                            "uuid": w.uuid.uuidString,
-                            "type": w.workoutActivityType.name,
-                            "start": w.startDate.description,
-                            "end": w.endDate.description,
-                        ], subsystem: "WorkoutService")
-                        self.handleWorkouts(workout: w)
+                        // Fire-and-forget in foreground — keeps the stream loop unblocked.
+                        Task { await self.handleWorkouts(workout: w) }
                     }
                 }
                 debugPrint("[Humango] WorkoutService: live update stream ended normally")
-                SleepRemoteLogger.log(.info, step: "liveUpdates.ended", message: "live workout stream ended normally", context: ["class": "WorkoutService", "method": "startLiveUpdates"], subsystem: "WorkoutService")
             } catch {
                 debugPrint("[Humango] WorkoutService: live update stream error — \(error)")
-                SleepRemoteLogger.log(.error, step: "liveUpdates.error", message: "live workout stream error", context: [
-                    "class": "WorkoutService",
-                    "method": "startLiveUpdates",
-                    "error": "\(error)",
-                ], subsystem: "WorkoutService")
             }
         }
     }
@@ -239,7 +195,6 @@ final class WorkoutService: AppLifecycleObserver {
     func stopLiveUpdates() {
         guard updateTask != nil else { return }
         debugPrint("[Humango] WorkoutService: stopLiveUpdates — cancelling live stream task")
-        SleepRemoteLogger.log(.info, step: "liveUpdates.stop", message: "stopping live workout stream", context: ["class": "WorkoutService", "method": "stopLiveUpdates"], subsystem: "WorkoutService")
         updateTask?.cancel()
         updateTask = nil
     }
@@ -249,18 +204,10 @@ final class WorkoutService: AppLifecycleObserver {
     private func fetchWorkouts(upToNow: Bool = false) async {
         guard authorized else {
             debugPrint("[Humango] WorkoutService: fetchWorkouts skipped — not authorized")
-            SleepRemoteLogger.log(.warn, step: "fetchWorkouts.skip", message: "fetchWorkouts skipped — not authorized", context: ["class": "WorkoutService", "method": "fetchWorkouts"], subsystem: "WorkoutService")
             return
         }
         let endDate = upToNow ? Date() : Date().addingTimeInterval(-WorkoutService.liveWindowSeconds)
         debugPrint("[Humango] WorkoutService: fetchWorkouts — querying \(startDate) → \(endDate) (upToNow=\(upToNow))")
-        SleepRemoteLogger.log(.info, step: "fetchWorkouts.start", message: "snapshot fetch started", context: [
-            "class": "WorkoutService",
-            "method": "fetchWorkouts",
-            "startDate": startDate.description,
-            "endDate": endDate.description,
-            "upToNow": upToNow,
-        ], subsystem: "WorkoutService")
 
         let predicate = HKQuery.predicateForSamples(
             withStart: startDate,
@@ -277,28 +224,14 @@ final class WorkoutService: AppLifecycleObserver {
             let result = try await desc.result(for: healthStore)
             self.anchor = result.newAnchor
             debugPrint("[Humango] WorkoutService: fetchWorkouts — found \(result.addedSamples.count) workout(s)")
-            SleepRemoteLogger.log(.info, step: "fetchWorkouts.result", message: "snapshot fetch returned workouts", context: [
-                "class": "WorkoutService",
-                "method": "fetchWorkouts",
-                "count": "\(result.addedSamples.count)",
-            ], subsystem: "WorkoutService")
-            for workout in result.addedSamples {
-                debugPrint("[Humango] WorkoutService: fetchWorkouts — handling uuid=\(workout.uuid.uuidString) type=\(workout.workoutActivityType.name)")
-                SleepRemoteLogger.log(.info, step: "fetchWorkouts.handle", message: "handling fetched workout", context: [
-                    "class": "WorkoutService",
-                    "method": "fetchWorkouts",
-                    "uuid": workout.uuid.uuidString,
-                    "type": workout.workoutActivityType.name,
-                ], subsystem: "WorkoutService")
-                handleWorkouts(workout: workout)
+            await withTaskGroup(of: Void.self) { group in
+                for workout in result.addedSamples {
+                    debugPrint("[Humango] WorkoutService: fetchWorkouts — handling uuid=\(workout.uuid.uuidString) type=\(workout.workoutActivityType.name)")
+                    group.addTask { await self.handleWorkouts(workout: workout) }
+                }
             }
         } catch {
             debugPrint("[Humango] WorkoutService: fetchWorkouts error — \(error)")
-            SleepRemoteLogger.log(.error, step: "fetchWorkouts.error", message: "snapshot fetch failed", context: [
-                "class": "WorkoutService",
-                "method": "fetchWorkouts",
-                "error": "\(error)",
-            ], subsystem: "WorkoutService")
         }
     }
     
@@ -328,21 +261,10 @@ final class WorkoutService: AppLifecycleObserver {
             self.anchor = result.newAnchor
             let skipped = result.addedSamples.count
             debugPrint("[Humango] WorkoutService: primeAnchor — anchor set, skipped \(skipped) existing workout(s)")
-            SleepRemoteLogger.log(.info, step: "primeAnchor", message: "anchor primed — skipping existing workouts", context: [
-                "class":        "WorkoutService",
-                "method":       "primeAnchor",
-                "skippedCount": "\(skipped)",
-                "startDate":    startDate.description,
-            ], subsystem: "WorkoutService")
         } catch {
             // Leave anchor nil; worst case the first update replays known workouts
             // which WorkoutDedup in the delegate will handle.
             debugPrint("[Humango] WorkoutService: primeAnchor failed (\(error)) — proceeding with nil anchor")
-            SleepRemoteLogger.log(.warn, step: "primeAnchor", message: "anchor priming failed — may replay existing workouts", context: [
-                "class":  "WorkoutService",
-                "method": "primeAnchor",
-                "error":  "\(error)",
-            ], subsystem: "WorkoutService")
         }
     }
 
@@ -353,8 +275,14 @@ final class WorkoutService: AppLifecycleObserver {
             debugPrint("[Humango] WorkoutService: startBackgroundMonitoring skipped — not authorized")
             return
         }
+        // Stop any existing observer before registering a new one to prevent leaking
+        // orphaned HKObserverQuery instances on repeated calls.
+        if let existing = observer {
+            healthStore.stop(existing)
+            observer = nil
+            debugPrint("[Humango] WorkoutService: startBackgroundMonitoring — stopped stale observer before re-registering")
+        }
         debugPrint("[Humango] WorkoutService: startBackgroundMonitoring — installing background observer")
-        SleepRemoteLogger.log(.info, step: "startBackgroundMonitoring", message: "installing background observer", context: ["class": "WorkoutService", "method": "startBackgroundMonitoring"], subsystem: "WorkoutService")
 
         observer = HKObserverQuery(sampleType: .workoutType(), predicate: nil) { [weak self] _, completion, error in
             guard let self = self else { completion(); return }
@@ -365,22 +293,15 @@ final class WorkoutService: AppLifecycleObserver {
             let fireTime = Date()
             if let error = error {
                 debugPrint("[Humango] WorkoutService: background observer error at \(fireTime) — \(error)")
-                SleepRemoteLogger.log(.error, step: "observer", message: "observer error", context: ["class": "WorkoutService", "method": "startBackgroundMonitoring", "error": "\(error)"], subsystem: "WorkoutService")
                 completion()
                 return
             }
 
             debugPrint("[Humango] WorkoutService: background observer fired at \(fireTime) — starting fetch pipeline")
-            SleepRemoteLogger.log(.info, step: "observer_fired", message: "background observer fired — starting fetch", context: [
-                "class": "WorkoutService",
-                "method": "startBackgroundMonitoring",
-                "fireTime": ISO8601DateFormatter().string(from: fireTime),
-            ], subsystem: "WorkoutService")
             Task {
                 await self.fetchWorkouts(upToNow: true)
                 self.pruneOldRouteServices()
                 debugPrint("[Humango] WorkoutService: background observer pipeline complete — signalling completion()")
-                SleepRemoteLogger.log(.info, step: "observer_fired", message: "pipeline complete — signalling completion", context: ["class": "WorkoutService", "method": "startBackgroundMonitoring"], subsystem: "WorkoutService")
                 // Signal HealthKit AFTER all async work completes so iOS keeps the
                 // app alive for the full fetch → route → delegate pipeline.
                 completion()
@@ -398,7 +319,6 @@ final class WorkoutService: AppLifecycleObserver {
             healthStore.stop(q)
             observer = nil
             debugPrint("[Humango] WorkoutService: stopBackgroundMonitoring — observer removed")
-            SleepRemoteLogger.log(.info, step: "bgMonitoring.stop", message: "background observer removed", context: ["class": "WorkoutService", "method": "stopBackgroundMonitoring"], subsystem: "WorkoutService")
         }
     }
 
@@ -414,20 +334,13 @@ final class WorkoutService: AppLifecycleObserver {
         stopBackgroundMonitoring()
         AppLifecycleManager.shared.removeObserver(self)
         debugPrint("[Humango] WorkoutService: invalidated")
-        SleepRemoteLogger.log(.info, step: "invalidate", message: "WorkoutService invalidated", context: ["class": "WorkoutService", "method": "invalidate"], subsystem: "WorkoutService")
     }
 
     // MARK: - Decide per-workout behavior (one-shot vs retained live)
 
-    func handleWorkouts(workout: HKWorkout) {
+    func handleWorkouts(workout: HKWorkout) async {
         if workout.endDate <= workout.startDate {
             debugPrint("[Humango] WorkoutService: handleWorkouts — skipping incomplete workout uuid=\(workout.uuid.uuidString) start=\(workout.startDate) end=\(workout.endDate)")
-            SleepRemoteLogger.log(.warn, step: "handleWorkouts.skip", message: "skipping incomplete workout", context: [
-                "class": "WorkoutService",
-                "method": "handleWorkouts",
-                "uuid": workout.uuid.uuidString,
-                "reason": "endDate <= startDate",
-            ], subsystem: "WorkoutService")
             return
         }
 
@@ -436,67 +349,29 @@ final class WorkoutService: AppLifecycleObserver {
         let ageMinutes = Int(ageSinceEnd / 60)
         let isRecent = ageSinceEnd <= WorkoutService.liveWindowSeconds
         debugPrint("[Humango] WorkoutService: handleWorkouts — uuid=\(deviceId) type=\(workout.workoutActivityType.name) ageMinutes=\(ageMinutes) isRecent=\(isRecent)")
-        SleepRemoteLogger.log(.info, step: "handleWorkouts.classify", message: "workout classified", context: [
-            "class": "WorkoutService",
-            "method": "handleWorkouts",
-            "uuid": deviceId,
-            "type": workout.workoutActivityType.name,
-            "ageMinutes": "\(ageMinutes)",
-            "isRecent": "\(isRecent)",
-        ], subsystem: "WorkoutService")
 
-        Task {
-            let routeService = RouteService(workout: workout)
+        let routeService = RouteService(workout: workout)
 
-            if isRecent {
-                debugPrint("[Humango] WorkoutService: handleWorkouts — recent workout, retaining RouteService for uuid=\(deviceId)")
-                routeServiceQueue.async(flags: .barrier) {
-                    self.routeServices[deviceId] = routeService
-                }
-
-                debugPrint("[Humango] WorkoutService: handleWorkouts — fetching initial route snapshot for uuid=\(deviceId)")
-                SleepRemoteLogger.log(.info, step: "handleWorkouts.snapshot", message: "fetching initial route snapshot for recent workout", context: [
-                    "class": "WorkoutService",
-                    "method": "handleWorkouts",
-                    "uuid": deviceId,
-                ], subsystem: "WorkoutService")
-                await routeService.fetchWorkoutRoute()
-
-                if AppLifecycleManager.shared.isInForeground {
-                    routeService.startLiveUpdates()
-                    debugPrint("[Humango] WorkoutService: handleWorkouts — RouteService live updates started for uuid=\(deviceId)")
-                    SleepRemoteLogger.log(.info, step: "handleWorkouts.routeMode", message: "RouteService started in live mode", context: [
-                        "class": "WorkoutService",
-                        "method": "handleWorkouts",
-                        "uuid": deviceId,
-                        "mode": "live",
-                    ], subsystem: "WorkoutService")
-                } else {
-                    await routeService.startBackgroundMonitoring()
-                    debugPrint("[Humango] WorkoutService: handleWorkouts — RouteService background monitoring started for uuid=\(deviceId)")
-                    SleepRemoteLogger.log(.info, step: "handleWorkouts.routeMode", message: "RouteService started in background mode", context: [
-                        "class": "WorkoutService",
-                        "method": "handleWorkouts",
-                        "uuid": deviceId,
-                        "mode": "background",
-                    ], subsystem: "WorkoutService")
-                }
-            } else {
-                debugPrint("[Humango] WorkoutService: handleWorkouts — old workout (ageMinutes=\(ageMinutes)), one-shot fetch for uuid=\(deviceId)")
-                SleepRemoteLogger.log(.info, step: "handleWorkouts.oneShot", message: "one-shot route fetch for old workout", context: [
-                    "class": "WorkoutService",
-                    "method": "handleWorkouts",
-                    "uuid": deviceId,
-                    "ageMinutes": "\(ageMinutes)",
-                ], subsystem: "WorkoutService")
-                await routeService.fetchWorkoutRoute()
-                debugPrint("[Humango] WorkoutService: handleWorkouts — one-shot fetch complete for uuid=\(deviceId)")
-                SleepRemoteLogger.log(.info, step: "handleWorkouts.oneShotComplete", message: "one-shot route fetch complete", context: [
-                    "class": "WorkoutService",
-                    "method": "handleWorkouts",
-                    "uuid": deviceId,
-                ], subsystem: "WorkoutService")
+        if isRecent {
+            debugPrint("[Humango] WorkoutService: handleWorkouts — recent workout, retaining RouteService for uuid=\(deviceId)")
+            routeServiceQueue.sync(flags: .barrier) {
+                self.routeServices[deviceId] = routeService
             }
+
+            debugPrint("[Humango] WorkoutService: handleWorkouts — fetching initial route snapshot for uuid=\(deviceId)")
+            await routeService.fetchWorkoutRoute()
+
+            if AppLifecycleManager.shared.isInForeground {
+                routeService.startLiveUpdates()
+                debugPrint("[Humango] WorkoutService: handleWorkouts — RouteService live updates started for uuid=\(deviceId)")
+            } else {
+                await routeService.startBackgroundMonitoring()
+                debugPrint("[Humango] WorkoutService: handleWorkouts — RouteService background monitoring started for uuid=\(deviceId)")
+            }
+        } else {
+            debugPrint("[Humango] WorkoutService: handleWorkouts — old workout (ageMinutes=\(ageMinutes)), one-shot fetch for uuid=\(deviceId)")
+            await routeService.fetchWorkoutRoute()
+            debugPrint("[Humango] WorkoutService: handleWorkouts — one-shot fetch complete for uuid=\(deviceId)")
         }
     }
 

@@ -62,17 +62,23 @@ final class HealthMetricMonitor: AppLifecycleObserver {
         isStarted = true
         if AppLifecycleManager.shared.isInForeground {
             debugPrint("[Humango] HealthMetricMonitor(\(metricType.key)): start → foreground mode")
-            SleepRemoteLogger.log(.info, step: "start", message: "starting in foreground mode", context: [
-                "class": "HealthMetricMonitor",
-                "metricType": metricType.key,
-            ], subsystem: "HealthMetrics")
+            // Pre-register background delivery while still in the foreground so HealthKit
+            // persists the wake-up registration before iOS can suspend the process.
+            if let quantityType = metricType.quantityType {
+                let key = metricType.key
+                Task { [weak self] in
+                    guard let self else { return }
+                    do {
+                        try await self.healthStore.enableBackgroundDelivery(for: quantityType, frequency: .immediate)
+                        debugPrint("[Humango] HealthMetricMonitor(\(key)): start — pre-registered background delivery (immediate)")
+                    } catch {
+                        debugPrint("[Humango] HealthMetricMonitor(\(key)): start — pre-register background delivery failed: \(error)")
+                    }
+                }
+            }
             startLiveUpdates()
         } else {
             debugPrint("[Humango] HealthMetricMonitor(\(metricType.key)): start → background mode (cold relaunch)")
-            SleepRemoteLogger.log(.info, step: "start", message: "starting in background mode (cold relaunch)", context: [
-                "class": "HealthMetricMonitor",
-                "metricType": metricType.key,
-            ], subsystem: "HealthMetrics")
             startBackgroundMonitoring()
         }
     }
@@ -85,10 +91,6 @@ final class HealthMetricMonitor: AppLifecycleObserver {
         stopBackgroundMonitoring()
         AppLifecycleManager.shared.removeObserver(self)
         debugPrint("[Humango] HealthMetricMonitor(\(metricType.key)): invalidated")
-        SleepRemoteLogger.log(.info, step: "invalidate", message: "monitor invalidated", context: [
-            "class": "HealthMetricMonitor",
-            "metricType": metricType.key,
-        ], subsystem: "HealthMetrics")
     }
 
     // MARK: - AppLifecycleObserver
@@ -96,20 +98,12 @@ final class HealthMetricMonitor: AppLifecycleObserver {
     func appDidEnterForeground() {
         guard isStarted else { return }
         debugPrint("[Humango] HealthMetricMonitor(\(metricType.key)): appDidEnterForeground — switching to foreground mode")
-        SleepRemoteLogger.log(.info, step: "lifecycle", message: "appDidEnterForeground", context: [
-            "class": "HealthMetricMonitor",
-            "metricType": metricType.key,
-        ], subsystem: "HealthMetrics")
         enterForegroundMode()
     }
 
     func appDidEnterBackground() {
         guard isStarted else { return }
         debugPrint("[Humango] HealthMetricMonitor(\(metricType.key)): appDidEnterBackground — switching to background mode")
-        SleepRemoteLogger.log(.info, step: "lifecycle", message: "appDidEnterBackground", context: [
-            "class": "HealthMetricMonitor",
-            "metricType": metricType.key,
-        ], subsystem: "HealthMetrics")
         enterBackgroundMode()
     }
 
@@ -157,21 +151,11 @@ final class HealthMetricMonitor: AppLifecycleObserver {
                     self.anchor = update.newAnchor
                     let count = update.addedSamples.count
                     debugPrint("[Humango] HealthMetricMonitor(\(self.metricType.key)): live stream update — \(count) new sample(s), fetching today's payload")
-                    SleepRemoteLogger.log(.info, step: "liveUpdate", message: "live stream update received", context: [
-                        "class": "HealthMetricMonitor",
-                        "metricType": self.metricType.key,
-                        "newSamples": count,
-                    ], subsystem: "HealthMetrics")
                     await self.fetchAndDeliverCurrentDay()
                 }
                 debugPrint("[Humango] HealthMetricMonitor(\(self.metricType.key)): live stream ended normally")
             } catch {
                 debugPrint("[Humango] HealthMetricMonitor(\(self.metricType.key)): live stream error — \(error)")
-                SleepRemoteLogger.log(.error, step: "liveUpdate", message: "live stream error", context: [
-                    "class": "HealthMetricMonitor",
-                    "metricType": self.metricType.key,
-                    "error": "\(error)",
-                ], subsystem: "HealthMetrics")
             }
         }
 
@@ -194,10 +178,6 @@ final class HealthMetricMonitor: AppLifecycleObserver {
         }
 
         debugPrint("[Humango] HealthMetricMonitor(\(metricType.key)): startBackgroundMonitoring — enabling background delivery + installing observer")
-        SleepRemoteLogger.log(.info, step: "startBackgroundMonitoring", message: "registering background delivery + observer", context: [
-            "class": "HealthMetricMonitor",
-            "metricType": metricType.key,
-        ], subsystem: "HealthMetrics")
 
         // Capture key by value so the Task does not hold a strong reference to self
         // after invalidate() has already released it from the monitors registry.
@@ -207,17 +187,8 @@ final class HealthMetricMonitor: AppLifecycleObserver {
             do {
                 try await self.healthStore.enableBackgroundDelivery(for: quantityType, frequency: .immediate)
                 debugPrint("[Humango] HealthMetricMonitor(\(key)): enableBackgroundDelivery — success (immediate)")
-                SleepRemoteLogger.log(.info, step: "startBackgroundMonitoring", message: "background delivery enabled", context: [
-                    "class": "HealthMetricMonitor",
-                    "metricType": key,
-                ], subsystem: "HealthMetrics")
             } catch {
                 debugPrint("[Humango] HealthMetricMonitor(\(key)): enableBackgroundDelivery failed — \(error)")
-                SleepRemoteLogger.log(.error, step: "startBackgroundMonitoring", message: "enableBackgroundDelivery failed", context: [
-                    "class": "HealthMetricMonitor",
-                    "metricType": key,
-                    "error": "\(error)",
-                ], subsystem: "HealthMetrics")
             }
         }
 
@@ -230,29 +201,15 @@ final class HealthMetricMonitor: AppLifecycleObserver {
             let fireTime = Date()
             if let error = error {
                 debugPrint("[Humango] HealthMetricMonitor(\(self.metricType.key)): background observer error at \(fireTime) — \(error)")
-                SleepRemoteLogger.log(.error, step: "observer", message: "observer error", context: [
-                    "class": "HealthMetricMonitor",
-                    "metricType": self.metricType.key,
-                    "error": "\(error)",
-                ], subsystem: "HealthMetrics")
                 completion()
                 return
             }
 
             debugPrint("[Humango] HealthMetricMonitor(\(self.metricType.key)): background observer fired at \(fireTime) — starting fetch pipeline")
-            SleepRemoteLogger.log(.info, step: "observer_fired", message: "background observer fired — starting fetch", context: [
-                "class": "HealthMetricMonitor",
-                "metricType": self.metricType.key,
-                "fireTime": ISO8601DateFormatter().string(from: fireTime),
-            ], subsystem: "HealthMetrics")
 
             Task {
                 await self.fetchAndDeliverCurrentDay()
                 debugPrint("[Humango] HealthMetricMonitor(\(self.metricType.key)): background observer pipeline complete — signalling completion()")
-                SleepRemoteLogger.log(.info, step: "observer_fired", message: "pipeline complete — signalling completion", context: [
-                    "class": "HealthMetricMonitor",
-                    "metricType": self.metricType.key,
-                ], subsystem: "HealthMetrics")
                 // Signal HealthKit AFTER all async work (fetch + delegate await) completes
                 // so iOS keeps the app alive for the full pipeline.
                 completion()
@@ -271,17 +228,11 @@ final class HealthMetricMonitor: AppLifecycleObserver {
             observer = nil
             debugPrint("[Humango] HealthMetricMonitor(\(metricType.key)): background observer removed")
         }
-        guard let quantityType = metricType.quantityType else { return }
-        // Capture key by value — the callback must not hold a strong reference to self
-        // because disableBackgroundDelivery may call back after the monitor is deallocated.
-        let key = metricType.key
-        healthStore.disableBackgroundDelivery(for: quantityType) { ok, err in
-            if let err {
-                debugPrint("[Humango] HealthMetricMonitor(\(key)): disableBackgroundDelivery error — \(err)")
-            } else {
-                debugPrint("[Humango] HealthMetricMonitor(\(key)): disableBackgroundDelivery — ok=\(ok)")
-            }
-        }
+        // NOTE: Do NOT call disableBackgroundDelivery here.
+        // disableBackgroundDelivery globally unregisters the HealthKit wake-up for this
+        // type. Calling it on every foreground transition or monitor stop would prevent
+        // iOS from waking the app for background deliveries entirely.
+        // Background delivery stays enabled for the lifetime of the app install.
     }
 
     // MARK: - Fetch current day's samples and deliver to delegate
@@ -302,12 +253,6 @@ final class HealthMetricMonitor: AppLifecycleObserver {
         let endDate = Date()
 
         debugPrint("[Humango] HealthMetricMonitor(\(metricType.key)): fetchAndDeliverCurrentDay — querying \(startOfToday) → \(endDate)")
-        SleepRemoteLogger.log(.info, step: "fetchAndDeliverCurrentDay", message: "fetching current-day samples", context: [
-            "class": "HealthMetricMonitor",
-            "metricType": metricType.key,
-            "startOfToday": isoFormatter.string(from: startOfToday),
-            "endDate": isoFormatter.string(from: endDate),
-        ], subsystem: "HealthMetrics")
 
         let predicate = HKQuery.predicateForSamples(
             withStart: startOfToday,
@@ -369,31 +314,13 @@ final class HealthMetricMonitor: AppLifecycleObserver {
 
             if let delegate = HumangoHealthPlugin.delegate {
                 debugPrint("[Humango] HealthMetricMonitor(\(metricType.key)): calling delegate.onHealthMetricReady — sampleCount=\(count)")
-                SleepRemoteLogger.log(.info, step: "fetchAndDeliverCurrentDay", message: "calling delegate.onHealthMetricReady", context: [
-                    "class": "HealthMetricMonitor",
-                    "metricType": metricType.key,
-                    "sampleCount": count,
-                ], subsystem: "HealthMetrics")
                 await delegate.onHealthMetricReady(payload: payload, metricType: metricType.key)
                 debugPrint("[Humango] HealthMetricMonitor(\(metricType.key)): delegate.onHealthMetricReady returned")
-                SleepRemoteLogger.log(.info, step: "fetchAndDeliverCurrentDay", message: "delegate.onHealthMetricReady returned", context: [
-                    "class": "HealthMetricMonitor",
-                    "metricType": metricType.key,
-                ], subsystem: "HealthMetrics")
             } else {
                 debugPrint("[Humango] HealthMetricMonitor(\(metricType.key)): delegate is nil — payload not delivered")
-                SleepRemoteLogger.log(.warn, step: "fetchAndDeliverCurrentDay", message: "delegate nil — payload not delivered", context: [
-                    "class": "HealthMetricMonitor",
-                    "metricType": metricType.key,
-                ], subsystem: "HealthMetrics")
             }
         } catch {
             debugPrint("[Humango] HealthMetricMonitor(\(metricType.key)): fetchAndDeliverCurrentDay error — \(error)")
-            SleepRemoteLogger.log(.error, step: "fetchAndDeliverCurrentDay", message: "fetch error", context: [
-                "class": "HealthMetricMonitor",
-                "metricType": metricType.key,
-                "error": "\(error)",
-            ], subsystem: "HealthMetrics")
         }
     }
 

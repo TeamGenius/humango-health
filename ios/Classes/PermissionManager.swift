@@ -268,7 +268,7 @@ public class PermissionManager {
                 }
 
                 print("[PermissionManager] ✅ Authorization sheet dismissed — checking status")
-                DispatchQueue.global().async {
+                DispatchQueue.global(qos: .utility).async {
                     let status = self.buildDetailedAuthorizationStatus(persistSnapshot: true)
                     self.emitPermissionStatus(status)
                     self.isFreshAuthInProgress = false
@@ -282,7 +282,7 @@ public class PermissionManager {
     
     public func verifyAuthorization(result: @escaping FlutterResult) {
         print("[PermissionManager] 🔍 verifyAuthorization called")
-        DispatchQueue.global().async { [weak self] in
+        DispatchQueue.global(qos: .utility).async { [weak self] in
             guard let self = self else { return }
             let detailedStatus = self.buildDetailedAuthorizationStatus(persistSnapshot: true)
             self.emitPermissionStatus(detailedStatus)
@@ -389,10 +389,11 @@ public class PermissionManager {
             healthStore.getRequestStatusForAuthorization(toShare: Set<HKSampleType>(), read: readSet) { status, error in
                 lock.lock()
                 requestStatuses[item.key] = status
-                lock.unlock()
-                
                 pendingReqChecks -= 1
-                if pendingReqChecks == 0 {
+                let shouldSignal = pendingReqChecks == 0
+                lock.unlock()
+
+                if shouldSignal {
                     semaphore.signal()
                 }
             }
@@ -589,7 +590,7 @@ public class PermissionStreamHandler: NSObject, FlutterStreamHandler {
     
     @objc private func applicationDidBecomeActive() {
         // Delay to let HealthKit settle after returning from Settings
-        DispatchQueue.global().asyncAfter(deadline: .now() + 1.0) {
+        DispatchQueue.global(qos: .utility).asyncAfter(deadline: .now() + 1.0) {
             // Skip if requestAuthorization is in flight — it will emit its own
             // results with a cleared snapshot. Running here would use a stale
             // snapshot and could falsely mark no-data types as "denied".

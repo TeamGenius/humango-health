@@ -1,3 +1,136 @@
+## 1.0.1 — 2026-04-19
+
+### Enhancements
+
+#### Observer registration moved to `application(_:didFinishLaunchingWithOptions:)`
+
+Apple requires `HKObserverQuery` instances to be registered synchronously in
+`application(_:didFinishLaunchingWithOptions:)` so HealthKit can fire them immediately
+on a cold background relaunch — before the Flutter engine initialises.
+
+**`AppDelegate.swift`** (example app) — `didFinishLaunchingWithOptions` now reads
+`UserDefaults` for `"com.humango.example.isLoggedIn"`. When `true`, it directly calls:
+- `SleepDataManager.shared.startMonitoring()`
+- `WorkoutServiceChannel.shared.startMonitoring()`
+- `HealthMetricsManager.shared.startMonitoring(.restingHeartRate)`
+- `HealthMetricsManager.shared.startMonitoring(.bodyFatPercentage)`
+
+This covers the case where iOS kills the app under memory pressure and then relaunches
+it in the background to deliver a HealthKit notification — a scenario where
+`HumangoHealthPlugin.shared` is `nil` and Flutter channel calls cannot be made.
+
+#### `WorkoutServiceChannel` made a singleton and `public`
+
+`WorkoutServiceChannel` is now `public class` with `public static let shared` and
+`private override init()`. `HumangoHealthPlugin` uses `WorkoutServiceChannel.shared`
+instead of allocating a new instance. This allows `AppDelegate` to call
+`WorkoutServiceChannel.shared.startMonitoring()` directly without depending on
+`HumangoHealthPlugin.shared`.
+
+`startMonitoring()` is now `public func`.
+
+#### `SleepDataManager` visibility
+
+`SleepDataManager.shared` and `startMonitoring()` are now `public`, allowing
+`AppDelegate` to call them directly on cold background launch.
+
+#### `HealthMetricsManager.shared` made `public`
+
+`public static let shared` so `AppDelegate` can call `startMonitoring(_:)` directly.
+
+#### `HealthMetricMonitor.stopBackgroundMonitoring` — removed `disableBackgroundDelivery`
+
+Calling `disableBackgroundDelivery` on every foreground transition globally unregistered
+the HealthKit wake-up for the metric type, preventing background delivery after the first
+foreground → background cycle. Removed entirely. Background delivery now stays enabled
+for the lifetime of the app install, matching the existing `WorkoutService` and
+`SleepDataManager` behaviour.
+
+#### All monitoring entry points aligned
+
+All three monitoring entry points in the example app now start Sleep + Workouts +
+HealthMetrics consistently:
+
+- **`setLoggedIn`** — added `startSleepBackgroundMonitoring()` and
+  `startMetricsMonitoring(for: [.restingHeartRate, .bodyFatPercentage])`
+- **`startBackgroundMonitoring`** — uncommented
+  `startMetricsMonitoring(for: [.restingHeartRate, .bodyFatPercentage])`;
+  added `UserDefaults.set(true, forKey: "com.humango.example.isLoggedIn")`
+- **`stopBackgroundMonitoring`** — added
+  `UserDefaults.set(false, forKey: "com.humango.example.isLoggedIn")`
+- **`AppDelegate.didFinishLaunchingWithOptions`** — added HealthMetrics registration
+
+
+
+---
+
+## 1.0.0 — 2026-04-17
+
+### Breaking Changes
+
+#### Library is now fully stateless — `UserAuthStateManager` and `MonitoringConfig` removed
+
+The library no longer persists any auth-state or per-subsystem flags. All auto-start logic
+(`autoStartPersistedSubsystems`, `autoStartIfConfigured`) has been removed.
+
+**Deleted files:**
+- `ios/Classes/UserAuthStateManager.swift`
+- `ios/Classes/MonitoringConfig.swift`
+- `lib/src/managers/user_session_manager.dart`
+- `HumangoHealthPlugin.startActivityBackgroundMonitoring()` — use `startAllBackgroundMonitoring()` instead
+
+**New contract:** The client app calls start methods on every app open after setting the delegate.
+The library does nothing until explicitly started.
+
+**`HumangoHealthPlugin.swift`** — removed `guardMonitoringPreconditions()`,
+`autoStartPersistedSubsystems()`, and `startActivityBackgroundMonitoring()`; all start methods now
+guard on `delegate != nil` only; `logout()` stops active monitors without clearing non-existent flags.
+
+**`WorkoutServiceChannel.swift`** — replaced `autoStartIfConfigured()` with `startMonitoring()`
+(delegate-nil guard only); registers `HKObserverQuery` synchronously via `prepareBackgroundObserver()`
+before the async `Task` when the app is in the background; `handleStartMonitoring` is idempotent
+(returns immediately when `workoutService != nil`).
+
+**`WorkoutService.swift`** — added `prepareBackgroundObserver()` for synchronous cold-background
+observer registration; `startBackgroundMonitoring()` stops any stale observer before re-registering
+(prevents orphaned `HKObserverQuery` leaks).
+
+**`SleepDataManager.swift`** — replaced `autoStartIfConfigured()` with `startMonitoring()`
+(delegate-nil guard only); `stopBackgroundMonitoring()` no longer calls `disableBackgroundDelivery` —
+background delivery stays persistently enabled across foreground transitions. This was the root cause
+of sleep observers permanently breaking after a foreground → background transition cycle.
+
+**`HealthMetricsManager.swift`** — removed `autoStartIfConfigured()` and `MonitoringConfig` flag
+writes from Flutter channel handlers.
+
+**`SleepRemoteLogger.swift`** — removed `userId` block entirely.
+
+**`ExampleSessionChannel.swift`** (example app) — removed `UserAuthStateManager.shared.isLoggedIn = true`;
+`setLoggedIn` now sets delegate and calls `startAllBackgroundMonitoring()` directly.
+
+### Migration Guide
+
+**Before (≤ 0.0.39):**
+```swift
+// On login (once)
+UserAuthStateManager.shared.isLoggedIn = true
+HumangoHealthPlugin.delegate = handler
+HumangoHealthPlugin.shared?.startAllBackgroundMonitoring()   // arms flags, auto-restarts on relaunch
+```
+
+**After (1.0.0):**
+```swift
+// On EVERY app open when user is logged in
+HumangoHealthPlugin.delegate = handler
+HumangoHealthPlugin.shared?.startAllBackgroundMonitoring()
+HumangoHealthPlugin.shared?.startMetricsMonitoring(for: [.restingHeartRate, .bodyMass])
+```
+
+No `isLoggedIn` flag to set. No auto-restart on relaunch — client is responsible for calling
+start methods on every open.
+
+---
+
 ## 0.0.39 — 2026-04-15
 
 ### Enhancements

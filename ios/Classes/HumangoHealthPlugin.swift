@@ -9,81 +9,38 @@ public class HumangoHealthPlugin: NSObject, FlutterPlugin {
   /// Set this after the user logs in (e.g. from `UserSessionChannel`).
   public static var delegate: HumangoHealthDataDelegate?
 
-  private let workoutReadChannel = WorkoutServiceChannel()
+  private let workoutReadChannel = WorkoutServiceChannel.shared
 
   // MARK: - Background Monitoring
 
-    /// Triggers monitoring-capable subsystems to auto-start background monitoring (workouts, sleep,
-  /// and any previously-enabled metric types). Arms `workoutsEnabled` and `sleepEnabled` flags so
-  /// subsequent relaunches auto-start those two subsystems without a repeated explicit call.
-  /// Metric flags are only armed by `startMetricsMonitoring(for:)` — not by this method.
-  public func startAllBackgroundMonitoring() {
-      guard guardMonitoringPreconditions("startAllBackgroundMonitoring") else { return }
-      SleepRemoteLogger.log(.info, step: "startAllBackgroundMonitoring", message: "starting all subsystems", context: ["class": "HumangoHealthPlugin", "method": "startAllBackgroundMonitoring"])
-     
-     
-      workoutReadChannel.autoStartIfConfigured()
-      SleepDataManager.shared.autoStartIfConfigured()
-      HealthMetricsManager.shared.autoStartIfConfigured()
+  /// Starts background monitoring for **workouts and sleep**.
+  /// Call this on every app open after setting `HumangoHealthPlugin.delegate`.
+  /// Idempotent — safe to call when monitoring is already running.
+  /// For health metrics, call `startMetricsMonitoring(for:)` separately.
+  public func startActivityBackgroundMonitoring() {
+
+      workoutReadChannel.startMonitoring()
   }
 
-  /// Starts background monitoring for **activity/workout reading** only.
-  /// Arms `MonitoringConfig.workoutsEnabled = true` so subsequent relaunches auto-start workouts.
-  /// Requires the user to be logged in and `HumangoHealthPlugin.delegate` to be set.
-  public func startActivityBackgroundMonitoring() {
-      guard guardMonitoringPreconditions("startActivityBackgroundMonitoring") else { return }
-      SleepRemoteLogger.log(.info, step: "startActivityBackgroundMonitoring", message: "starting activity subsystem", context: ["class": "HumangoHealthPlugin", "method": "startActivityBackgroundMonitoring"])
-     
-      workoutReadChannel.autoStartIfConfigured()
+  /// Stops background monitoring for **workouts and sleep**.
+  /// Does not affect health metrics — call `stopMetricsMonitoring(for:)` for those.
+  /// Call `logout()` to stop all monitors and clear all stored data.
+  public func stopActivityBackgroundMonitoring() {
+      workoutReadChannel.stopAndClearAll()
   }
 
   /// Starts background monitoring for **sleep data** only.
-  /// Arms `MonitoringConfig.sleepEnabled = true` so subsequent relaunches auto-start sleep.
-  /// Requires the user to be logged in and `HumangoHealthPlugin.delegate` to be set.
+  /// Call this on every app open after setting `HumangoHealthPlugin.delegate`.
+  /// Idempotent — safe to call when monitoring is already running.
   public func startSleepBackgroundMonitoring() {
-      guard guardMonitoringPreconditions("startSleepBackgroundMonitoring") else { return }
-      SleepRemoteLogger.log(.info, step: "startSleepBackgroundMonitoring", message: "starting sleep subsystem", context: ["class": "HumangoHealthPlugin", "method": "startSleepBackgroundMonitoring"])
-  
-      SleepDataManager.shared.autoStartIfConfigured()
+      SleepDataManager.shared.startMonitoring()
   }
 
-  /// Shared precondition check for all monitoring entry points.
-  private func guardMonitoringPreconditions(_ caller: String) -> Bool {
-      guard UserAuthStateManager.shared.isLoggedIn else {
-          debugPrint("🔐 [HumangoHealth] \(caller) skipped — user not logged in")
-          SleepRemoteLogger.log(.warn, step: caller, message: "skipped — user not logged in", context: ["class": "HumangoHealthPlugin", "method": "guardMonitoringPreconditions"])
-          return false
-      }
-      guard HumangoHealthPlugin.delegate != nil else {
-          debugPrint("🔐 [HumangoHealth] \(caller) skipped — delegate not set. Assign HumangoHealthPlugin.delegate before starting monitoring.")
-          SleepRemoteLogger.log(.warn, step: caller, message: "skipped — delegate nil", context: ["class": "HumangoHealthPlugin", "method": "guardMonitoringPreconditions"])
-          return false
-      }
-      return true
-  }
-
-  // MARK: - Internal: Auto-Start from Persisted Flags (called by register())
-
-  /// Called once from `register(with:)` on every app launch.
-  /// Reads `MonitoringConfig` flags and starts only the subsystems that were
-  /// previously armed by an explicit client call. Does **NOT** write / arm any flags.
-  func autoStartPersistedSubsystems() {
-      guard guardMonitoringPreconditions("autoStartPersistedSubsystems") else { return }
-      SleepRemoteLogger.log(.info, step: "autoStartPersistedSubsystems", message: "checking persisted flags", context: [
-          "class": "HumangoHealthPlugin",
-          "workoutsEnabled": "\(MonitoringConfig.shared.workoutsEnabled)",
-          "sleepEnabled": "\(MonitoringConfig.shared.sleepEnabled)",
-          "metricKeys": "\(MonitoringConfig.shared.enabledMetricKeys)",
-      ])
-      if MonitoringConfig.shared.workoutsEnabled {
-          workoutReadChannel.autoStartIfConfigured()
-      }
-      if MonitoringConfig.shared.sleepEnabled {
-          SleepDataManager.shared.autoStartIfConfigured()
-      }
-      if !MonitoringConfig.shared.enabledMetricKeys.isEmpty {
-          HealthMetricsManager.shared.autoStartIfConfigured()
-      }
+  /// Stops background monitoring for **sleep data** only.
+  /// Does not affect workouts or health metrics.
+  /// Call `logout()` to stop all monitors and clear all stored data.
+  public func stopSleepBackgroundMonitoring() {
+      SleepDataManager.shared.stopAndClearAll()
   }
 
   public static func register(with registrar: FlutterPluginRegistrar) {
@@ -118,11 +75,6 @@ public class HumangoHealthPlugin: NSObject, FlutterPlugin {
     registrar.addMethodCallDelegate(instance, channel: healthMetricsMethodChannel)
     
     permissionEventChannel.setStreamHandler(PermissionStreamHandler())
-    
-    // MARK: - Auto-Start Monitoring
-        // Reads persisted MonitoringConfig flags — only starts subsystems that were
-        // previously armed by the client. Does NOT arm any new flags.
-    instance.autoStartPersistedSubsystems()
   }
 
   public func handle(_ call: FlutterMethodCall, result: @escaping FlutterResult) {
@@ -148,7 +100,6 @@ public class HumangoHealthPlugin: NSObject, FlutterPlugin {
   /// Stops all active background monitors and clears all stored health data.
   /// Call this when the user logs out so the next login starts from a clean state.
   public func logout() {
-      UserAuthStateManager.shared.isLoggedIn = false
       clearAllDataOnLogout()
   }
 
@@ -230,34 +181,22 @@ public class HumangoHealthPlugin: NSObject, FlutterPlugin {
   /// Foreground: live HKAnchoredObjectQueryDescriptor stream.
   /// Background: HKObserverQuery + enableBackgroundDelivery(immediate).
   /// Fires `HumangoHealthDataDelegate.onHealthMetricReady` with current-day samples on each notification.
-  /// Requires `HumangoHealthPlugin.delegate` to be set and the user to be logged in.
-  /// Start monitoring one or more health metric types.
-  /// Arms each type in `MonitoringConfig.enabledMetricKeys` so subsequent relaunches
-  /// auto-restart those specific metric observers.
+  /// Call this on every app open (after setting delegate) for each metric type you want monitored.
+  /// Idempotent — safe to call when a type is already being monitored.
   public func startMetricsMonitoring(for types: [HealthMetricType]) {
-      guard guardMonitoringPreconditions("startMetricsMonitoring") else { return }
-      SleepRemoteLogger.log(.info, step: "startMetricsMonitoring", message: "starting metric monitors", context: [
-          "class": "HumangoHealthPlugin",
-          "types": types.map { $0.key }.joined(separator: ", "),
-      ])
-      types.forEach {
-          MonitoringConfig.shared.enableMetric($0.key)
-          HealthMetricsManager.shared.startMonitoring($0)
-      }
+      types.forEach { HealthMetricsManager.shared.startMonitoring($0) }
   }
 
   /// Stop monitoring one or more health metric types.
-  /// Removes each type from `MonitoringConfig.enabledMetricKeys` so it does not
-  /// auto-restart on subsequent relaunches.
   public func stopMetricsMonitoring(for types: [HealthMetricType]) {
-      SleepRemoteLogger.log(.info, step: "stopMetricsMonitoring", message: "stopping metric monitors", context: [
-          "class": "HumangoHealthPlugin",
-          "types": types.map { $0.key }.joined(separator: ", "),
-      ])
-      types.forEach {
-          MonitoringConfig.shared.disableMetric($0.key)
-          HealthMetricsManager.shared.stopMonitoring($0)
-      }
+      types.forEach { HealthMetricsManager.shared.stopMonitoring($0) }
+  }
+
+  /// Stops background monitoring for **all health metric types**.
+  /// Does not affect workouts or sleep.
+  /// Call `logout()` to stop all monitors and clear all stored data.
+  public func stopAllMetricsMonitoring() {
+      HealthMetricsManager.shared.stopAllMonitoring()
   }
 
   // MARK: - Public Native iOS Health Metrics Fetch API

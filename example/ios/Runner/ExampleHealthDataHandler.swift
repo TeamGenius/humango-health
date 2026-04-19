@@ -33,6 +33,10 @@ final class ExampleHealthDataHandler: HumangoHealthDataDelegate {
         await postSleep(json: json)
     }
 
+    func onHealthMetricReady(payload: [String: Any], metricType: String) async {
+        print("[Example][Delegate] 📊 Health metric ready — type=\(metricType), payload=\(payload)")
+    }
+
     // MARK: - Remote Log
 
     private func logSleepPayload(json: String, sessionId: String) {

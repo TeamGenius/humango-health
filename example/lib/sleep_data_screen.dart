@@ -1,6 +1,5 @@
 import 'package:flutter/material.dart';
 import 'package:humango_health/humango_health.dart';
-import 'example_session_manager.dart';
 
 class SleepDataScreen extends StatefulWidget {
   const SleepDataScreen({super.key});
@@ -21,17 +20,10 @@ class _SleepDataScreenState extends State<SleepDataScreen> {
   DateTime? _customStartDate;
   DateTime? _customEndDate;
 
-
   // ── Calculate
   bool _isCalcLoading = false;
   Map<String, dynamic>? _calcPayload;
   String? _calcError;
-
-  // ── Test Setup ────────────────────────────────────────────────────────────
-  final _userIdController = TextEditingController(text: 'test-user-001');
-
-  // Session status shown in the test card
-  String? _sessionStatus;
 
   @override
   void initState() {
@@ -39,32 +31,6 @@ class _SleepDataScreenState extends State<SleepDataScreen> {
     WidgetsBinding.instance.addPostFrameCallback((_) {
       if (mounted) _fetchSleepData();
     });
-  }
-
-  @override
-  void dispose() {
-    _userIdController.dispose();
-    super.dispose();
-  }
-
-  // ── Test helpers ─────────────────────────────────────────────────────────
-
-  Future<void> _setUserLoggedIn(bool loggedIn) async {
-    if (loggedIn) {
-      try {
-        await ExampleSessionManager.setLoggedIn();
-        setState(() => _sessionStatus = 'Logged in — monitoring armed');
-      } catch (e) {
-        setState(() => _sessionStatus = 'Error: $e');
-      }
-    } else {
-      try {
-        await ExampleSessionManager.setLoggedOut();
-        setState(() => _sessionStatus = 'Logged out — session cleared');
-      } catch (e) {
-        setState(() => _sessionStatus = 'Error: $e');
-      }
-    }
   }
 
   /// Calls the group-based sleep payload calculation and updates local state.
@@ -248,81 +214,10 @@ class _SleepDataScreenState extends State<SleepDataScreen> {
       ),
       body: Column(
         children: [
-          _buildTestSetupCard(),
           _buildDateRangeSelector(),
           _buildCalculatePayloadSection(),
           Expanded(child: _buildBody()),
         ],
-      ),
-    );
-  }
-
-  // ── Test Setup Card ───────────────────────────────────────────────────────
-
-  Widget _buildTestSetupCard() {
-    return Card(
-      margin: const EdgeInsets.fromLTRB(8, 8, 8, 0),
-      color: Colors.indigo.shade50,
-      child: Padding(
-        padding: const EdgeInsets.all(12),
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            const Text(
-              '🧪 Session & delegate delivery test',
-              style: TextStyle(fontWeight: FontWeight.bold, fontSize: 13),
-            ),
-            const SizedBox(height: 8),
-            TextField(
-              controller: _userIdController,
-              decoration: const InputDecoration(
-                labelText: 'Test User ID',
-                border: OutlineInputBorder(),
-                isDense: true,
-                contentPadding: EdgeInsets.symmetric(
-                  horizontal: 10,
-                  vertical: 8,
-                ),
-              ),
-              style: const TextStyle(fontSize: 13),
-            ),
-            const SizedBox(height: 8),
-            Row(
-              children: [
-                Expanded(
-                  child: FilledButton.icon(
-                    icon: const Icon(Icons.login, size: 16),
-                    label: const Text('Set Logged In'),
-                    onPressed: () => _setUserLoggedIn(true),
-                    style: FilledButton.styleFrom(
-                      backgroundColor: Colors.green,
-                      padding: const EdgeInsets.symmetric(vertical: 6),
-                    ),
-                  ),
-                ),
-                const SizedBox(width: 8),
-                Expanded(
-                  child: FilledButton.icon(
-                    icon: const Icon(Icons.logout, size: 16),
-                    label: const Text('Set Logged Out'),
-                    onPressed: () => _setUserLoggedIn(false),
-                    style: FilledButton.styleFrom(
-                      backgroundColor: Colors.red,
-                      padding: const EdgeInsets.symmetric(vertical: 6),
-                    ),
-                  ),
-                ),
-              ],
-            ),
-            if (_sessionStatus != null) ...[
-              const SizedBox(height: 4),
-              Text(
-                _sessionStatus!,
-                style: const TextStyle(fontSize: 11, color: Colors.indigo),
-              ),
-            ],
-          ],
-        ),
       ),
     );
   }
@@ -718,7 +613,6 @@ class _SleepDataScreenState extends State<SleepDataScreen> {
   }
 
   String _formatJson(Map<String, dynamic> json) {
-    // Simple JSON formatting
     final buffer = StringBuffer();
     _formatJsonValue(json, buffer, 0);
     return buffer.toString();
@@ -752,8 +646,7 @@ class _SleepDataScreenState extends State<SleepDataScreen> {
     }
   }
 
-  /// Formats a duration given in minutes as "Xh Ym" (e.g. 387 min → "6h 27m").
-  /// Falls back to "Ym" when under 1 hour, and "Xs" when under 1 minute.
+  /// Formats a duration given in minutes as "Xh Ym".
   String _fmtMinutes(double minutes) {
     if (minutes <= 0) return '0m';
     final totalSeconds = (minutes * 60).round();

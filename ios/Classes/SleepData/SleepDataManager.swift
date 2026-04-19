@@ -24,7 +24,7 @@ import Foundation
 
 @available(iOS 14.0, *)
 public class SleepDataManager: NSObject, AppLifecycleObserver {
-    static let shared = SleepDataManager()
+    public static let shared = SleepDataManager()
     
     private var healthStore: HKHealthStore { SharedHealthKitStore.shared }
     private let isoFormatter: ISO8601DateFormatter = {
@@ -45,12 +45,6 @@ public class SleepDataManager: NSObject, AppLifecycleObserver {
     // Configuration
     private var monitorStartDate: Date?
 
-    // Deduplication: track the last delivered (sessionId, wakeTime) pair so the same
-    // payload is not re-posted to the API on every HealthKit observer fire.
-    // Re-delivery only happens when WAKE_TIME advances (new sleep data written by Apple Watch).
-    private var lastDeliveredSessionId: String?
-    private var lastDeliveredWakeTime: String?
-    
     // MARK: - Initialization
     
     private override init() {
@@ -63,58 +57,40 @@ public class SleepDataManager: NSObject, AppLifecycleObserver {
         AppLifecycleManager.shared.removeObserver(self)
     }
     
-    // MARK: - Auto-Start on App Launch
-    
-    func autoStartIfConfigured() {
-        guard UserAuthStateManager.shared.isLoggedIn else {
-            debugPrint("🛍️ [SleepDataManager] autoStart skipped — user not logged in")
-            // Remote-log so Cloud Logs show WHY monitoring never starts on background relaunch.
-            SleepRemoteLogger.log(.warn, step: "autoStart", message: "skipped — user not logged in", context: ["class": "SleepDataManager", "method": "autoStartIfConfigured"])
-            return
-        }
-        guard HumangoHealthPlugin.delegate != nil else {
-            debugPrint("🛍️ [SleepDataManager] autoStart skipped — no delegate configured")
-            // Remote-log: delegate nil means onSleepSessionReady will never be called even if
-            // the observer fires. This is the most common silent failure on cold background launch.
-            SleepRemoteLogger.log(.warn, step: "autoStart", message: "skipped — delegate nil (set HumangoHealthPlugin.delegate before calling startAllBackgroundMonitoring)", context: ["class": "SleepDataManager", "method": "autoStartIfConfigured"])
-            return
-        }
+    // MARK: - Start / Stop Monitoring
+
+    /// Starts sleep monitoring. Call this on every app open after `HumangoHealthPlugin.delegate` is set.
+    /// Idempotent — if monitoring is already running, this is a no-op.
+    public func startMonitoring() {
         guard monitorStartDate == nil else {
-            debugPrint("🛏️ [SleepDataManager] autoStart skipped — monitoring already active")
-            SleepRemoteLogger.log(.info, step: "autoStart", message: "skipped — already active", context: ["class": "SleepDataManager", "method": "autoStartIfConfigured"])
+            debugPrint("🛏️ [SleepDataManager] startMonitoring skipped — monitoring already active")
             return
         }
-         MonitoringConfig.shared.sleepEnabled    = true
 
         let startDate = Date().addingTimeInterval(-12 * 60 * 60)
         monitorStartDate = startDate
 
         let mode = AppLifecycleManager.shared.isInForeground ? "foreground" : "background"
-        SleepRemoteLogger.log(.info, step: "autoStart", message: "starting", context: [
-            "class":     "SleepDataManager",
-            "method":    "autoStartIfConfigured",
-            "mode":      mode,
-            "startDate": isoFormatter.string(from: startDate),
-        ])
 
         if AppLifecycleManager.shared.isInForeground {
+           
             startLiveUpdates()
         } else {
             startBackgroundMonitoring()
         }
 
-        debugPrint("🛏️ [SleepDataManager] ✅ auto-started (\(mode)) from \(isoFormatter.string(from: startDate))")
+        debugPrint("🛏️ [SleepDataManager] ✅ monitoring started (\(mode)) from \(isoFormatter.string(from: startDate))")
     }
 
     /// Stops all active monitoring and clears all persisted sleep data and configuration.
     /// Called on user logout to ensure no background activity continues and data is wiped.
     func stopAndClearAll() {
+  
         stopLiveUpdates()
         stopBackgroundMonitoring()
         monitorStartDate = nil
-        lastDeliveredSessionId = nil
-        lastDeliveredWakeTime  = nil
         debugPrint("🛍️ [SleepDataManager] ✅ stopped all monitoring (logout)")
+
     }
     
     // MARK: - AppLifecycleObserver (Native iOS lifecycle)
@@ -140,6 +116,19 @@ public class SleepDataManager: NSObject, AppLifecycleObserver {
         guard monitorStartDate != nil else { return }
         stopLiveUpdates()
         startBackgroundMonitoring()
+        // Re-register background delivery on every foreground→background transition.
+        // enableBackgroundDelivery persists the HealthKit wake-up registration so iOS
+        // wakes the app when new sleep data arrives while suspended.
+        if let sleepType = HKObjectType.categoryType(forIdentifier: .sleepAnalysis) {
+            Task {
+                do {
+                    try await self.healthStore.enableBackgroundDelivery(for: sleepType, frequency: .immediate)
+                    debugPrint("🛏️ [SleepDataManager] switchToBackgroundMode — re-registered background delivery")
+                } catch {
+                    debugPrint("🛏️ [SleepDataManager] switchToBackgroundMode — re-register failed: \(error)")
+                }
+            }
+        }
         debugPrint("🛍️ [SleepDataManager] → background mode")
     }
     
@@ -147,12 +136,6 @@ public class SleepDataManager: NSObject, AppLifecycleObserver {
     
     public func handle(_ call: FlutterMethodCall, result: @escaping FlutterResult) {
         let method = call.method
-        let requiresLogin = [
-            "getSleepData", "calculateSleepPayload", "fetchSleepSamples",
-        ].contains(method)
-        if requiresLogin {
-            guard UserAuthStateManager.shared.guardLoggedInForHealthData(result: result) else { return }
-        }
         switch method {
         case "getSleepData":
             handleGetSleepData(call, result: result)
@@ -364,6 +347,7 @@ public class SleepDataManager: NSObject, AppLifecycleObserver {
             return
         }
 
+
         isLiveStreaming = true
         let livePredicate = HKQuery.predicateForSamples(withStart: startDate, end: nil, options: [.strictStartDate])
 
@@ -389,6 +373,7 @@ public class SleepDataManager: NSObject, AppLifecycleObserver {
                     }
                 } catch {
                     debugPrint("🛏️ [SleepDataManager] foreground monitoring error: \(error)")
+
                 }
             }
             debugPrint("🛍️ [SleepDataManager] started foreground monitoring")
@@ -417,16 +402,13 @@ public class SleepDataManager: NSObject, AppLifecycleObserver {
         }
 
         isBackgroundMonitoring = true
-        SleepRemoteLogger.log(.info, step: "startBackgroundMonitoring", message: "registering observer query", context: ["class": "SleepDataManager", "method": "startBackgroundMonitoring"])
 
         Task {
             do {
                 try await healthStore.enableBackgroundDelivery(for: sleepType, frequency: .immediate)
                 debugPrint("🛏️ [SleepDataManager] background delivery enabled")
-                SleepRemoteLogger.log(.info, step: "startBackgroundMonitoring", message: "background delivery enabled", context: ["class": "SleepDataManager", "method": "startBackgroundMonitoring"])
             } catch {
                 debugPrint("🛏️ [SleepDataManager] enableBackgroundDelivery failed: \(error)")
-                SleepRemoteLogger.log(.error, step: "startBackgroundMonitoring", message: "enableBackgroundDelivery failed", context: ["class": "SleepDataManager", "method": "startBackgroundMonitoring", "error": "\(error)"])
             }
         }
 
@@ -441,20 +423,11 @@ public class SleepDataManager: NSObject, AppLifecycleObserver {
 
             if let error = error {
                 debugPrint("🛏️ [SleepDataManager] observer error at \(fireTime): \(error)")
-                SleepRemoteLogger.log(.error, step: "observer", message: "observer error", context: ["class": "SleepDataManager", "method": "startBackgroundMonitoring", "error": "\(error)"])
                 completion()
                 return
             }
 
-            guard UserAuthStateManager.shared.isLoggedIn else {
-                debugPrint("🛏️ [SleepDataManager] observer fired at \(fireTime) — skipped (user not logged in)")
-                SleepRemoteLogger.log(.warn, step: "observer", message: "skipped — user not logged in", context: ["class": "SleepDataManager", "method": "startBackgroundMonitoring"])
-                completion()
-                return
-            }
-
-            debugPrint("🛏️ [SleepDataManager] observer fired at \(fireTime) — processing (userId=\(UserAuthStateManager.shared.userId ?? "?"))")
-            SleepRemoteLogger.log(.info, step: "observer_fired", message: "processing", context: ["class": "SleepDataManager", "method": "startBackgroundMonitoring", "fireTime": fireTime])
+            debugPrint("🛏️ [SleepDataManager] observer fired at \(fireTime) — processing")
             Task {
                 await self.handleBackgroundObserverFired()
                 // Signal HealthKit AFTER all async work is complete so iOS keeps
@@ -474,9 +447,11 @@ public class SleepDataManager: NSObject, AppLifecycleObserver {
             healthStore.stop(query)
             observerQuery = nil
         }
-        if let sleepType = HKObjectType.categoryType(forIdentifier: .sleepAnalysis) {
-            healthStore.disableBackgroundDelivery(for: sleepType) { _, _ in }
-        }
+        // NOTE: We intentionally do NOT call disableBackgroundDelivery here.
+        // Background delivery must remain persistently enabled so HealthKit can relaunch
+        // the app and fire the observer after a kill+reopen cycle. Calling disable on
+        // every foreground transition creates a race where the async re-enable never wins
+        // and delivery is permanently broken.
         isBackgroundMonitoring = false
         debugPrint("🛏️ [SleepDataManager] stopped background monitoring")
     }
@@ -486,28 +461,19 @@ public class SleepDataManager: NSObject, AppLifecycleObserver {
     private func handleBackgroundObserverFired() async {
         let (queryStart, queryEnd) = sixPMWindow()
 
-        SleepRemoteLogger.log(.info, step: "fetch", message: "fetching 6PM window", context: [
-            "class":       "SleepDataManager",
-            "method":      "handleBackgroundObserverFired",
-            "windowStart": isoFormatter.string(from: queryStart),
-            "windowEnd":   isoFormatter.string(from: queryEnd),
-        ])
 
         let rawSamples: [HKCategorySample]
         do {
             rawSamples = try await fetchSleepSamples(from: queryStart, to: queryEnd)
         } catch {
             debugPrint("🛏️ [SleepDataManager] background fetch failed: \(error)")
-            SleepRemoteLogger.log(.error, step: "fetch", message: "HealthKit fetch failed", context: ["class": "SleepDataManager", "method": "handleBackgroundObserverFired", "error": "\(error)"])
             return
         }
 
         guard !rawSamples.isEmpty else {
-            SleepRemoteLogger.log(.info, step: "fetch", message: "no samples in window", context: ["class": "SleepDataManager", "method": "handleBackgroundObserverFired"])
             return
         }
 
-        SleepRemoteLogger.log(.info, step: "fetch", message: "fetched \(rawSamples.count) samples", context: ["class": "SleepDataManager", "method": "handleBackgroundObserverFired"])
         await deliverPayload(samples: rawSamples, queryStart: queryStart, queryEnd: queryEnd)
     }
 
@@ -516,61 +482,24 @@ public class SleepDataManager: NSObject, AppLifecycleObserver {
     func deliverPayload(samples: [HKCategorySample], queryStart: Date, queryEnd: Date) async {
         
         guard let payload = calculateSleepPayload(from: samples) else {
-            SleepRemoteLogger.log(.info, step: "payload", message: "calculateSleepPayload returned nil (no valid groups)", context: ["class": "SleepDataManager", "method": "deliverPayload"])
             return
         }
-
-        let totalSec  = payload["TOTAL_SLEEP"] as? Double ?? 0
-        let source    = payload["SOURCE"] as? String ?? ""
-        SleepRemoteLogger.log(.info, step: "payload", message: "built", context: [
-            "class":     "SleepDataManager",
-            "method":    "deliverPayload",
-            "source":    source,
-            "totalSec":  "\(totalSec)",
-            "bedTime":   payload["BED_TIME"]  as? String ?? "",
-            "wakeTime":  payload["WAKE_TIME"] as? String ?? "",
-        ])
 
         guard let jsonData = try? JSONSerialization.data(withJSONObject: payload, options: []),
               let jsonString = String(data: jsonData, encoding: .utf8) else {
             debugPrint("🛏️ [SleepDataManager] deliverPayload: serialization failed")
-            SleepRemoteLogger.log(.error, step: "deliver", message: "JSON serialization failed", context: ["class": "SleepDataManager", "method": "deliverPayload"])
             return
         }
 
         let sessionId = payload["BED_TIME"] as? String ?? isoFormatter.string(from: queryStart)
-        let wakeTime  = payload["WAKE_TIME"] as? String ?? ""
-
-        // Deduplicate: skip delivery if this exact (sessionId, wakeTime) was already sent.
-        // Re-deliver when wakeTime advances so incremental Watch updates propagate to the API.
-        if sessionId == lastDeliveredSessionId && wakeTime == lastDeliveredWakeTime {
-            SleepRemoteLogger.log(.info, step: "deliver", message: "skipped — identical session already delivered", context: [
-                "class":     "SleepDataManager",
-                "method":    "deliverPayload",
-                "sessionId": sessionId,
-                "wakeTime":  wakeTime,
-            ])
-            return
-        }
 
         if let delegate = HumangoHealthPlugin.delegate {
-            lastDeliveredSessionId = sessionId
-            lastDeliveredWakeTime  = wakeTime
             // `await` so the host app's upload completes before we return.
             // completion() is called after this function returns, so iOS keeps
             // the app alive for the full fetch → compute → upload pipeline.
             await delegate.onSleepSessionReady(json: jsonString, sessionId: sessionId)
-            SleepRemoteLogger.log(.info, step: "deliver", message: "onSleepSessionReady delivered", context: [
-                "class":     "SleepDataManager",
-                "method":    "deliverPayload",
-                "sessionId": sessionId,
-                "wakeTime":  wakeTime,
-                "jsonBytes":  jsonData.count,
-                "payload":   payload,
-            ])
         } else {
             debugPrint("⚠️ [SleepDataManager] delegate is nil — sleep session \(sessionId) not delivered")
-            SleepRemoteLogger.log(.warn, step: "deliver", message: "delegate is nil — not delivered", context: ["class": "SleepDataManager", "method": "deliverPayload", "sessionId": sessionId])
         }
     }
 
@@ -602,6 +531,7 @@ public class SleepDataManager: NSObject, AppLifecycleObserver {
         }
 
         debugPrint("🛏️ [SleepDataManager] sixPMWindow: hour=\(hour) → [\(isoFormatter.string(from: windowStart)), now]")
+      
         return (windowStart, now)
     }
 

@@ -13,13 +13,12 @@
 		6A480FEEC66B5FF84A7817EA /* Pods_RunnerTests.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = 31E040FD79A1E94081D4B82F /* Pods_RunnerTests.framework */; };
 		6CF2F9CD022A7562F017C701 /* Pods_Runner.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = DA5B1BBCCE8DBC5A9684D847 /* Pods_Runner.framework */; };
 		74858FAF1ED2DC5600515810 /* AppDelegate.swift in Sources */ = {isa = PBXBuildFile; fileRef = 74858FAE1ED2DC5600515810 /* AppDelegate.swift */; };
-		BB100001BB100001BB100001 /* ExampleSessionChannel.swift in Sources */ = {isa = PBXBuildFile; fileRef = BB100002BB100002BB100002 /* ExampleSessionChannel.swift */; };
-		BB100003BB100003BB100003 /* ExampleHealthDataHandler.swift in Sources */ = {isa = PBXBuildFile; fileRef = BB100004BB100004BB100004 /* ExampleHealthDataHandler.swift */; };
-
 		7884E8682EC3CC0700C636F2 /* SceneDelegate.swift in Sources */ = {isa = PBXBuildFile; fileRef = 7884E8672EC3CC0400C636F2 /* SceneDelegate.swift */; };
 		97C146FC1CF9000F007C117D /* Main.storyboard in Resources */ = {isa = PBXBuildFile; fileRef = 97C146FA1CF9000F007C117D /* Main.storyboard */; };
 		97C146FE1CF9000F007C117D /* Assets.xcassets in Resources */ = {isa = PBXBuildFile; fileRef = 97C146FD1CF9000F007C117D /* Assets.xcassets */; };
 		97C147011CF9000F007C117D /* LaunchScreen.storyboard in Resources */ = {isa = PBXBuildFile; fileRef = 97C146FF1CF9000F007C117D /* LaunchScreen.storyboard */; };
+		BB100001BB100001BB100001 /* ExampleSessionChannel.swift in Sources */ = {isa = PBXBuildFile; fileRef = BB100002BB100002BB100002 /* ExampleSessionChannel.swift */; };
+		BB100003BB100003BB100003 /* ExampleHealthDataHandler.swift in Sources */ = {isa = PBXBuildFile; fileRef = BB100004BB100004BB100004 /* ExampleHealthDataHandler.swift */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXContainerItemProxy section */
@@ -58,9 +57,6 @@
 		71E3B6672F4EB81500F48D37 /* Runner.entitlements */ = {isa = PBXFileReference; lastKnownFileType = text.plist.entitlements; path = Runner.entitlements; sourceTree = "<group>"; };
 		74858FAD1ED2DC5600515810 /* Runner-Bridging-Header.h */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.c.h; path = "Runner-Bridging-Header.h"; sourceTree = "<group>"; };
 		74858FAE1ED2DC5600515810 /* AppDelegate.swift */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.swift; path = AppDelegate.swift; sourceTree = "<group>"; };
-		BB100002BB100002BB100002 /* ExampleSessionChannel.swift */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.swift; path = ExampleSessionChannel.swift; sourceTree = "<group>"; };
-		BB100004BB100004BB100004 /* ExampleHealthDataHandler.swift */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.swift; path = ExampleHealthDataHandler.swift; sourceTree = "<group>"; };
-
 		7884E8672EC3CC0400C636F2 /* SceneDelegate.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SceneDelegate.swift; sourceTree = "<group>"; };
 		7AFA3C8E1D35360C0083082E /* Release.xcconfig */ = {isa = PBXFileReference; lastKnownFileType = text.xcconfig; name = Release.xcconfig; path = Flutter/Release.xcconfig; sourceTree = "<group>"; };
 		9740EEB21CF90195004384FC /* Debug.xcconfig */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = text.xcconfig; name = Debug.xcconfig; path = Flutter/Debug.xcconfig; sourceTree = "<group>"; };
@@ -72,6 +68,8 @@
 		97C147021CF9000F007C117D /* Info.plist */ = {isa = PBXFileReference; lastKnownFileType = text.plist.xml; path = Info.plist; sourceTree = "<group>"; };
 		A25372044429C2C5B82C49D5 /* Pods-Runner.debug.xcconfig */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = text.xcconfig; name = "Pods-Runner.debug.xcconfig"; path = "Target Support Files/Pods-Runner/Pods-Runner.debug.xcconfig"; sourceTree = "<group>"; };
 		B31724901DD14D245C1253BD /* Pods-Runner.profile.xcconfig */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = text.xcconfig; name = "Pods-Runner.profile.xcconfig"; path = "Target Support Files/Pods-Runner/Pods-Runner.profile.xcconfig"; sourceTree = "<group>"; };
+		BB100002BB100002BB100002 /* ExampleSessionChannel.swift */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.swift; path = ExampleSessionChannel.swift; sourceTree = "<group>"; };
+		BB100004BB100004BB100004 /* ExampleHealthDataHandler.swift */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.swift; path = ExampleHealthDataHandler.swift; sourceTree = "<group>"; };
 		C32D0053A6EC581A695381C8 /* Pods-RunnerTests.debug.xcconfig */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = text.xcconfig; name = "Pods-RunnerTests.debug.xcconfig"; path = "Target Support Files/Pods-RunnerTests/Pods-RunnerTests.debug.xcconfig"; sourceTree = "<group>"; };
 		DA5B1BBCCE8DBC5A9684D847 /* Pods_Runner.framework */ = {isa = PBXFileReference; explicitFileType = wrapper.framework; includeInIndex = 0; path = Pods_Runner.framework; sourceTree = BUILT_PRODUCTS_DIR; };
 /* End PBXFileReference section */
@@ -172,7 +170,7 @@
 				7884E8672EC3CC0400C636F2 /* SceneDelegate.swift */,
 				BB100002BB100002BB100002 /* ExampleSessionChannel.swift */,
 				BB100004BB100004BB100004 /* ExampleHealthDataHandler.swift */,
-				74858FAD1ED2DC5600515810 /* Runner-Bridging-Header.h */
+				74858FAD1ED2DC5600515810 /* Runner-Bridging-Header.h */,
 			);
 			path = Runner;
 			sourceTree = "<group>";
