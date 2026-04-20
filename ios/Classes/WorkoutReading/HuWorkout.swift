@@ -128,7 +128,7 @@ public struct HuWorkout {
             "duration":           Int(round(duration)),
             "sport":              sport.name,
             "start_time":         formatter.string(from: start_time),
-            "serial":             UUID().uuidString,
+            "serial":             deviceActivityId,
             "series_data":        routeData.toDict(),
             "device_activity_id": deviceActivityId,
             "statistics":         formatStatistics(statistics: statistics),
