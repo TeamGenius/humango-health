@@ -117,23 +117,6 @@ public class WorkoutServiceChannel: NSObject {
             // Process each workout in the batch
             for workout in results.addedSamples {
                 debugPrint("Read Workouts: Processing workout: \(workout.uuid.uuidString) type: \(workout.workoutActivityType.name)")
-               
-               let workoutPlan: WorkoutPlan? = await withCheckedContinuation { continuation in
-                   let lock = NSLock()
-                   var hasResumed = false
-                   func resumeOnce(with value: WorkoutPlan?) {
-                       lock.lock(); defer { lock.unlock() }
-                       guard !hasResumed else { return }
-                       hasResumed = true
-                       continuation.resume(returning: value)
-                   }
-                   Task.detached { resumeOnce(with: try? await workout.workoutPlan) }
-                   Task.detached {
-                       try? await Task.sleep(nanoseconds: 15_000_000_000) // 15s
-                       resumeOnce(with: nil)
-                   }
-               }
-               debugPrint("Read Workouts: Processing workout: workoutPlan: \(workoutPlan.map { $0.id.uuidString } ?? "nil or timed out")")
                 // Skip incomplete workouts
                 guard workout.endDate > workout.startDate else {
                     debugPrint("Read Workouts: Skipping incomplete workout: \(workout.uuid.uuidString)")

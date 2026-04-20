@@ -1,3 +1,21 @@
+## 1.0.2 — 2026-04-20
+
+### Bug Fixes
+
+#### Removed redundant `workoutPlan` fetch from `fetchWorkoutsBatched`
+
+A `withCheckedContinuation` block that fetched `workout.workoutPlan` (with a 15-second
+timeout) was being executed **per workout** inside the `fetchWorkoutsBatched` loop in
+`WorkoutServiceChannel`. The result was never used — the fetch existed only to produce
+a debug log line. This added up to 15 seconds of latency for every workout in the batch.
+
+Removed the block and its associated debug print. Scheduled workout resolution is
+still performed inside `processWorkout` (via `try? await workout.workoutPlan`) and via
+the dedicated `resolveScheduledWorkoutId(workoutUUID:)` public API, both of which
+are unchanged.
+
+---
+
 ## 1.0.1 — 2026-04-19
 
 ### Enhancements
