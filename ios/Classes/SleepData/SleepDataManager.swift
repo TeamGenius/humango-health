@@ -207,7 +207,7 @@ public class SleepDataManager: NSObject, AppLifecycleObserver {
         Task {
             do {
                 let samples = try await fetchSleepSamples(from: queryStartDate, to: queryEndDate)
-                let serialised: [[String: Any]] = samples.map { self.convertSampleToDict($0) }
+                let serialised: [[String: Any]] = samples.map { self.convertSampleToHuSleepSample($0).toDict(formatter: self.isoFormatter) }
                 DispatchQueue.main.async {
                     result(serialised)
                 }

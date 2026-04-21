@@ -1,3 +1,23 @@
+## 1.0.5 — 2026-04-21
+
+### Bug Fixes
+
+#### Fixed build error: `convertSampleToDict` removed but still referenced in `handleFetchSleepSamples`
+
+After renaming `convertSampleToDict` to `convertSampleToHuSleepSample` in `1.0.4`,
+the `handleFetchSleepSamples` Flutter method channel handler still called the deleted
+method, causing a Swift compiler error on device builds:
+
+```
+Value of type 'SleepDataManager' has no member 'convertSampleToDict'
+```
+
+The call site in `handleFetchSleepSamples` now uses
+`convertSampleToHuSleepSample($0).toDict(formatter:)`, which produces the same
+`[[String: Any]]` shape for the Dart method channel.
+
+---
+
 ## 1.0.4 — 2026-04-21
 
 ### Breaking Changes
