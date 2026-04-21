@@ -278,7 +278,7 @@ public class SleepDataManager: NSObject, AppLifecycleObserver {
     /// - Parameters:
     ///   - startDate: Start of the time range (defaults to 24 hours ago)
     ///   - endDate: End of the time range (defaults to now)
-    private func fetchSleepData(startDate: Date? = nil, endDate: Date? = nil) async throws -> [String: Any] {
+    func fetchSleepData(startDate: Date? = nil, endDate: Date? = nil) async throws -> HuSleepSession? {
         guard HKHealthStore.isHealthDataAvailable() else {
             throw NSError(domain: "SleepData", code: 1, userInfo: [
                 NSLocalizedDescriptionKey: "HealthKit is not available on this device"
@@ -291,18 +291,34 @@ public class SleepDataManager: NSObject, AppLifecycleObserver {
         // Single canonical HealthKit query path shared with the monitoring pipeline.
         let rawSamples = try await fetchSleepSamples(from: queryStartDate, to: queryEndDate)
 
+        guard !rawSamples.isEmpty else {
+            debugPrint("🛏️ [SleepDataManager] fetchSleepData: no samples in range, returning nil")
+            return nil
+        }
+
         // Delegate all duration/aggregation logic to calculateSleepPayload —
         // this applies the Apple-source filter, gap-based session grouping,
         // and stage-level totals, identical to the background monitoring path.
-        let payload = calculateSleepPayload(from: rawSamples)
+        guard let payload = calculateSleepPayload(from: rawSamples) else {
+            debugPrint("🛏️ [SleepDataManager] fetchSleepData: no valid sleep groups (all samples < 3 h span), returning nil")
+            return nil
+        }
 
-        let totalSleepSeconds = payload?["TOTAL_SLEEP"]       as? Double ?? 0
-        let sleepInBed        = payload?["SLEEP_IN_BED"]      as? Double ?? 0
-        let sleepCore         = payload?["SLEEP_LIGHT"]        as? Double ?? 0
-        let sleepDeep         = payload?["SLEEP_DEEP"]         as? Double ?? 0
-        let sleepREM          = payload?["SLEEP_REM"]          as? Double ?? 0
-        let sleepUnspecified  = payload?["SLEEP_UNSPECIFIED"]  as? Double ?? 0
-        let sleepAwake        = payload?["SLEEP_AWAKE"]        as? Double ?? 0
+        let totalSleepSeconds = payload["TOTAL_SLEEP"]       as? Double ?? 0
+        let sleepInBed        = payload["SLEEP_IN_BED"]      as? Double ?? 0
+        let sleepCore         = payload["SLEEP_LIGHT"]        as? Double ?? 0
+        let sleepDeep         = payload["SLEEP_DEEP"]         as? Double ?? 0
+        let sleepREM          = payload["SLEEP_REM"]          as? Double ?? 0
+        let sleepUnspecified  = payload["SLEEP_UNSPECIFIED"]  as? Double ?? 0
+        let sleepAwake        = payload["SLEEP_AWAKE"]        as? Double ?? 0
+        let sourceName        = payload["SOURCE"]             as? String ?? ""
+        let sourceBundle      = payload["SOURCE_BUNDLE"]      as? String ?? ""
+        let timezone          = payload["TIMEZONE"]           as? String ?? TimeZone.current.identifier
+        let bedTimeStr        = payload["BED_TIME"]           as? String
+        let wakeTimeStr       = payload["WAKE_TIME"]          as? String
+        let bedTime           = bedTimeStr.flatMap  { isoFormatter.date(from: $0) }
+        let wakeTime          = wakeTimeStr.flatMap { isoFormatter.date(from: $0) }
+        let sessionId         = bedTimeStr ?? isoFormatter.string(from: queryStartDate)
 
         // Build the per-sample list using the same Apple-source filter applied
         // internally by calculateSleepPayload so sample list and totals are consistent.
@@ -310,27 +326,28 @@ public class SleepDataManager: NSObject, AppLifecycleObserver {
             $0.sourceRevision.source.bundleIdentifier.hasPrefix("com.apple.health")
         }
         let filteredSamples: [HKCategorySample] = appleSamples.isEmpty ? rawSamples : appleSamples
-        let sleepSamples = filteredSamples.map { convertSampleToDict($0) }
+        let huSamples = filteredSamples.map { convertSampleToHuSleepSample($0) }
 
         debugPrint("🛏️ [SleepDataManager] fetchSleepData: \(filteredSamples.count) samples (raw=\(rawSamples.count)) totalSleep=\(Int(totalSleepSeconds))s from \(isoFormatter.string(from: queryStartDate)) to \(isoFormatter.string(from: queryEndDate))")
 
-        return [
-            "samples":            sleepSamples,
-            "sampleCount":        filteredSamples.count,
-            "totalSleepSeconds":  totalSleepSeconds,
-            "totalSleepMinutes":  totalSleepSeconds / 60.0,
-            "totalSleepHours":    totalSleepSeconds / 3600.0,
-            "stageTotals": [
-                "inBed":             ["seconds": sleepInBed,        "minutes": sleepInBed        / 60.0],
-                "asleepUnspecified": ["seconds": sleepUnspecified,  "minutes": sleepUnspecified  / 60.0],
-                "awake":             ["seconds": sleepAwake,        "minutes": sleepAwake        / 60.0],
-                "asleepCore":        ["seconds": sleepCore,         "minutes": sleepCore         / 60.0],
-                "asleepDeep":        ["seconds": sleepDeep,         "minutes": sleepDeep         / 60.0],
-                "asleepREM":         ["seconds": sleepREM,          "minutes": sleepREM          / 60.0],
-            ] as [String: Any],
-            "fetchedFrom": isoFormatter.string(from: queryStartDate),
-            "fetchedTo":   isoFormatter.string(from: queryEndDate)
-        ]
+        return HuSleepSession(
+            source:                  sourceName,
+            sourceBundle:            sourceBundle,
+            timezone:                timezone,
+            totalSleepSeconds:       totalSleepSeconds,
+            sleepInBedSeconds:       sleepInBed,
+            sleepLightSeconds:       sleepCore,
+            sleepDeepSeconds:        sleepDeep,
+            sleepREMSeconds:         sleepREM,
+            sleepUnspecifiedSeconds: sleepUnspecified,
+            sleepAwakeSeconds:       sleepAwake,
+            bedTime:                 bedTime,
+            wakeTime:                wakeTime,
+            queryStart:              queryStartDate,
+            queryEnd:                queryEndDate,
+            sessionId:               sessionId,
+            samples:                 huSamples
+        )
     }
     
     // MARK: - Foreground Monitoring (HKAnchoredObjectQueryDescriptor)
@@ -480,24 +497,39 @@ public class SleepDataManager: NSObject, AppLifecycleObserver {
     // MARK: - Payload Delivery
 
     func deliverPayload(samples: [HKCategorySample], queryStart: Date, queryEnd: Date) async {
-        
+
         guard let payload = calculateSleepPayload(from: samples) else {
             return
         }
 
-        guard let jsonData = try? JSONSerialization.data(withJSONObject: payload, options: []),
-              let jsonString = String(data: jsonData, encoding: .utf8) else {
-            debugPrint("🛏️ [SleepDataManager] deliverPayload: serialization failed")
-            return
-        }
+        let bedTimeStr   = payload["BED_TIME"]      as? String
+        let wakeTimeStr  = payload["WAKE_TIME"]     as? String
+        let sessionId    = bedTimeStr ?? isoFormatter.string(from: queryStart)
 
-        let sessionId = payload["BED_TIME"] as? String ?? isoFormatter.string(from: queryStart)
+        let session = HuSleepSession(
+            source:                  payload["SOURCE"]        as? String ?? "",
+            sourceBundle:            payload["SOURCE_BUNDLE"] as? String ?? "",
+            timezone:                payload["TIMEZONE"]      as? String ?? TimeZone.current.identifier,
+            totalSleepSeconds:       payload["TOTAL_SLEEP"]       as? Double ?? 0,
+            sleepInBedSeconds:       payload["SLEEP_IN_BED"]      as? Double ?? 0,
+            sleepLightSeconds:       payload["SLEEP_LIGHT"]        as? Double ?? 0,
+            sleepDeepSeconds:        payload["SLEEP_DEEP"]         as? Double ?? 0,
+            sleepREMSeconds:         payload["SLEEP_REM"]          as? Double ?? 0,
+            sleepUnspecifiedSeconds: payload["SLEEP_UNSPECIFIED"]  as? Double ?? 0,
+            sleepAwakeSeconds:       payload["SLEEP_AWAKE"]        as? Double ?? 0,
+            bedTime:                 bedTimeStr.flatMap  { isoFormatter.date(from: $0) },
+            wakeTime:                wakeTimeStr.flatMap { isoFormatter.date(from: $0) },
+            queryStart:              queryStart,
+            queryEnd:                queryEnd,
+            sessionId:               sessionId,
+            samples:                 []
+        )
 
         if let delegate = HumangoHealthPlugin.delegate {
             // `await` so the host app's upload completes before we return.
             // completion() is called after this function returns, so iOS keeps
             // the app alive for the full fetch → compute → upload pipeline.
-            await delegate.onSleepSessionReady(json: jsonString, sessionId: sessionId)
+            await delegate.onSleepSessionReady(session)
         } else {
             debugPrint("⚠️ [SleepDataManager] delegate is nil — sleep session \(sessionId) not delivered")
         }
@@ -828,60 +860,49 @@ public class SleepDataManager: NSObject, AppLifecycleObserver {
         return buildAggregatedPayload(samples: validSamples, queryStart: queryStart, queryEnd: queryEnd)
     }
 
-    // MARK: - Convert Sample to Dictionary
-    
-    private func convertSampleToDict(_ sample: HKCategorySample) -> [String: Any] {
+    // MARK: - Convert Sample to HuSleepSample
+
+    private func convertSampleToHuSleepSample(_ sample: HKCategorySample) -> HuSleepSample {
         let durationSeconds = sample.endDate.timeIntervalSince(sample.startDate)
         let stageName = sleepStageString(from: sample.value)
-        
-        var dict: [String: Any] = [
-            "uuid": sample.uuid.uuidString,
-            "startDate": isoFormatter.string(from: sample.startDate),
-            "endDate": isoFormatter.string(from: sample.endDate),
-            "value": sample.value,
-            "sleepStage": stageName,
-            "durationSeconds": durationSeconds,
-            "durationMinutes": durationSeconds / 60.0
-        ]
-        
-        // Source information
-        dict["sourceName"] = sample.sourceRevision.source.name
-        dict["sourceBundle"] = sample.sourceRevision.source.bundleIdentifier
-        
-        // Device information (if available)
-        if let device = sample.device {
-            var deviceDict: [String: Any] = [:]
-            if let name = device.name { deviceDict["name"] = name }
-            if let model = device.model { deviceDict["model"] = model }
-            if let manufacturer = device.manufacturer { deviceDict["manufacturer"] = manufacturer }
-            if let hardwareVersion = device.hardwareVersion { deviceDict["hardwareVersion"] = hardwareVersion }
-            if let softwareVersion = device.softwareVersion { deviceDict["softwareVersion"] = softwareVersion }
-            if let localIdentifier = device.localIdentifier { deviceDict["localIdentifier"] = localIdentifier }
-            dict["device"] = deviceDict
+
+        // Device
+        let huDevice: HuSleepDevice? = sample.device.map {
+            HuSleepDevice(
+                name:             $0.name,
+                model:            $0.model,
+                manufacturer:     $0.manufacturer,
+                hardwareVersion:  $0.hardwareVersion,
+                softwareVersion:  $0.softwareVersion,
+                localIdentifier:  $0.localIdentifier
+            )
         }
-        
-        // Metadata (if available)
+
+        // Metadata — convert to JSON-safe types
+        var metadataDict: [String: Any]? = nil
         if let metadata = sample.metadata, !metadata.isEmpty {
-            var metadataDict: [String: Any] = [:]
+            var d = [String: Any]()
             for (key, value) in metadata {
-                // Convert metadata values to JSON-safe types
-                if let stringValue = value as? String {
-                    metadataDict[key] = stringValue
-                } else if let numberValue = value as? NSNumber {
-                    metadataDict[key] = numberValue
-                } else if let dateValue = value as? Date {
-                    metadataDict[key] = isoFormatter.string(from: dateValue)
-                } else {
-                    metadataDict[key] = String(describing: value)
-                }
+                if let v = value as? String       { d[key] = v }
+                else if let v = value as? NSNumber { d[key] = v }
+                else if let v = value as? Date     { d[key] = isoFormatter.string(from: v) }
+                else                               { d[key] = String(describing: value) }
             }
-            dict["metadata"] = metadataDict
+            metadataDict = d
         }
-        
-        // Include raw JSON representation
-        dict["rawJson"] = dict
-        
-        return dict
+
+        return HuSleepSample(
+            uuid:            sample.uuid.uuidString,
+            startDate:       sample.startDate,
+            endDate:         sample.endDate,
+            value:           sample.value,
+            sleepStage:      stageName,
+            durationSeconds: durationSeconds,
+            sourceName:      sample.sourceRevision.source.name,
+            sourceBundle:    sample.sourceRevision.source.bundleIdentifier,
+            device:          huDevice,
+            metadata:        metadataDict
+        )
     }
     
     // MARK: - Sleep Stage Conversion

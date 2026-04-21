@@ -2,7 +2,7 @@
 
 A comprehensive Flutter plugin for integrating iOS HealthKit and WorkoutKit functionalities natively into the Humango platform.
 
-> **Version 1.0.2** — See [CHANGELOG](CHANGELOG.md) for what's new.
+> **Version 1.0.4** — See [CHANGELOG](CHANGELOG.md) for what's new.
 
 ## Table of Contents
 
@@ -31,7 +31,7 @@ A comprehensive Flutter plugin for integrating iOS HealthKit and WorkoutKit func
 | **Permission Handling** | Request, verify, and continuously monitor HealthKit permissions |
 | **Workout Scheduling** | Push workouts to Apple Watch via WorkoutKit with native deduplication |
 | **Workout Reading** | Real-time workout monitoring with foreground/background modes; completed workouts delivered via `HumangoHealthDataDelegate.onWorkoutReady(workout:deviceId:)` |
-| **Sleep Data** | One-shot fetch via `getSleepData` (uses `calculateSleepPayload` pipeline); raw sample query via `fetchSleepSamples(startDate,endDate)`; background monitoring (native iOS only — foreground Descriptor + background Observer) delivering finalized sessions via `HumangoHealthDataDelegate.onSleepSessionReady`; grouping-based `calculateSleepPayload` algorithm (gap ≤ 2 h, span ≥ 3 h); Apple-platform source priority (Watch/Health app over third-party, identified by bundle prefix `com.apple.health`); second-based precision for all durations; optimized 6 PM HealthKit query window |
+| **Sleep Data** | On-demand fetch via `getSleepData` (Flutter) or `HumangoHealthPlugin.shared?.fetchSleep(startDate:endDate:)` → `HuSleepSession` (native iOS); raw sample query via `fetchSleepSamples(startDate,endDate)`; background monitoring (native iOS only — foreground Descriptor + background Observer) delivering finalized sessions via `HumangoHealthDataDelegate.onSleepSessionReady(_ session: HuSleepSession)`; `HuSleepSession.toJson()` serialises with legacy backend key names; grouping-based `calculateSleepPayload` algorithm (gap ≤ 2 h, span ≥ 3 h); Apple-platform source priority (Watch/Health app over third-party, identified by bundle prefix `com.apple.health`); second-based precision for all durations; optimized 6 PM HealthKit query window |
 | **Health Metrics (HRV, RHR, etc.)** | On-demand fetch via `HealthMetricsManager.fetchHealthMetric` (Flutter + native iOS); background monitoring via `HumangoHealthPlugin.shared.startMetricsMonitoring` (native iOS); delivery via `HumangoHealthDataDelegate.onHealthMetricReady` (re-fetched current-day, not delta) |
 | **Delegate Delivery** | Workouts and finalized sleep sessions are pushed through **`HumangoHealthDataDelegate`** — no plugin-owned payload queues or HTTP |
 | **Native Lifecycle Management** | Centralized iOS app lifecycle detection for automatic mode switching |

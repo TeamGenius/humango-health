@@ -1,3 +1,101 @@
+## 1.0.4 — 2026-04-21
+
+### Breaking Changes
+
+#### Type-safe `HuSleepSession` model replaces `[String: Any]` / JSON-string sleep API
+
+All sleep delivery and fetch APIs now use the strongly-typed `HuSleepSession` struct
+(and nested `HuSleepSample` / `HuSleepDevice`) instead of untyped dictionaries or raw
+JSON strings. This mirrors the existing `HuWorkout` pattern.
+
+**`HumangoHealthDataDelegate`** — signature change:
+
+```swift
+// Before
+func onSleepSessionReady(json: String, sessionId: String) async
+
+// After
+func onSleepSessionReady(_ session: HuSleepSession) async
+```
+
+Host apps that previously decoded the raw JSON string can now access all fields
+directly on the struct. To send the same JSON payload to a backend, call
+`session.toJson()` — key names are identical to the legacy flat payload
+(`SOURCE`, `TOTAL_SLEEP`, `BED_TIME`, etc.), so no backend changes are required.
+
+**`HumangoHealthPlugin.fetchSleep(startDate:endDate:)`** — return type change:
+
+```swift
+// Before
+public func fetchSleep(startDate: Date, endDate: Date) async throws -> [String: Any]
+
+// After
+public func fetchSleep(startDate: Date, endDate: Date) async throws -> HuSleepSession
+```
+
+**New types** — `ios/Classes/SleepData/HuSleepSession.swift`:
+
+| Type | Description |
+|------|-------------|
+| `HuSleepSession` | Aggregated session: source, all stage durations, bed/wake times, query window, samples |
+| `HuSleepSample` | Single HealthKit sleep-analysis sample with typed fields |
+| `HuSleepDevice` | Device information attached to a sample |
+
+`HuSleepSession` provides `toDict() -> [String: Any]` and `toJson() -> String?` for
+backend serialisation. The `samples` array is populated when calling `fetchSleep`;
+it is empty (`[]`) in the delegate delivery path (background monitoring).
+
+---
+
+## 1.0.3 — 2026-04-21
+
+### Enhancements
+
+#### Exposed `fetchSleep(startDate:endDate:)` on `HumangoHealthPlugin` for native iOS callers
+
+Native iOS host apps can now query aggregated sleep data on-demand without going through
+the Flutter method channel.
+
+**`HumangoHealthPlugin`** — new public method:
+
+```swift
+public func fetchSleep(startDate: Date, endDate: Date) async throws -> [String: Any]
+```
+
+Delegates to `SleepDataManager.shared.fetchSleepData(startDate:endDate:)` and returns
+the same dictionary shape already used by the `getSleepData` Flutter channel method:
+
+| Key | Type | Description |
+|-----|------|-------------|
+| `samples` | `[[String: Any]]` | Per-sample list (Apple-source filtered) |
+| `sampleCount` | `Int` | Number of samples after source filter |
+| `totalSleepSeconds` | `Double` | Total sleep (Core + Deep + REM) in seconds |
+| `totalSleepMinutes` | `Double` | Same value in minutes |
+| `totalSleepHours` | `Double` | Same value in hours |
+| `stageTotals` | `[String: Any]` | Per-stage seconds + minutes breakdown |
+| `fetchedFrom` | `String` | ISO8601 query start date |
+| `fetchedTo` | `String` | ISO8601 query end date |
+
+Example usage:
+
+```swift
+let end   = Date()
+let start = Calendar.current.date(byAdding: .day, value: -1, to: end)!
+
+let sleep = try await HumangoHealthPlugin.shared?.fetchSleep(
+    startDate: start, endDate: end
+) ?? [:]
+
+let totalHours = sleep["totalSleepHours"] as? Double ?? 0
+```
+
+**`SleepDataManager`** — `fetchSleepData(startDate:endDate:)` access widened from
+`private` to `internal` so `HumangoHealthPlugin` can delegate to it. The method was
+already used internally for the Flutter method channel; this change does not affect
+Flutter callers.
+
+---
+
 ## 1.0.2 — 2026-04-20
 
 ### Bug Fixes

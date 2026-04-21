@@ -27,14 +27,15 @@ public protocol HumangoHealthDataDelegate: AnyObject {
     ///   - deviceId: The HealthKit workout UUID (`deviceActivityId`).
     func onWorkoutReady(workout: HuWorkout, deviceId: String) async
 
-    /// Called when a processed sleep session payload is ready for processing/upload.
+    /// Called when a processed sleep session is ready for processing/upload.
     ///
     /// **Must be `async`**: the library `await`s this call before signalling HealthKit's
     /// `completion()` handler. The implementation must `await` the network request directly.
-    /// - Parameters:
-    ///   - json: Serialised sleep payload JSON string (flat aggregated format).
-    ///   - sessionId: Stable session identifier derived from `BED_TIME`.
-    func onSleepSessionReady(json: String, sessionId: String) async
+    /// - Parameter session: Strongly-typed `HuSleepSession` containing all aggregated
+    ///   sleep fields and (when called from `fetchSleep`) the per-sample breakdown.
+    ///   Call `session.toJson()` to obtain a JSON string for backend upload — key names
+    ///   are identical to the legacy flat payload (`SOURCE`, `TOTAL_SLEEP`, `BED_TIME`, etc.).
+    func onSleepSessionReady(_ session: HuSleepSession) async
 
     /// Called when a health metric monitor detects new data and delivers the
     /// current-day samples (midnight → now) for a single metric type.
@@ -62,6 +63,6 @@ public protocol HumangoHealthDataDelegate: AnyObject {
 
 public extension HumangoHealthDataDelegate {
     func onWorkoutReady(workout: HuWorkout, deviceId: String) async {}
-    func onSleepSessionReady(json: String, sessionId: String) async {}
+    func onSleepSessionReady(_ session: HuSleepSession) async {}
     func onHealthMetricReady(payload: [String: Any], metricType: String) async {}
 }

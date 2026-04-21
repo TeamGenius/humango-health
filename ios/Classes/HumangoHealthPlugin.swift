@@ -43,6 +43,29 @@ public class HumangoHealthPlugin: NSObject, FlutterPlugin {
       SleepDataManager.shared.stopAndClearAll()
   }
 
+  // MARK: - Public Native iOS Sleep Fetch API
+
+  /// On-demand query for aggregated sleep data within a date range.
+  /// Returns a dictionary with keys: `samples`, `sampleCount`, `totalSleepSeconds`,
+  /// `totalSleepMinutes`, `totalSleepHours`, `stageTotals`, `fetchedFrom`, `fetchedTo`.
+  ///
+  /// ```swift
+  /// let end   = Date()
+  /// let start = Calendar.current.date(byAdding: .day, value: -1, to: end)!
+  ///
+  /// let sleep = try await HumangoHealthPlugin.shared?.fetchSleep(
+  ///     startDate: start, endDate: end
+  /// )
+  ///
+  /// if let sleep {
+  ///     let totalHours = sleep.totalSleepHours
+  ///     print(sleep.toJson() ?? "")  // JSON with legacy key names for backend upload
+  /// }
+  /// ```
+  public func fetchSleep(startDate: Date, endDate: Date) async throws -> HuSleepSession? {
+      try await SleepDataManager.shared.fetchSleepData(startDate: startDate, endDate: endDate)
+  }
+
   public static func register(with registrar: FlutterPluginRegistrar) {
     let permissionMethodChannel = FlutterMethodChannel(name: "healthkit/method", binaryMessenger: registrar.messenger())
     let permissionEventChannel = FlutterEventChannel(name: "healthkit/event", binaryMessenger: registrar.messenger())
