@@ -429,12 +429,30 @@ public class HealthMetricsManager: NSObject {
             healthStore.execute(query)
         }
 
+        // For metrics that require Apple-source filtering (HRV, resting HR), prefer
+        // samples from Apple-platform sources (com.apple.health prefix — Apple Watch
+        // and the Health app). Falls back to all samples only when no Apple samples exist.
+        let filteredSamples: [HKQuantitySample]
+        if metricType.requiresAppleSourceFilter {
+            let appleSamples = samples.filter {
+                $0.sourceRevision.source.bundleIdentifier.hasPrefix("com.apple.health")
+            }
+            filteredSamples = appleSamples.isEmpty ? samples : appleSamples
+            if !appleSamples.isEmpty && appleSamples.count < samples.count {
+                debugPrint("[Humango] HealthMetricsManager: \(metricType.key) — dropped \(samples.count - appleSamples.count) non-Apple sample(s), keeping \(appleSamples.count)")
+            } else if appleSamples.isEmpty && !samples.isEmpty {
+                debugPrint("[Humango] HealthMetricsManager: \(metricType.key) — no Apple-platform samples, using all \(samples.count) sample(s)")
+            }
+        } else {
+            filteredSamples = samples
+        }
+
         var sampleDicts: [[String: Any]] = []
         var sum: Double = 0
         var minVal: Double = Double.greatestFiniteMagnitude
         var maxVal: Double = -Double.greatestFiniteMagnitude
 
-        for sample in samples {
+        for sample in filteredSamples {
             // Raw doubleValue — no rounding
             let value = sample.quantity.doubleValue(for: unit)
             sampleDicts.append(convertQuantitySampleToDict(sample, value: value, unitLabel: unitLabel))
@@ -443,7 +461,7 @@ public class HealthMetricsManager: NSObject {
             if value > maxVal { maxVal = value }
         }
 
-        let count = samples.count
+        let count = filteredSamples.count
         let average: Double = count > 0 ? sum / Double(count) : 0
         if count == 0 { minVal = 0; maxVal = 0 }
 

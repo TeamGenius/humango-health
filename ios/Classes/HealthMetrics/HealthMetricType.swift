@@ -99,6 +99,25 @@ public enum HealthMetricType: String, CaseIterable {
         }
     }
 
+    // MARK: - Source Filtering
+
+    /// Whether HealthKit samples for this metric should be filtered to Apple-platform
+    /// sources only (`com.apple.health` bundle prefix — covers Apple Watch and the
+    /// Health app). Third-party samples (Garmin, Whoop, etc.) are discarded when `true`.
+    ///
+    /// `true` for HRV and resting heart rate — both are measured per-beat by Apple Watch
+    /// and should not be mixed with third-party approximations.
+    /// `false` for body composition and height — typically user-entered, no source bias.
+    var requiresAppleSourceFilter: Bool {
+        switch self {
+        case .heartRateVariabilitySDNN: return true
+        case .restingHeartRate:         return true
+        case .bodyFatPercentage:        return false
+        case .bodyMass:                 return false
+        case .height:                   return false
+        }
+    }
+
     // MARK: - Init from key
 
     /// Initialise from a method-channel key string (Dart enum `.name`). Returns `nil` if unknown.

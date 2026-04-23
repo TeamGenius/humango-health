@@ -1,3 +1,42 @@
+## 1.0.6 — 2026-04-23
+
+### Enhancements
+
+#### Apple-source filtering and user-entry exclusion for HRV and resting heart rate
+
+`HealthMetricsManager.fetchMetricSamples` now applies a two-step filter pipeline
+for metrics where `HealthMetricType.requiresAppleSourceFilter` is `true`
+(currently `heartRateVariabilitySDNN` and `restingHeartRate`):
+
+**Step 1 — Drop user-entered samples**
+Samples where `HKMetadataKeyWasUserEntered == true` are excluded before any
+source check. Manually entered values are not sensor measurements and skew statistics
+such as the daily average.
+
+**Step 2 — Prefer Apple-platform sources**
+From the remaining samples, only those whose `sourceBundle` is prefixed by
+`com.apple.health` (Apple Watch and the Health app) are kept. Falls back to all
+remaining samples when no Apple samples exist.
+
+`bodyFatPercentage`, `bodyMass`, and `height` are unaffected —
+`requiresAppleSourceFilter` is `false` for those types.
+
+**`HealthMetricType`** — new property added to `HealthMetricType.swift`:
+
+```swift
+var requiresAppleSourceFilter: Bool
+// .heartRateVariabilitySDNN → true
+// .restingHeartRate         → true
+// .bodyFatPercentage        → false
+// .bodyMass                 → false
+// .height                   → false
+```
+
+To add filtering for a future metric type, flip its flag to `true` in
+`HealthMetricType` — no changes to `HealthMetricsManager` are required.
+
+---
+
 ## 1.0.5 — 2026-04-21
 
 ### Bug Fixes
