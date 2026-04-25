@@ -331,14 +331,15 @@ final class HealthMetricMonitor: AppLifecycleObserver {
         value: Double,
         unitLabel: String
     ) -> [String: Any] {
+        let bundle = sample.sourceRevision.source.bundleIdentifier
         var dict: [String: Any] = [
             "uuid": sample.uuid.uuidString,
             "value": value,
             "unit": unitLabel,
             "startDate": isoFormatter.string(from: sample.startDate),
             "endDate": isoFormatter.string(from: sample.endDate),
-            "sourceName": sample.sourceRevision.source.name,
-            "sourceBundle": sample.sourceRevision.source.bundleIdentifier,
+            "sourceName": HealthKitConverter.normalizedSourceName(name: sample.sourceRevision.source.name, bundle: bundle),
+            "sourceBundle": bundle,
         ]
 
         if let device = sample.device {

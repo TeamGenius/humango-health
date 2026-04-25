@@ -1,3 +1,33 @@
+## 1.0.8 — 2026-04-25
+
+### Enhancements
+
+#### Normalised Apple source name for health metrics and sleep data
+
+When returning HealthKit samples to the client, samples from Apple-platform
+sources (`com.apple.health` bundle prefix — Apple Watch, iPhone Health app) now
+report `sourceName` / `SOURCE` as `"Apple"` instead of the raw device name
+(e.g. "Varun's Apple Watch"). The full bundle identifier is still available in
+`sourceBundle` / `SOURCE_BUNDLE`.
+
+**Affected serialisation points:**
+
+- `HealthMetricsManager.convertQuantitySampleToDict()` — `sourceName` normalised
+- `HealthMetricMonitor.buildSampleDict()` — `sourceName` normalised
+- `SleepDataManager.convertSampleToHuSleepSample()` — per-sample `sourceName` normalised
+- `SleepDataManager.buildAggregatedPayload()` — grouping key normalised so Apple Watch
+  and iPhone Health samples merge under a single `"Apple"` source; `SOURCE` field normalised
+
+**New utility:**
+
+- `HealthKitConverter.normalizedSourceName(name:bundle:)` — returns `"Apple"` when
+  `bundle.hasPrefix("com.apple.health")`, raw name otherwise
+
+**Not changed:** Workout channels (`WorkoutServiceChannel`, `RouteService`) — `dataSource`
+metadata is left as-is. Dart models are unchanged — they parse whatever the native side sends.
+
+---
+
 ## 1.0.7 — 2026-04-25
 
 ### Features

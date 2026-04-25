@@ -1,7 +1,13 @@
 import HealthKit
 
 class HealthKitConverter {
-    
+
+    /// Returns `"Apple"` when the bundle identifier starts with `com.apple.health`,
+    /// otherwise returns the original source name unchanged.
+    static func normalizedSourceName(name: String, bundle: String) -> String {
+        bundle.hasPrefix("com.apple.health") ? "Apple" : name
+    }
+
     static func convertSampleToJson(_ sample: HKSample, type: HKSampleType) -> [String: Any]? {
         var dict: [String: Any] = [
             "type": type.identifier,

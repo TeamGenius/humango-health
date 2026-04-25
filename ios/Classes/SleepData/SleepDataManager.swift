@@ -620,10 +620,13 @@ public class SleepDataManager: NSObject, AppLifecycleObserver {
         // calculateSleepPayload before this function is called. All samples
         // passed here are already from a single source tier.
 
-        // --- Group by source name ---
+        // --- Group by source name (normalized: Apple-platform sources → "Apple") ---
         var bySource: [String: [HKCategorySample]] = [:]
         for s in samples {
-            let name = s.sourceRevision.source.name
+            let name = HealthKitConverter.normalizedSourceName(
+                name: s.sourceRevision.source.name,
+                bundle: s.sourceRevision.source.bundleIdentifier
+            )
             bySource[name, default: []].append(s)
         }
 
@@ -898,7 +901,7 @@ public class SleepDataManager: NSObject, AppLifecycleObserver {
             value:           sample.value,
             sleepStage:      stageName,
             durationSeconds: durationSeconds,
-            sourceName:      sample.sourceRevision.source.name,
+            sourceName:      HealthKitConverter.normalizedSourceName(name: sample.sourceRevision.source.name, bundle: sample.sourceRevision.source.bundleIdentifier),
             sourceBundle:    sample.sourceRevision.source.bundleIdentifier,
             device:          huDevice,
             metadata:        metadataDict
