@@ -9,6 +9,7 @@ import 'sleep_data_screen.dart' as sleep;
 import 'health_metrics_screen.dart';
 import 'today_activities_screen.dart' as activities;
 import 'monitoring_screen.dart' as monitoring;
+import 'raw_workouts_screen.dart' as rawview;
 import 'package:humango_health/humango_health.dart';
 
 void main() {
@@ -325,13 +326,13 @@ class _AppTabsScreenState extends State<_AppTabsScreen> {
   int _currentIndex = 0;
 
   final List<Widget> _pages = [
-     const monitoring.MonitoringScreen(),
-const workouts.WorkoutPushScreen(),
+    const monitoring.MonitoringScreen(),
+    const workouts.WorkoutPushScreen(),
     const readworkouts.WorkoutReadScreen(),
     const sleep.SleepDataScreen(),
     const HealthMetricsScreen(),
     const activities.TodayActivitiesScreen(),
-   
+    const rawview.RawWorkoutsScreen(),
   ];
 
   Future<void> _logout() async {
@@ -389,7 +390,10 @@ const workouts.WorkoutPushScreen(),
             icon: Icon(Icons.directions_run),
             label: 'Activities',
           ),
-         
+          BottomNavigationBarItem(
+            icon: Icon(Icons.data_object),
+            label: 'Raw HK',
+          ),
         ],
       ),
     );

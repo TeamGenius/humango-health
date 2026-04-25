@@ -35,5 +35,9 @@ import humango_health
     ExampleSessionChannel.register(
       with: engineBridge.pluginRegistry.registrar(forPlugin: "ExampleSessionChannel")!
     )
+    // Register the raw HealthKit workouts channel (no library types — for debugging).
+    RawWorkoutsChannel.register(
+      with: engineBridge.pluginRegistry.registrar(forPlugin: "RawWorkoutsChannel")!
+    )
   }
 }

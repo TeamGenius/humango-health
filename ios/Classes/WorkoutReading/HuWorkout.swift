@@ -97,7 +97,26 @@ public struct HuWorkout {
         self.metadata          = metadata
     }
 
+    /// Returns `true` when the workout contains multiple sub-activities
+    /// (e.g. Triathlon: Run → Transition → Bike → Transition → Swim).
+    public var isMultisport: Bool {
+        if #available(iOS 16.0, *), let activities = workoutActivities, activities.count > 1 {
+            return true
+        }
+        return false
+    }
+
     public func toDict() -> [String: Any]? {
+        // Multisport workouts (Triathlon etc.) use a sessions-based format
+        if isMultisport {
+            return toMultisportDict()
+        }
+        return toSingleSportDict()
+    }
+
+    // MARK: - Single-sport serialization (existing behaviour)
+
+    private func toSingleSportDict() -> [String: Any] {
         let formatter = ISO8601DateFormatter()
         formatter.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
 
@@ -135,6 +154,100 @@ public struct HuWorkout {
             "events":             eventList,
             "metadata":           formatMetadata(metadata: metadata)
         ]
+    }
+
+    // MARK: - Multisport serialization (sessions-based)
+
+    private func toMultisportDict() -> [String: Any]? {
+        guard #available(iOS 16.0, *), let activities = workoutActivities, activities.count > 1 else {
+            return nil
+        }
+
+        let formatter = ISO8601DateFormatter()
+        formatter.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
+
+        let endTime = start_time.addingTimeInterval(duration)
+        let seriesData = routeData.toDict()
+
+        var sessions: [[String: Any]] = []
+        for (index, activity) in activities.enumerated() {
+            let activityEndDate = activity.endDate ?? endTime
+            let activityDuration = activity.duration
+
+            // Extract per-activity distance from its statistics
+            let activityDistance: Int
+            if #available(iOS 16.0, *) {
+                activityDistance = extractDistance(from: activity.allStatistics)
+            } else {
+                activityDistance = 0
+            }
+
+            // Format per-activity events
+            let activityEvents: [[String: Any]] = (activity.workoutEvents ?? []).map { event in
+                [
+                    "type":       getEventName(val: event.type.rawValue),
+                    "metadata":   formatMetadata(metadata: event.metadata),
+                    "start_time": formatter.string(from: event.dateInterval.start),
+                    "end_time":   formatter.string(from: event.dateInterval.end)
+                ]
+            }
+
+            // Format per-activity statistics
+            let activityStats: [[String: Double]]
+            if #available(iOS 16.0, *) {
+                activityStats = formatStatistics(statistics: activity.allStatistics)
+            } else {
+                activityStats = []
+            }
+
+            let session: [String: Any] = [
+                "session_id":         "\(deviceActivityId)_\(index)",
+                "device_activity_id": deviceActivityId,
+                "start_time":         formatter.string(from: activity.startDate),
+                "end_time":           formatter.string(from: activityEndDate),
+                "type":               "session",
+                "sport":              activity.workoutConfiguration.activityType.name,
+                "distance":           activityDistance,
+                "duration":           Int(round(activityDuration)),
+                "events":             activityEvents,
+                "metadata":           formatMetadata(metadata: activity.metadata),
+                "statistics":         activityStats,
+                "series_data":        seriesData
+            ]
+            sessions.append(session)
+        }
+
+        return [
+            "start_time":         formatter.string(from: start_time),
+            "end_time":           formatter.string(from: endTime),
+            "activity_id":        deviceActivityId,
+            "device_activity_id": deviceActivityId,
+            "serial":             deviceActivityId,
+            "sport":              sport.name,
+            "distance":           Int(round(distance?.doubleValue(for: .meter()) ?? 0.0)),
+            "duration":           Int(round(duration)),
+            "statistics":         formatStatistics(statistics: statistics),
+            "metadata":           formatMetadata(metadata: metadata),
+            "sessions":           sessions
+        ]
+    }
+
+    /// Sums distance statistics (walking/running + cycling + swimming) from an activity's statistics.
+    private func extractDistance(from stats: [HKQuantityType: HKStatistics]) -> Int {
+        let distanceIds: [HKQuantityTypeIdentifier] = [
+            .distanceWalkingRunning,
+            .distanceCycling,
+            .distanceSwimming
+        ]
+        var total: Double = 0
+        for id in distanceIds {
+            if let qType = HKObjectType.quantityType(forIdentifier: id),
+               let stat = stats[qType],
+               let sum = stat.sumQuantity() {
+                total += sum.doubleValue(for: .meter())
+            }
+        }
+        return Int(round(total))
     }
 
     public func toJson() -> Data? {

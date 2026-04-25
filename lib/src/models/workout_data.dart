@@ -14,6 +14,13 @@ class WorkoutData {
   final List<WorkoutEvent> events;
   final Map<String, dynamic> metadata;
 
+  /// Non-null for multisport workouts (e.g. Triathlon).
+  /// Each element represents a sub-activity session (Run, Transition, Bike, etc.).
+  final List<WorkoutSession>? sessions;
+
+  /// Convenience getter — `true` when this is a multisport workout with sessions.
+  bool get isMultisport => sessions != null && sessions!.isNotEmpty;
+
   WorkoutData({
     required this.workoutId,
     required this.activityType,
@@ -27,11 +34,26 @@ class WorkoutData {
     required this.route,
     required this.events,
     required this.metadata,
+    this.sessions,
   });
 
   factory WorkoutData.fromJson(Map<String, dynamic> json) {
+    // Parse sessions for multisport workouts
+    final List<WorkoutSession>? sessions;
+    if (json['sessions'] is List && (json['sessions'] as List).isNotEmpty) {
+      sessions = (json['sessions'] as List<dynamic>)
+          .map((e) => WorkoutSession.fromJson(e as Map<String, dynamic>))
+          .toList();
+    } else {
+      sessions = null;
+    }
+
+    // For multisport: series_data lives inside each session; top-level has none.
+    // For single-sport: series_data is at the top level.
+    final seriesDataSource = json['series_data'] ?? json['routeData'];
+
     return WorkoutData(
-      workoutId: json['deviceActivityId'] ?? '',
+      workoutId: json['device_activity_id'] ?? json['deviceActivityId'] ?? '',
       activityType: json['sport'] ?? '',
       startTime: DateTime.parse(
         json['start_time'] ?? DateTime.now().toIso8601String(),
@@ -41,16 +63,101 @@ class WorkoutData {
           : DateTime.now(),
       duration: (json['duration'] as num?)?.toDouble() ?? 0.0,
       distance: (json['distance'] as num?)?.toDouble(),
-      activeCalories: (json['statistics']?['activeEnergy']?['sum'] as num?)
-          ?.toDouble(),
+      activeCalories: _extractActiveCalories(json['statistics']),
       statistics: WorkoutStatistics.fromJson(json['statistics']),
       quantitySeries:
-          (json['routeData']?['samples'] as List<dynamic>?)
+          (seriesDataSource?['samples'] as List<dynamic>?)
               ?.map((e) => QuantitySeries.fromSamplesJson(e))
               .toList() ??
           [],
       route:
-          (json['routeData']?['locations'] as List<dynamic>?)
+          (seriesDataSource?['locations'] as List<dynamic>?)
+              ?.map((e) => RouteLocation.fromJson(e))
+              .toList() ??
+          [],
+      events:
+          (json['events'] as List<dynamic>?)
+              ?.map((e) => WorkoutEvent.fromJson(e))
+              .toList() ??
+          [],
+      metadata: json['metadata'] ?? {},
+      sessions: sessions,
+    );
+  }
+
+  /// Safely extract active calories from the statistics field.
+  /// iOS sends statistics as a List<Map<String,double>> — not a nested map.
+  static double? _extractActiveCalories(dynamic raw) {
+    if (raw is List) {
+      for (final entry in raw) {
+        if (entry is Map) {
+          final val = entry['HKQuantityTypeIdentifierActiveEnergyBurned'];
+          if (val is num) return val.toDouble();
+        }
+      }
+    } else if (raw is Map) {
+      final v = raw['activeEnergy']?['sum'];
+      if (v is num) return v.toDouble();
+    }
+    return null;
+  }
+}
+
+/// Represents a single sub-activity session within a multisport workout.
+class WorkoutSession {
+  final String sessionId;
+  final String deviceActivityId;
+  final String sport;
+  final DateTime startTime;
+  final DateTime endTime;
+  final double duration;
+  final double distance;
+  final String type;
+  final WorkoutStatistics statistics;
+  final List<QuantitySeries> quantitySeries;
+  final List<RouteLocation> route;
+  final List<WorkoutEvent> events;
+  final Map<String, dynamic> metadata;
+
+  WorkoutSession({
+    required this.sessionId,
+    required this.deviceActivityId,
+    required this.sport,
+    required this.startTime,
+    required this.endTime,
+    required this.duration,
+    required this.distance,
+    required this.type,
+    required this.statistics,
+    required this.quantitySeries,
+    required this.route,
+    required this.events,
+    required this.metadata,
+  });
+
+  factory WorkoutSession.fromJson(Map<String, dynamic> json) {
+    final seriesData = json['series_data'];
+    return WorkoutSession(
+      sessionId: json['session_id'] ?? '',
+      deviceActivityId: json['device_activity_id'] ?? '',
+      sport: json['sport'] ?? '',
+      startTime: DateTime.parse(
+        json['start_time'] ?? DateTime.now().toIso8601String(),
+      ),
+      endTime: DateTime.parse(
+        json['end_time'] ?? DateTime.now().toIso8601String(),
+      ),
+      duration: (json['duration'] as num?)?.toDouble() ?? 0.0,
+      distance: (json['distance'] as num?)?.toDouble() ?? 0.0,
+      type: json['type'] ?? 'session',
+      statistics: WorkoutStatistics.fromJson(json['statistics']),
+      quantitySeries:
+          (seriesData?['samples'] as List<dynamic>?)
+              ?.map((e) => QuantitySeries.fromSamplesJson(e))
+              .toList() ??
+          [],
+      route:
+          (seriesData?['locations'] as List<dynamic>?)
               ?.map((e) => RouteLocation.fromJson(e))
               .toList() ??
           [],

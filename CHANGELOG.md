@@ -1,3 +1,93 @@
+## 1.0.7 — 2026-04-25
+
+### Features
+
+#### Multisport workout support (Triathlon / SwimBikeRun)
+
+Multisport workouts (e.g. Triathlon recorded on Apple Watch) now produce a
+sessions-based JSON payload where each sub-activity (Run, Transition, Bike,
+Transition, Swim) is a separate session object.
+
+**iOS — `HuWorkout`:**
+
+- New `isMultisport` computed property — `true` when `workoutActivities.count > 1`
+- `toDict()` now branches: multisport workouts produce a top-level object with a
+  `sessions` array; single-sport workouts use the existing flat format (no breaking change)
+- Each session includes: `session_id`, `sport`, `start_time`, `end_time`, `duration`,
+  `distance` (summed from per-activity statistics), `events`, `statistics`, `metadata`,
+  and `series_data` (full workout data duplicated per session)
+- New `extractDistance(from:)` helper sums `distanceWalkingRunning`, `distanceCycling`,
+  and `distanceSwimming` from an activity's `HKStatistics`
+
+**Multisport JSON structure:**
+
+```json
+{
+  "start_time": "...",
+  "end_time": "...",
+  "activity_id": "<uuid>",
+  "sport": "Triathlon",
+  "duration": 935,
+  "distance": 1660,
+  "sessions": [
+    {
+      "session_id": "<uuid>_0",
+      "sport": "Running",
+      "type": "session",
+      "start_time": "...",
+      "end_time": "...",
+      "duration": 347,
+      "distance": 30,
+      "series_data": { ... },
+      "statistics": [ ... ],
+      "events": [ ... ],
+      "metadata": { ... }
+    },
+    { "sport": "Other", ... },
+    { "sport": "Cycling", ... },
+    ...
+  ]
+}
+```
+
+**Dart — `WorkoutData`:**
+
+- New `WorkoutSession` class — mirrors the per-session JSON fields
+- `WorkoutData.sessions` — `List<WorkoutSession>?`, non-null for multisport workouts
+- `WorkoutData.isMultisport` — convenience getter
+- `WorkoutData.fromJson()` — parses `sessions` key when present; resolves `series_data`
+  from either `series_data` or legacy `routeData` key; reads `device_activity_id` with
+  `deviceActivityId` fallback
+
+### Bug Fixes
+
+#### Fixed `QuantitySeries.fromSamplesJson` crash on formatted dict input
+
+`QuantitySeries.fromSamplesJson()` only handled raw arrays
+(`[{quantityType, startDate, value}]`) but `HuRouteData.toDict()` produces a
+formatted dict (`{type: "HK...", series: [{value, timestamp}]}`). When the parser
+tried to call `.first` on a Map, Dart threw
+`type 'String' is not a subtype of type 'int' of 'index'`. Added a `Map` branch
+that handles the `{type, series}` format.
+
+#### Fixed `WorkoutData.fromJson` crash on iOS statistics format
+
+iOS sends `statistics` as `List<Map<String, double>>` (e.g.
+`[{"HKQuantityTypeIdentifierHeartRate": 72.5}]`), but `activeCalories` parsing
+tried `json['statistics']?['activeEnergy']?['sum']` — indexing a `List` with a
+`String` key. Replaced with `_extractActiveCalories()` that safely handles both
+the `List` format (iOS) and the legacy nested `Map` format.
+
+### Example App
+
+- Simplified Read Workouts screen: date+time pickers, single Fetch button, tap-to-view
+  raw JSON with copy-to-clipboard
+- Multisport workouts show session count badge and per-session breakdown
+  (sport, duration, distance with colored dots)
+- Removed import preference toggles and live monitoring controls from the read screen
+
+---
+
 ## 1.0.6 — 2026-04-23
 
 ### Enhancements

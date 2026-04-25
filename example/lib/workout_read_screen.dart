@@ -1,5 +1,6 @@
 import 'dart:convert';
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:humango_health/humango_health.dart';
 
 class WorkoutReadScreen extends StatefulWidget {
@@ -13,130 +14,91 @@ class _WorkoutReadScreenState extends State<WorkoutReadScreen> {
   final WorkoutReadManager _readManager = WorkoutReadManager();
 
   bool _isLoading = false;
-  bool _isMonitoring = false;
-  String _statusMessage = 'Idle';
+  String _statusMessage = 'Pick a date range and tap Fetch.';
 
-  // One-shot fetched workouts
+  DateTime _startDate = DateTime.now().subtract(const Duration(days: 7));
+  DateTime _endDate = DateTime.now();
+
   List<WorkoutData> _fetchedWorkouts = [];
+  // Raw JSON strings for detail view
+  List<String> _rawJsonStrings = [];
 
-  // Import preference toggles
-  bool _importRunning = true;
-  bool _importCycling = true;
-  bool _importSwimming = true;
+  // ── Date / time picker ───────────────────────────────────────────────────────
 
-  // ── Import preferences ──────────────────────────────────────────────────────
-
-  Future<void> _applyImportPreferences() async {
-    await _readManager.setImportPreferences(
-      running: _importRunning,
-      cycling: _importCycling,
-      swimming: _importSwimming,
+  Future<void> _pickDateTime({required bool isStart}) async {
+    final initial = isStart ? _startDate : _endDate;
+    final date = await showDatePicker(
+      context: context,
+      initialDate: initial,
+      firstDate: DateTime(2020),
+      lastDate: DateTime.now().add(const Duration(days: 1)),
     );
-    if (mounted) {
-      setState(() => _statusMessage = 'Import preferences saved.');
-    }
+    if (date == null || !mounted) return;
+
+    final time = await showTimePicker(
+      context: context,
+      initialTime: TimeOfDay.fromDateTime(initial),
+    );
+    if (!mounted) return;
+
+    final picked = DateTime(
+      date.year,
+      date.month,
+      date.day,
+      time?.hour ?? initial.hour,
+      time?.minute ?? initial.minute,
+    );
+
+    setState(() {
+      if (isStart) {
+        _startDate = picked;
+      } else {
+        _endDate = picked;
+      }
+    });
   }
 
-  // ── One-shot fetch ───────────────────────────────────────────────────────────
+  // ── Fetch ────────────────────────────────────────────────────────────────────
 
-  Future<void> _fetchPastWorkouts() async {
+  Future<void> _fetchWorkouts() async {
     setState(() {
       _isLoading = true;
-      _statusMessage = 'Fetching workouts...';
+      _statusMessage = 'Fetching…';
       _fetchedWorkouts = [];
+      _rawJsonStrings = [];
     });
 
     try {
-      final endDate = DateTime.now();
-      final startDate = endDate.subtract(const Duration(days: 7));
-
-      debugPrint(
-        'WorkoutReadScreen: readWorkouts '
-        'start=${startDate.toUtc().toIso8601String()} '
-        'end=${endDate.toUtc().toIso8601String()}',
-      );
-
       final rawJsons = await _readManager.readWorkouts(
-        startDate,
-        endDate: endDate,
-      );
-      debugPrint(
-        'WorkoutReadScreen: received ${rawJsons.length} raw JSON string(s)',
+        _startDate,
+        endDate: _endDate,
       );
 
       final parsed = <WorkoutData>[];
-      for (final (index, raw) in rawJsons.indexed) {
-        final w = WorkoutData.fromJson(
-          jsonDecode(raw) as Map<String, dynamic>,
+      for (final raw in rawJsons) {
+        parsed.add(
+          WorkoutData.fromJson(jsonDecode(raw) as Map<String, dynamic>),
         );
-        final routeStatus = w.route.isNotEmpty
-            ? '✅ ${w.route.length} GPS point(s)'
-            : '⚠️ NO route locations';
-        debugPrint(
-          'WorkoutReadScreen: [${index + 1}/${rawJsons.length}] '
-          'id=${w.workoutId.length > 8 ? w.workoutId.substring(0, 8) : w.workoutId}… '
-          'sport=${w.activityType} '
-          'start=${w.startTime.toLocal().toString().substring(0, 16)} '
-          'duration=${w.duration.toStringAsFixed(0)}s '
-          'distance=${w.distance != null ? '${w.distance!.toStringAsFixed(0)} m' : 'nil'} '
-          'route=$routeStatus '
-          'series=${w.quantitySeries.length} type(s)',
-        );
-        parsed.add(w);
       }
-
-      // Newest first
       parsed.sort((a, b) => b.startTime.compareTo(a.startTime));
 
       setState(() {
         _fetchedWorkouts = parsed;
-        _statusMessage =
-            'Fetched ${parsed.length} workout(s) '
-            'from ${startDate.toLocal().toString().substring(0, 10)} '
-            'to ${endDate.toLocal().toString().substring(0, 10)}.';
+        _rawJsonStrings = rawJsons;
+        _statusMessage = '${parsed.length} workout(s) returned.';
       });
     } catch (e) {
-      setState(() => _statusMessage = 'Error fetching workouts: $e');
+      setState(() => _statusMessage = 'Error: $e');
     } finally {
       setState(() => _isLoading = false);
     }
   }
 
-  // ── Live monitoring ──────────────────────────────────────────────────────────
+  // ── Helpers ──────────────────────────────────────────────────────────────────
 
-  Future<void> _startMonitoring() async {
-    setState(() {
-      _isLoading = true;
-      _statusMessage = 'Starting monitoring...';
-      _fetchedWorkouts = [];
-    });
-
-    try {
-      final startDate = DateTime.now().subtract(const Duration(hours: 2));
-      await _readManager.startMonitoring(startDate);
-      setState(() {
-        _isMonitoring = true;
-        _statusMessage =
-            'Monitoring active — workouts delivered via delegate to API.';
-      });
-    } catch (e) {
-      setState(() => _statusMessage = 'Failed to start monitoring: $e');
-    } finally {
-      setState(() => _isLoading = false);
-    }
-  }
-
-  Future<void> _stopMonitoring() async {
-    try {
-      await _readManager.stopMonitoring();
-    } catch (_) {}
-    setState(() {
-      _isMonitoring = false;
-      _statusMessage = 'Monitoring stopped.';
-    });
-  }
-
-  // ── UI helpers ───────────────────────────────────────────────────────────────
+  String _fmt(DateTime dt) =>
+      '${dt.year}-${_p(dt.month)}-${_p(dt.day)}  ${_p(dt.hour)}:${_p(dt.minute)}';
+  String _p(int n) => n.toString().padLeft(2, '0');
 
   String _formatDuration(double seconds) {
     final d = Duration(seconds: seconds.round());
@@ -154,76 +116,133 @@ class _WorkoutReadScreenState extends State<WorkoutReadScreen> {
     return '${meters.toStringAsFixed(0)} m';
   }
 
-  Widget _buildWorkoutCard(WorkoutData w) {
-    final stats = w.statistics;
-    final routePoints = w.route.length;
-    final seriesCount = w.quantitySeries.length;
+  // ── Workout card ─────────────────────────────────────────────────────────────
 
+  Widget _buildWorkoutCard(WorkoutData w, int index) {
     return Card(
       margin: const EdgeInsets.symmetric(vertical: 4),
-      child: Padding(
-        padding: const EdgeInsets.all(12),
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            Row(
-              children: [
-                Text(
-                  w.activityType,
-                  style: const TextStyle(
-                    fontWeight: FontWeight.bold,
-                    fontSize: 15,
+      child: InkWell(
+        borderRadius: BorderRadius.circular(12),
+        onTap: () => _showRawJson(index),
+        child: Padding(
+          padding: const EdgeInsets.all(12),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              // Header
+              Row(
+                children: [
+                  Text(
+                    w.activityType,
+                    style: const TextStyle(
+                      fontWeight: FontWeight.bold,
+                      fontSize: 15,
+                    ),
                   ),
-                ),
-                const Spacer(),
-                Text(
-                  _formatDuration(w.duration),
-                  style: const TextStyle(color: Colors.grey),
-                ),
+                  if (w.isMultisport)
+                    Container(
+                      margin: const EdgeInsets.only(left: 6),
+                      padding: const EdgeInsets.symmetric(
+                        horizontal: 6,
+                        vertical: 2,
+                      ),
+                      decoration: BoxDecoration(
+                        color: Colors.deepPurple.shade50,
+                        borderRadius: BorderRadius.circular(4),
+                      ),
+                      child: Text(
+                        '${w.sessions!.length} sessions',
+                        style: TextStyle(
+                          fontSize: 10,
+                          color: Colors.deepPurple.shade700,
+                        ),
+                      ),
+                    ),
+                  const Spacer(),
+                  Text(
+                    _formatDuration(w.duration),
+                    style: const TextStyle(color: Colors.grey),
+                  ),
+                ],
+              ),
+              const SizedBox(height: 4),
+              Text(
+                '${_fmt(w.startTime.toLocal())}  •  ${w.workoutId.length > 8 ? w.workoutId.substring(0, 8) : w.workoutId}…',
+                style: const TextStyle(fontSize: 12, color: Colors.grey),
+              ),
+              const SizedBox(height: 6),
+              Wrap(
+                spacing: 10,
+                runSpacing: 4,
+                children: [
+                  _chip(Icons.straighten, _formatDistance(w.distance)),
+                  if (w.statistics.avgHeartRate != null)
+                    _chip(
+                      Icons.favorite,
+                      '${w.statistics.avgHeartRate!.toStringAsFixed(0)} bpm',
+                    ),
+                  _chip(Icons.route, '${w.route.length} pts'),
+                  _chip(Icons.show_chart, '${w.quantitySeries.length} series'),
+                ],
+              ),
+              // Multisport sessions breakdown
+              if (w.isMultisport) ...[
+                const Divider(height: 16),
+                ...w.sessions!.map(_buildSessionRow),
               ],
-            ),
-            const SizedBox(height: 4),
-            Text(
-              '${w.startTime.toLocal().toString().substring(0, 16)}'
-              '  •  ID: ${w.workoutId.substring(0, 8)}…',
-              style: const TextStyle(fontSize: 12, color: Colors.grey),
-            ),
-            const SizedBox(height: 8),
-            Wrap(
-              spacing: 12,
-              runSpacing: 4,
-              children: [
-                _chip(Icons.straighten, _formatDistance(w.distance)),
-                if (w.activeCalories != null)
-                  _chip(
-                    Icons.local_fire_department,
-                    '${w.activeCalories!.toStringAsFixed(0)} kcal',
-                  ),
-                if (stats.avgHeartRate != null)
-                  _chip(
-                    Icons.favorite,
-                    '${stats.avgHeartRate!.toStringAsFixed(0)} bpm avg',
-                  ),
-                if (stats.maxHeartRate != null)
-                  _chip(
-                    Icons.monitor_heart,
-                    '${stats.maxHeartRate!.toStringAsFixed(0)} bpm max',
-                  ),
-                if (stats.avgPower != null)
-                  _chip(Icons.bolt, '${stats.avgPower!.toStringAsFixed(0)} W'),
-                if (stats.avgCadence != null)
-                  _chip(
-                    Icons.rotate_right,
-                    '${stats.avgCadence!.toStringAsFixed(0)} rpm',
-                  ),
-                _chip(Icons.route, '$routePoints pts'),
-                _chip(Icons.show_chart, '$seriesCount series'),
-              ],
-            ),
-          ],
+            ],
+          ),
         ),
       ),
     );
+  }
+
+  Widget _buildSessionRow(WorkoutSession s) {
+    return Padding(
+      padding: const EdgeInsets.only(left: 8, bottom: 4),
+      child: Row(
+        children: [
+          Container(
+            width: 8,
+            height: 8,
+            decoration: BoxDecoration(
+              color: _sportColor(s.sport),
+              shape: BoxShape.circle,
+            ),
+          ),
+          const SizedBox(width: 6),
+          Text(
+            s.sport,
+            style: const TextStyle(fontSize: 12, fontWeight: FontWeight.w500),
+          ),
+          const SizedBox(width: 8),
+          Text(
+            _formatDuration(s.duration),
+            style: const TextStyle(fontSize: 12, color: Colors.grey),
+          ),
+          if (s.distance > 0) ...[
+            const SizedBox(width: 8),
+            Text(
+              _formatDistance(s.distance),
+              style: const TextStyle(fontSize: 12, color: Colors.grey),
+            ),
+          ],
+        ],
+      ),
+    );
+  }
+
+  Color _sportColor(String sport) {
+    switch (sport) {
+      case 'Running':
+        return Colors.orange;
+      case 'Cycling':
+        return Colors.blue;
+      case 'Swimming':
+        return Colors.cyan;
+      default:
+        return Colors.grey;
+    }
   }
 
   Widget _chip(IconData icon, String label) {
@@ -234,6 +253,45 @@ class _WorkoutReadScreenState extends State<WorkoutReadScreen> {
         const SizedBox(width: 3),
         Text(label, style: const TextStyle(fontSize: 12)),
       ],
+    );
+  }
+
+  // ── Raw JSON detail ──────────────────────────────────────────────────────────
+
+  void _showRawJson(int index) {
+    if (index >= _rawJsonStrings.length) return;
+    final pretty = const JsonEncoder.withIndent('  ')
+        .convert(jsonDecode(_rawJsonStrings[index]));
+    Navigator.of(context).push(
+      MaterialPageRoute(
+        builder: (ctx) => Scaffold(
+          appBar: AppBar(
+            title: const Text('Raw JSON'),
+            actions: [
+              IconButton(
+                icon: const Icon(Icons.copy),
+                tooltip: 'Copy JSON',
+                onPressed: () {
+                  Clipboard.setData(ClipboardData(text: pretty));
+                  ScaffoldMessenger.of(ctx).showSnackBar(
+                    const SnackBar(
+                      content: Text('JSON copied to clipboard'),
+                      duration: Duration(seconds: 2),
+                    ),
+                  );
+                },
+              ),
+            ],
+          ),
+          body: SingleChildScrollView(
+            padding: const EdgeInsets.all(12),
+            child: SelectableText(
+              pretty,
+              style: const TextStyle(fontSize: 11, fontFamily: 'monospace'),
+            ),
+          ),
+        ),
+      ),
     );
   }
 
@@ -248,43 +306,36 @@ class _WorkoutReadScreenState extends State<WorkoutReadScreen> {
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.stretch,
           children: [
-            // ── Import preferences ─────────────────────────────────────────
-            _buildImportPreferences(),
-            const SizedBox(height: 10),
-
-            // ── Action buttons ─────────────────────────────────────────────
+            // ── Date pickers ───────────────────────────────────────────────
             Row(
               children: [
                 Expanded(
-                  child: ElevatedButton.icon(
-                    onPressed: _isLoading ? null : _fetchPastWorkouts,
-                    icon: const Icon(Icons.download, size: 16),
-                    label: const Text('Fetch Past 7 Days'),
+                  child: _dateButton(
+                    label: 'Start',
+                    value: _fmt(_startDate),
+                    onTap: () => _pickDateTime(isStart: true),
                   ),
                 ),
                 const SizedBox(width: 8),
                 Expanded(
-                  child: _isMonitoring
-                      ? ElevatedButton.icon(
-                          onPressed: _stopMonitoring,
-                          icon: const Icon(Icons.stop_circle, size: 16),
-                          label: const Text('Stop Live'),
-                          style: ElevatedButton.styleFrom(
-                            backgroundColor: Colors.red.shade400,
-                            foregroundColor: Colors.white,
-                          ),
-                        )
-                      : ElevatedButton.icon(
-                          onPressed: _isLoading ? null : _startMonitoring,
-                          icon: const Icon(Icons.sensors, size: 16),
-                          label: const Text('Start Live'),
-                          style: ElevatedButton.styleFrom(
-                            backgroundColor: Colors.green.shade600,
-                            foregroundColor: Colors.white,
-                          ),
-                        ),
+                  child: _dateButton(
+                    label: 'End',
+                    value: _fmt(_endDate),
+                    onTap: () => _pickDateTime(isStart: false),
+                  ),
                 ),
               ],
+            ),
+            const SizedBox(height: 10),
+
+            // ── Fetch button ───────────────────────────────────────────────
+            SizedBox(
+              height: 44,
+              child: FilledButton.icon(
+                onPressed: _isLoading ? null : _fetchWorkouts,
+                icon: const Icon(Icons.download, size: 18),
+                label: const Text('Fetch Workouts'),
+              ),
             ),
             const SizedBox(height: 8),
 
@@ -304,18 +355,18 @@ class _WorkoutReadScreenState extends State<WorkoutReadScreen> {
               child: _isLoading
                   ? const Center(child: CircularProgressIndicator())
                   : _fetchedWorkouts.isEmpty
-                  ? const Center(
-                      child: Text(
-                        'No workouts fetched yet.\nTap "Fetch Past 7 Days" to load.',
-                        textAlign: TextAlign.center,
-                        style: TextStyle(color: Colors.grey, fontSize: 13),
-                      ),
-                    )
-                  : ListView.builder(
-                      itemCount: _fetchedWorkouts.length,
-                      itemBuilder: (context, index) =>
-                          _buildWorkoutCard(_fetchedWorkouts[index]),
-                    ),
+                      ? const Center(
+                          child: Text(
+                            'No workouts.\nPick dates and tap Fetch.',
+                            textAlign: TextAlign.center,
+                            style: TextStyle(color: Colors.grey, fontSize: 13),
+                          ),
+                        )
+                      : ListView.builder(
+                          itemCount: _fetchedWorkouts.length,
+                          itemBuilder: (context, index) =>
+                              _buildWorkoutCard(_fetchedWorkouts[index], index),
+                        ),
             ),
           ],
         ),
@@ -323,65 +374,28 @@ class _WorkoutReadScreenState extends State<WorkoutReadScreen> {
     );
   }
 
-  Widget _buildImportPreferences() {
-    return Container(
-      padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 6),
-      decoration: BoxDecoration(
-        border: Border.all(color: Colors.grey.shade300),
-        borderRadius: BorderRadius.circular(8),
+  Widget _dateButton({
+    required String label,
+    required String value,
+    required VoidCallback onTap,
+  }) {
+    return OutlinedButton(
+      onPressed: onTap,
+      style: OutlinedButton.styleFrom(
+        padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 10),
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
       ),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          const Text(
-            'Import preferences',
-            style: TextStyle(fontWeight: FontWeight.bold, fontSize: 12),
+          Text(
+            label,
+            style: TextStyle(fontSize: 10, color: Colors.grey.shade600),
           ),
-          Row(
-            children: [
-              _prefToggle(
-                'Run',
-                _importRunning,
-                (v) => setState(() => _importRunning = v),
-              ),
-              _prefToggle(
-                'Cycle',
-                _importCycling,
-                (v) => setState(() => _importCycling = v),
-              ),
-              _prefToggle(
-                'Swim',
-                _importSwimming,
-                (v) => setState(() => _importSwimming = v),
-              ),
-              const Spacer(),
-              TextButton(
-                onPressed: _applyImportPreferences,
-                style: TextButton.styleFrom(
-                  padding: EdgeInsets.zero,
-                  visualDensity: VisualDensity.compact,
-                ),
-                child: const Text('Apply', style: TextStyle(fontSize: 12)),
-              ),
-            ],
-          ),
+          const SizedBox(height: 2),
+          Text(value, style: const TextStyle(fontSize: 13)),
         ],
       ),
-    );
-  }
-
-  Widget _prefToggle(String label, bool value, ValueChanged<bool> onChanged) {
-    return Row(
-      mainAxisSize: MainAxisSize.min,
-      children: [
-        Switch(
-          value: value,
-          onChanged: onChanged,
-          materialTapTargetSize: MaterialTapTargetSize.shrinkWrap,
-        ),
-        Text(label, style: const TextStyle(fontSize: 12)),
-        const SizedBox(width: 8),
-      ],
     );
   }
 }
