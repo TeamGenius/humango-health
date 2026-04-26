@@ -238,17 +238,30 @@ class SleepDataResponse {
         .map((s) => SleepSample.fromMap(Map<String, dynamic>.from(s)))
         .toList();
 
+    // iOS sends START_DATE / END_DATE (legacy backend keys) while Dart models
+    // originally expected fetchedFrom / fetchedTo. Accept both.
+    final fetchedFromStr =
+        (map['fetchedFrom'] ?? map['START_DATE']) as String?;
+    final fetchedToStr = (map['fetchedTo'] ?? map['END_DATE']) as String?;
+
     return SleepDataResponse(
       samples: samples,
       sampleCount: map['sampleCount'] as int? ?? samples.length,
-      totalSleepSeconds: (map['totalSleepSeconds'] as num?)?.toDouble() ?? 0.0,
+      totalSleepSeconds:
+          ((map['totalSleepSeconds'] ?? map['TOTAL_SLEEP']) as num?)
+                  ?.toDouble() ??
+              0.0,
       totalSleepMinutes: (map['totalSleepMinutes'] as num?)?.toDouble() ?? 0.0,
       totalSleepHours: (map['totalSleepHours'] as num?)?.toDouble() ?? 0.0,
       stageTotals: SleepStageTotals.fromMap(
         Map<String, dynamic>.from(map['stageTotals'] ?? {}),
       ),
-      fetchedFrom: DateTime.parse(map['fetchedFrom'] as String),
-      fetchedTo: DateTime.parse(map['fetchedTo'] as String),
+      fetchedFrom: fetchedFromStr != null
+          ? DateTime.parse(fetchedFromStr)
+          : DateTime.now().subtract(const Duration(hours: 24)),
+      fetchedTo: fetchedToStr != null
+          ? DateTime.parse(fetchedToStr)
+          : DateTime.now(),
       rawJson: Map<String, dynamic>.from(map),
     );
   }
