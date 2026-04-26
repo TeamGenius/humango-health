@@ -224,8 +224,6 @@ public struct HuWorkout {
             "device_activity_id": deviceActivityId,
             "serial":             deviceActivityId,
             "sport":              sport.name,
-            "distance":           Int(round(distance?.doubleValue(for: .meter()) ?? 0.0)),
-            "duration":           Int(round(duration)),
             "statistics":         formatStatistics(statistics: statistics),
             "metadata":           formatMetadata(metadata: metadata),
             "sessions":           sessions

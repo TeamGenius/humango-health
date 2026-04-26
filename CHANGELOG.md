@@ -1,3 +1,14 @@
+## 1.0.10 — 2026-04-26
+
+### Bug Fixes
+
+#### Multisport workout JSON: removed parent-level `distance` and `duration`
+
+**iOS (`HuWorkout.swift`):**
+- `toMultisportDict()` no longer emits `distance` and `duration` at the top-level workout object. These keys are only meaningful per-session and their presence at the parent level was rejected by the backend. Each session's `distance` and `duration` remain unchanged.
+
+---
+
 ## 1.0.9 — 2026-04-26
 
 ### Features
