@@ -170,7 +170,7 @@ public class SleepDataManager: NSObject, AppLifecycleObserver {
             do {
                 let sleepData = try await fetchSleepData(startDate: startDate, endDate: endDate)
                 DispatchQueue.main.async {
-                    result(sleepData)
+                    result(sleepData?.toDict())
                 }
             } catch {
                 DispatchQueue.main.async {

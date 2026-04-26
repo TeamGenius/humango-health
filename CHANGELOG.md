@@ -1,3 +1,17 @@
+## 1.0.11 — 2026-04-26
+
+### Bug Fixes
+
+#### Sleep data crash: "Unsupported value for standard codec"
+
+**iOS (`SleepDataManager.swift`):**
+- `handleGetSleepData` was passing the raw `HuSleepSession` struct directly to Flutter's `result()` callback. Flutter's standard method codec only supports primitives, arrays, and dictionaries — not custom Swift structs. Now calls `sleepData?.toDict()` before returning.
+
+**iOS (`HuSleepSession.swift`):**
+- Added `sanitizeMetadata(_:formatter:)` to `HuSleepSample` to convert HealthKit metadata values (e.g. `Date` objects) into codec-safe types before serialisation. `Date` → ISO 8601 string, unsupported types → `String(describing:)`.
+
+---
+
 ## 1.0.10 — 2026-04-26
 
 ### Bug Fixes

@@ -110,8 +110,31 @@ public struct HuSleepSample {
             "sourceBundle":    sourceBundle,
         ]
         if let dev = device                     { d["device"]   = dev.toDict() }
-        if let meta = metadata, !meta.isEmpty   { d["metadata"] = meta }
+        if let meta = metadata, !meta.isEmpty   { d["metadata"] = HuSleepSample.sanitizeMetadata(meta, formatter: formatter) }
         return d
+    }
+
+    /// Converts HealthKit metadata values to Flutter-codec-safe types.
+    /// `Date` → ISO8601 string, unsupported types → `String(describing:)`.
+    static func sanitizeMetadata(_ meta: [String: Any], formatter: ISO8601DateFormatter) -> [String: Any] {
+        var sanitized = [String: Any]()
+        for (key, value) in meta {
+            switch value {
+            case let date as Date:
+                sanitized[key] = formatter.string(from: date)
+            case is String, is Int, is Double, is Bool, is Float:
+                sanitized[key] = value
+            case let array as [Any]:
+                sanitized[key] = array.map { item -> Any in
+                    if let date = item as? Date { return formatter.string(from: date) }
+                    if item is String || item is Int || item is Double || item is Bool { return item }
+                    return String(describing: item)
+                }
+            default:
+                sanitized[key] = String(describing: value)
+            }
+        }
+        return sanitized
     }
 }
 
