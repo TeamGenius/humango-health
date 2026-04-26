@@ -1,3 +1,33 @@
+## 1.0.9 — 2026-04-26
+
+### Features
+
+#### Biological sex reading from HealthKit
+
+Added support for reading the user's biological sex characteristic from HealthKit end-to-end.
+
+**iOS (`PermissionManager.swift`):**
+- `readTypes` now includes `HKCharacteristicType.characteristicType(forIdentifier: .biologicalSex)` so the full-type permission request covers biological sex.
+- `filteredReadTypes(for:)` handles the `"HKCharacteristicTypeIdentifierBiologicalSex"` identifier string, allowing targeted permission requests.
+
+**iOS (`HealthMetricsManager.swift`):**
+- New `case "fetchBiologicalSex"` in `handle(_:result:)` routing.
+- New private `handleFetchBiologicalSex(result:)` — reads `healthStore.biologicalSex()` and returns `["biologicalSex": "female" | "male" | "other" | "notSet"]` on the main queue.
+
+**iOS (`HumangoHealthPlugin.swift`):**
+- Added `"fetchBiologicalSex"` and `"fetchLatestHealthMetric"` to the method routing allowlist so both reach `HealthMetricsManager.shared.handle`.
+
+**Dart (`HealthDataType`):**
+- New `biologicalSex` case with identifier `HKCharacteristicTypeIdentifierBiologicalSex` — pass to `requestAuthorization(types:)` to prompt the HealthKit permission sheet.
+
+**Dart (`HealthMetricsManager`):**
+- New `fetchBiologicalSex()` → `Future<String?>` — invokes `fetchBiologicalSex` on the `com.humango.health/metrics` channel and returns one of `"female"`, `"male"`, `"other"`, `"notSet"`, or throws `HealthMetricsException` on error.
+
+**Example app (`health_metrics_screen.dart`):**
+- Biological Sex card added to the Health Metrics Fetch tab with gender-appropriate icon/colour, loading spinner, error display, and a manual refresh button.
+
+---
+
 ## 1.0.8 — 2026-04-25
 
 ### Enhancements

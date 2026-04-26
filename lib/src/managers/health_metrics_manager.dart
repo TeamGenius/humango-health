@@ -186,6 +186,34 @@ class HealthMetricsManager {
     }
   }
 
+  /// Fetch the user's biological sex from HealthKit.
+  ///
+  /// Returns one of: `"female"`, `"male"`, `"other"`, `"notSet"`, or `null`
+  /// if an error occurs.
+  ///
+  /// Requires `HealthDataType.biologicalSex` to have been authorized via
+  /// `requestAuthorization` before calling this method.
+  ///
+  /// Example:
+  /// ```dart
+  /// final sex = await metrics.fetchBiologicalSex();
+  /// print('Biological sex: $sex');
+  /// ```
+  Future<String?> fetchBiologicalSex() async {
+    try {
+      final result = await _channel.invokeMethod<Map<dynamic, dynamic>>(
+        'fetchBiologicalSex',
+      );
+      return result?['biologicalSex'] as String?;
+    } on PlatformException catch (e) {
+      throw HealthMetricsException(
+        code: e.code,
+        message: e.message ?? 'Error fetching biological sex',
+        details: e.details,
+      );
+    }
+  }
+
   // ---------------------------------------------------------------------------
   // Helpers
   // ---------------------------------------------------------------------------

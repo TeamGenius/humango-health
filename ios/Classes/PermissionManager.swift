@@ -100,6 +100,7 @@ public class PermissionManager {
         types.insert(HKObjectType.workoutType())
         types.insert(HKSeriesType.workoutRoute())
         if let st = HKObjectType.categoryType(forIdentifier: .sleepAnalysis) { types.insert(st) }
+        if let bt = HKObjectType.characteristicType(forIdentifier: .biologicalSex) { types.insert(bt) }
         for id in quantityIdentifiers {
             if let q = HKObjectType.quantityType(forIdentifier: id) { types.insert(q) }
         }
@@ -159,7 +160,9 @@ public class PermissionManager {
         }
 
         for identifier in idSet where identifier != "HKWorkoutType" {
-            if let q = HKObjectType.quantityType(forIdentifier: HKQuantityTypeIdentifier(rawValue: identifier)) {
+            if identifier == "HKCharacteristicTypeIdentifierBiologicalSex" {
+                if let bt = HKObjectType.characteristicType(forIdentifier: .biologicalSex) { types.insert(bt) }
+            } else if let q = HKObjectType.quantityType(forIdentifier: HKQuantityTypeIdentifier(rawValue: identifier)) {
                 types.insert(q)
             } else if let c = HKObjectType.categoryType(forIdentifier: HKCategoryTypeIdentifier(rawValue: identifier)) {
                 types.insert(c)

@@ -2,7 +2,7 @@
 
 A comprehensive Flutter plugin for integrating iOS HealthKit and WorkoutKit functionalities natively into the Humango platform.
 
-> **Version 1.0.8** — See [CHANGELOG](CHANGELOG.md) for what's new.
+> **Version 1.0.9** — See [CHANGELOG](CHANGELOG.md) for what's new.
 
 ## Table of Contents
 
@@ -21,6 +21,7 @@ A comprehensive Flutter plugin for integrating iOS HealthKit and WorkoutKit func
 - [Workout Reading & Monitoring](#workout-reading--monitoring)
 - [Sleep Data Reading & Monitoring](#sleep-data-reading--monitoring)
 - [Health Metrics Reading & Monitoring](#health-metrics-reading)
+- [Biological Sex](#biological-sex)
 - [Native iOS Lifecycle Management](#native-ios-lifecycle-management)
 
 ## Features
@@ -33,6 +34,7 @@ A comprehensive Flutter plugin for integrating iOS HealthKit and WorkoutKit func
 | **Workout Reading** | Real-time workout monitoring with foreground/background modes; completed workouts delivered via `HumangoHealthDataDelegate.onWorkoutReady(workout:deviceId:)`; **multisport support** — Triathlon and other multi-activity workouts produce a `sessions` array with per-sub-activity breakdown (sport, duration, distance, events, statistics, series data) |
 | **Sleep Data** | On-demand fetch via `getSleepData` (Flutter) or `HumangoHealthPlugin.shared?.fetchSleep(startDate:endDate:)` → `HuSleepSession` (native iOS); raw sample query via `fetchSleepSamples(startDate,endDate)`; background monitoring (native iOS only — foreground Descriptor + background Observer) delivering finalized sessions via `HumangoHealthDataDelegate.onSleepSessionReady(_ session: HuSleepSession)`; `HuSleepSession.toJson()` serialises with legacy backend key names; grouping-based `calculateSleepPayload` algorithm (gap ≤ 2 h, span ≥ 3 h); Apple-platform source priority (Watch/Health app over third-party, identified by bundle prefix `com.apple.health`); **normalised source name** — Apple-platform samples report `sourceName`/`SOURCE` as `"Apple"` instead of device-specific names; second-based precision for all durations; optimized 6 PM HealthKit query window |
 | **Health Metrics (HRV, RHR, etc.)** | On-demand fetch via `HealthMetricsManager.fetchHealthMetric` (Flutter + native iOS); background monitoring via `HumangoHealthPlugin.shared.startMetricsMonitoring` (native iOS); delivery via `HumangoHealthDataDelegate.onHealthMetricReady` (re-fetched current-day, not delta); HRV and resting HR filtered to Apple-platform sources only (`com.apple.health` prefix) with user-entered samples (`HKMetadataKeyWasUserEntered`) excluded; **normalised source name** — Apple-platform samples report `sourceName` as `"Apple"` instead of device-specific names (e.g. "Varun's Apple Watch") |
+| **Biological Sex** | On-demand read of the user's biological sex from HealthKit via `HealthMetricsManager.fetchBiologicalSex()` (Flutter) or `handleFetchBiologicalSex` (native iOS); returns `"female"`, `"male"`, `"other"`, or `"notSet"`; requires `HealthDataType.biologicalSex` to be included in `requestAuthorization` |
 | **Delegate Delivery** | Workouts and finalized sleep sessions are pushed through **`HumangoHealthDataDelegate`** — no plugin-owned payload queues or HTTP |
 | **Native Lifecycle Management** | Centralized iOS app lifecycle detection for automatic mode switching |
 
@@ -152,3 +154,39 @@ Do **not** set a delegate or call start methods after logout until the user logs
 ---
 
 ## Delegate Delivery
+
+---
+
+## Biological Sex
+
+Read the user's biological sex characteristic from HealthKit.
+
+### Permission
+
+Include `HealthDataType.biologicalSex` in your authorization request:
+
+```dart
+await permissionManager.requestAuthorization(
+  types: [HealthDataType.biologicalSex],
+);
+```
+
+### Flutter usage
+
+```dart
+final metrics = HealthMetricsManager();
+final sex = await metrics.fetchBiologicalSex();
+// Returns: "female" | "male" | "other" | "notSet"
+print('Biological sex: $sex');
+```
+
+### Return values
+
+| Value | Meaning |
+|-------|---------|
+| `"female"` | User has set biological sex to Female in Health app |
+| `"male"` | User has set biological sex to Male in Health app |
+| `"other"` | User has set biological sex to Other |
+| `"notSet"` | User has not set a biological sex value |
+
+> **Note:** `HKBiologicalSex` is a HealthKit *characteristic* — it is not a time-series sample, so there are no date ranges, no samples array, and no monitoring/observer support. A single synchronous read is sufficient.

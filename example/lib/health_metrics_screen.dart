@@ -43,6 +43,11 @@ class _HealthMetricsScreenState extends State<HealthMetricsScreen>
   DateTime? _customStartDate;
   DateTime? _customEndDate;
 
+  // ── Biological sex ────────────────────────────────────────────────────────
+  String? _biologicalSex;
+  bool _biologicalSexLoading = false;
+  String? _biologicalSexError;
+
   // ── Monitor tab ────────────────────────────────────────────────────────────
   final Set<HealthMetricType> _activeMonitors = {};
   final Map<HealthMetricType, HealthMetricResponse?> _todayPreviews = {};
@@ -69,6 +74,7 @@ class _HealthMetricsScreenState extends State<HealthMetricsScreen>
     _tabController = TabController(length: 2, vsync: this);
     WidgetsBinding.instance.addObserver(this);
     _fetchAllMetrics();
+    _fetchBiologicalSex();
   }
 
   @override
@@ -110,6 +116,30 @@ class _HealthMetricsScreenState extends State<HealthMetricsScreen>
       return _customEndDate!;
     }
     return DateTime.now();
+  }
+
+  Future<void> _fetchBiologicalSex() async {
+    setState(() {
+      _biologicalSexLoading = true;
+      _biologicalSexError = null;
+    });
+    try {
+      final sex = await _metricsManager.fetchBiologicalSex();
+      setState(() {
+        _biologicalSex = sex;
+        _biologicalSexLoading = false;
+      });
+    } on HealthMetricsException catch (e) {
+      setState(() {
+        _biologicalSexError = '${e.code}: ${e.message}';
+        _biologicalSexLoading = false;
+      });
+    } catch (e) {
+      setState(() {
+        _biologicalSexError = e.toString();
+        _biologicalSexLoading = false;
+      });
+    }
   }
 
   // ══════════════════════════════════════════════════════════════════════════
@@ -508,6 +538,7 @@ class _HealthMetricsScreenState extends State<HealthMetricsScreen>
             Icons.height,
             Colors.teal,
           ),
+          _buildBiologicalSexCard(),
           if (_allMetrics!.errors.isNotEmpty) ...[
             const SizedBox(height: 16),
             Card(
@@ -533,6 +564,70 @@ class _HealthMetricsScreenState extends State<HealthMetricsScreen>
             ),
           ],
         ],
+      ),
+    );
+  }
+
+  Widget _buildBiologicalSexCard() {
+    final (IconData icon, Color color, String label) = switch (_biologicalSex) {
+      'female' => (Icons.female, Colors.pink, 'Female'),
+      'male'   => (Icons.male,   Colors.blue, 'Male'),
+      'other'  => (Icons.person, Colors.teal, 'Other'),
+      _        => (Icons.person_outline, Colors.grey, 'Not Set'),
+    };
+
+    return Card(
+      margin: const EdgeInsets.only(bottom: 12),
+      child: Padding(
+        padding: const EdgeInsets.all(16),
+        child: Row(
+          children: [
+            CircleAvatar(
+              backgroundColor: color.withValues(alpha: 0.15),
+              child: _biologicalSexLoading
+                  ? SizedBox(
+                      width: 20,
+                      height: 20,
+                      child: CircularProgressIndicator(strokeWidth: 2, color: color),
+                    )
+                  : Icon(icon, color: color),
+            ),
+            const SizedBox(width: 16),
+            Expanded(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  const Text(
+                    'Biological Sex',
+                    style: TextStyle(fontWeight: FontWeight.w600, fontSize: 16),
+                  ),
+                  const SizedBox(height: 4),
+                  if (_biologicalSexLoading)
+                    Text('Loading…', style: TextStyle(color: Colors.grey[400]))
+                  else if (_biologicalSexError != null)
+                    Text(
+                      _biologicalSexError!,
+                      style: const TextStyle(color: Colors.red, fontSize: 12),
+                    )
+                  else
+                    Text(
+                      label,
+                      style: TextStyle(
+                        fontSize: 20,
+                        fontWeight: FontWeight.bold,
+                        color: color,
+                      ),
+                    ),
+                ],
+              ),
+            ),
+            IconButton(
+              icon: const Icon(Icons.refresh, size: 20),
+              tooltip: 'Refresh',
+              onPressed: _biologicalSexLoading ? null : _fetchBiologicalSex,
+            ),
+          ],
+        ),
       ),
     );
   }

@@ -12,6 +12,7 @@ enum HealthDataType {
   respiratoryRate,
   oxygenSaturation,
   distance,
+  biologicalSex,
 }
 
 extension HealthDataTypeExtension on HealthDataType {
@@ -43,6 +44,8 @@ extension HealthDataTypeExtension on HealthDataType {
         return 'HKQuantityTypeIdentifierDistanceWalkingRunning';
       case HealthDataType.workout:
         return 'HKWorkoutType';
+      case HealthDataType.biologicalSex:
+        return 'HKCharacteristicTypeIdentifierBiologicalSex';
     }
   }
 

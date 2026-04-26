@@ -53,6 +53,8 @@ public class HealthMetricsManager: NSObject {
             handleFetchHealthMetric(call, result: result)
         case "fetchLatestHealthMetric":
             handleFetchLatestHealthMetric(call, result: result)
+        case "fetchBiologicalSex":
+            handleFetchBiologicalSex(result: result)
         case "startMetricMonitoring":
             handleStartMonitoring(call, result: result)
         case "stopMetricMonitoring":
@@ -336,6 +338,28 @@ public class HealthMetricsManager: NSObject {
                 DispatchQueue.main.async {
                     result(FlutterError(code: "FETCH_ERROR", message: error.localizedDescription, details: nil))
                 }
+            }
+        }
+    }
+
+    private func handleFetchBiologicalSex(result: @escaping FlutterResult) {
+        guard HKHealthStore.isHealthDataAvailable() else {
+            result(FlutterError(code: "NOT_AVAILABLE", message: "HealthKit is not available on this device", details: nil))
+            return
+        }
+        do {
+            let sex = try healthStore.biologicalSex().biologicalSex
+            let label: String
+            switch sex {
+            case .female:  label = "female"
+            case .male:    label = "male"
+            case .other:   label = "other"
+            default:       label = "notSet"
+            }
+            DispatchQueue.main.async { result(["biologicalSex": label]) }
+        } catch {
+            DispatchQueue.main.async {
+                result(FlutterError(code: "FETCH_ERROR", message: error.localizedDescription, details: nil))
             }
         }
     }

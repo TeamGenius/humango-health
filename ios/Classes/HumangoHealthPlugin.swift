@@ -113,7 +113,7 @@ public class HumangoHealthPlugin: NSObject, FlutterPlugin {
           WorkoutPlanManager.shared.handle(call, result: result)
       } else if ["getSleepData", "calculateSleepPayload", "fetchSleepSamples"].contains(call.method) {
           SleepDataManager.shared.handle(call, result: result)
-      } else if ["fetchHealthMetric", "startMetricMonitoring", "stopMetricMonitoring", "stopAllMetricMonitoring"].contains(call.method) {
+      } else if ["fetchHealthMetric", "fetchLatestHealthMetric", "fetchBiologicalSex", "startMetricMonitoring", "stopMetricMonitoring", "stopAllMetricMonitoring"].contains(call.method) {
           HealthMetricsManager.shared.handle(call, result: result)
       } else {
           result(FlutterMethodNotImplemented)
