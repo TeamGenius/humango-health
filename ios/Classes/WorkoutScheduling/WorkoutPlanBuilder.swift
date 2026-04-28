@@ -528,7 +528,11 @@ class WorkoutPlanBuilder {
             if low > high { swap(&low, &high) }
             if low == high { low *= 0.95; high *= 1.05 }
             guard low > 0 else { return nil }
-            resolved = .power(low...high, unit: .watts, metric: .current)
+            if #available(iOS 17.4, *) {
+                resolved = .power(low...high, unit: .watts, metric: .current)
+            } else {
+                return nil
+            }
 
         default:
             return nil
