@@ -14,20 +14,28 @@ class _RawWorkoutsScreenState extends State<RawWorkoutsScreen> {
 
   bool _isLoading = false;
   String _status = 'Tap Fetch to load workouts';
-  List<String> _rawJsons = [];
+  List<Map<String, dynamic>> _workouts = [];
   List<bool> _expanded = [];
+
+  /// Per-workout detail data (route + samples + activities), loaded on demand.
+  final Map<int, Map<String, dynamic>> _details = {};
+  final Set<int> _detailLoading = {};
 
   DateTimeRange _range = DateTimeRange(
     start: DateTime.now().subtract(const Duration(days: 7)),
     end: DateTime.now(),
   );
 
+  // ── Fetch workout list ──────────────────────────────────────────────────
+
   Future<void> _fetch() async {
     setState(() {
       _isLoading = true;
       _status = 'Fetching…';
-      _rawJsons = [];
+      _workouts = [];
       _expanded = [];
+      _details.clear();
+      _detailLoading.clear();
     });
 
     try {
@@ -39,13 +47,20 @@ class _RawWorkoutsScreenState extends State<RawWorkoutsScreen> {
         },
       );
 
-      final jsons = result?.map((e) => e.toString()).toList() ?? [];
+      final parsed = (result ?? []).map((e) {
+        try {
+          return jsonDecode(e.toString()) as Map<String, dynamic>;
+        } catch (_) {
+          return <String, dynamic>{'_raw': e.toString()};
+        }
+      }).toList();
+
       setState(() {
-        _rawJsons = jsons;
-        _expanded = List.filled(jsons.length, false);
-        _status = jsons.isEmpty
+        _workouts = parsed;
+        _expanded = List.filled(parsed.length, false);
+        _status = parsed.isEmpty
             ? 'No workouts found in selected range'
-            : '${jsons.length} workout(s) found';
+            : '${parsed.length} workout(s) found';
       });
     } on PlatformException catch (e) {
       setState(() => _status = 'Error: ${e.message}');
@@ -53,6 +68,37 @@ class _RawWorkoutsScreenState extends State<RawWorkoutsScreen> {
       setState(() => _isLoading = false);
     }
   }
+
+  // ── Fetch detail (route + samples + activities) on demand ───────────────
+
+  Future<void> _loadDetail(int index) async {
+    if (_details.containsKey(index) || _detailLoading.contains(index)) return;
+    final uuid = _workouts[index]['uuid'] as String?;
+    if (uuid == null) return;
+
+    setState(() => _detailLoading.add(index));
+
+    try {
+      final raw = await _channel.invokeMethod<String>(
+        'fetchRawWorkoutDetail',
+        {'uuid': uuid},
+      );
+      if (raw != null) {
+        final detail = jsonDecode(raw) as Map<String, dynamic>;
+        setState(() => _details[index] = detail);
+      }
+    } on PlatformException catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('Detail error: ${e.message}')),
+        );
+      }
+    } finally {
+      setState(() => _detailLoading.remove(index));
+    }
+  }
+
+  // ── Date range picker ───────────────────────────────────────────────────
 
   Future<void> _pickRange() async {
     final picked = await showDateRangePicker(
@@ -64,30 +110,59 @@ class _RawWorkoutsScreenState extends State<RawWorkoutsScreen> {
     if (picked != null) {
       setState(() {
         _range = picked;
-        _rawJsons = [];
+        _workouts = [];
         _expanded = [];
+        _details.clear();
+        _detailLoading.clear();
         _status = 'Range updated — tap Fetch';
       });
     }
   }
 
-  String _workoutTitle(String rawJson) {
-    try {
-      final map = jsonDecode(rawJson) as Map<String, dynamic>;
-      final type = map['workoutActivityType'] as String? ?? 'Unknown';
-      final start = map['startDate'] as String? ?? '';
-      final shortDate = start.length >= 10 ? start.substring(0, 10) : start;
-      return '$type  ·  $shortDate';
-    } catch (_) {
-      return 'Workout';
+  // ── Helpers ─────────────────────────────────────────────────────────────
+
+  String _workoutTitle(Map<String, dynamic> w) {
+    final type = w['workoutActivityType'] as String? ?? 'Unknown';
+    final start = w['startDate'] as String? ?? '';
+    final shortDate = start.length >= 10 ? start.substring(0, 10) : start;
+    return '$type  ·  $shortDate';
+  }
+
+  String _workoutSubtitle(Map<String, dynamic> w) {
+    final parts = <String>[];
+    final dur = w['durationSeconds'];
+    if (dur is num && dur > 0) {
+      final mins = (dur / 60).round();
+      parts.add('${mins}m');
     }
+    final dist = w['totalDistanceMeters'];
+    if (dist is num && dist > 0) {
+      parts.add('${(dist / 1000).toStringAsFixed(2)} km');
+    }
+    final kcal = w['totalEnergyBurnedKcal'];
+    if (kcal is num && kcal > 0) {
+      parts.add('${kcal.round()} kcal');
+    }
+    final src = w['sourceName'] as String? ?? '';
+    if (src.isNotEmpty) parts.add(src);
+    return parts.join('  ·  ');
+  }
+
+  /// Merge detail into summary for copy-to-clipboard.
+  String _fullJson(int index) {
+    final merged = Map<String, dynamic>.from(_workouts[index]);
+    if (_details.containsKey(index)) {
+      merged.addAll(_details[index]!);
+    }
+    const encoder = JsonEncoder.withIndent('  ');
+    return encoder.convert(merged);
   }
 
   @override
   Widget build(BuildContext context) {
     return Column(
       children: [
-        // ── Controls ────────────────────────────────────────────────────────
+        // ── Controls ──────────────────────────────────────────────────────
         Padding(
           padding: const EdgeInsets.fromLTRB(12, 12, 12, 0),
           child: Row(
@@ -119,7 +194,7 @@ class _RawWorkoutsScreenState extends State<RawWorkoutsScreen> {
             ],
           ),
         ),
-        // ── Status bar ──────────────────────────────────────────────────────
+        // ── Status bar ────────────────────────────────────────────────────
         Padding(
           padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 6),
           child: Align(
@@ -136,9 +211,9 @@ class _RawWorkoutsScreenState extends State<RawWorkoutsScreen> {
           ),
         ),
         const Divider(height: 1),
-        // ── Results ─────────────────────────────────────────────────────────
+        // ── Results ───────────────────────────────────────────────────────
         Expanded(
-          child: _rawJsons.isEmpty
+          child: _workouts.isEmpty
               ? Center(
                   child: Text(
                     _isLoading ? '' : 'No data',
@@ -146,92 +221,312 @@ class _RawWorkoutsScreenState extends State<RawWorkoutsScreen> {
                   ),
                 )
               : ListView.builder(
-                  itemCount: _rawJsons.length,
-                  itemBuilder: (context, i) {
-                    return Card(
-                      margin: const EdgeInsets.symmetric(
-                        horizontal: 10,
-                        vertical: 4,
-                      ),
-                      child: Column(
-                        crossAxisAlignment: CrossAxisAlignment.stretch,
-                        children: [
-                          // Header row
-                          InkWell(
-                            onTap: () => setState(
-                              () => _expanded[i] = !_expanded[i],
-                            ),
-                            child: Padding(
-                              padding: const EdgeInsets.symmetric(
-                                horizontal: 12,
-                                vertical: 10,
-                              ),
-                              child: Row(
-                                children: [
-                                  Expanded(
-                                    child: Text(
-                                      _workoutTitle(_rawJsons[i]),
-                                      style: const TextStyle(
-                                        fontWeight: FontWeight.w600,
-                                        fontSize: 14,
-                                      ),
-                                    ),
-                                  ),
-                                  IconButton(
-                                    tooltip: 'Copy JSON',
-                                    icon: const Icon(Icons.copy, size: 18),
-                                    onPressed: () {
-                                      Clipboard.setData(
-                                        ClipboardData(text: _rawJsons[i]),
-                                      );
-                                      ScaffoldMessenger.of(context)
-                                          .showSnackBar(
-                                        const SnackBar(
-                                          content: Text('JSON copied'),
-                                          duration: Duration(seconds: 1),
-                                        ),
-                                      );
-                                    },
-                                  ),
-                                  Icon(
-                                    _expanded[i]
-                                        ? Icons.keyboard_arrow_up
-                                        : Icons.keyboard_arrow_down,
-                                    size: 20,
-                                    color: Colors.grey[600],
-                                  ),
-                                ],
-                              ),
-                            ),
-                          ),
-                          // Expandable raw JSON
-                          if (_expanded[i])
-                            Container(
-                              decoration: BoxDecoration(
-                                color: Colors.grey[50],
-                                border: Border(
-                                  top: BorderSide(color: Colors.grey[200]!),
-                                ),
-                              ),
-                              padding: const EdgeInsets.all(12),
-                              child: SelectableText(
-                                _rawJsons[i],
-                                style: const TextStyle(
-                                  fontFamily: 'monospace',
-                                  fontSize: 11.5,
-                                  height: 1.5,
-                                ),
-                              ),
-                            ),
-                        ],
-                      ),
-                    );
-                  },
+                  itemCount: _workouts.length,
+                  itemBuilder: (context, i) => _buildWorkoutCard(i),
                 ),
         ),
       ],
     );
   }
+
+  // ── Workout card ────────────────────────────────────────────────────────
+
+  Widget _buildWorkoutCard(int i) {
+    final w = _workouts[i];
+    final detail = _details[i];
+    final isLoadingDetail = _detailLoading.contains(i);
+
+    return Card(
+      margin: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          // Header
+          InkWell(
+            onTap: () => setState(() => _expanded[i] = !_expanded[i]),
+            child: Padding(
+              padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+              child: Row(
+                children: [
+                  Expanded(
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Text(
+                          _workoutTitle(w),
+                          style: const TextStyle(
+                            fontWeight: FontWeight.w600,
+                            fontSize: 14,
+                          ),
+                        ),
+                        const SizedBox(height: 2),
+                        Text(
+                          _workoutSubtitle(w),
+                          style: TextStyle(
+                            fontSize: 12,
+                            color: Colors.grey[600],
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
+                  IconButton(
+                    tooltip: 'Copy JSON',
+                    icon: const Icon(Icons.copy, size: 18),
+                    onPressed: () {
+                      Clipboard.setData(ClipboardData(text: _fullJson(i)));
+                      ScaffoldMessenger.of(context).showSnackBar(
+                        const SnackBar(
+                          content: Text('JSON copied'),
+                          duration: Duration(seconds: 1),
+                        ),
+                      );
+                    },
+                  ),
+                  Icon(
+                    _expanded[i]
+                        ? Icons.keyboard_arrow_up
+                        : Icons.keyboard_arrow_down,
+                    size: 20,
+                    color: Colors.grey[600],
+                  ),
+                ],
+              ),
+            ),
+          ),
+
+          // Expanded content
+          if (_expanded[i]) ...[
+            const Divider(height: 1),
+
+            // Load Detail button
+            if (detail == null)
+              Padding(
+                padding:
+                    const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+                child: FilledButton.icon(
+                  onPressed: isLoadingDetail ? null : () => _loadDetail(i),
+                  icon: isLoadingDetail
+                      ? const SizedBox(
+                          width: 16,
+                          height: 16,
+                          child: CircularProgressIndicator(
+                            strokeWidth: 2,
+                            color: Colors.white,
+                          ),
+                        )
+                      : const Icon(Icons.download, size: 16),
+                  label: Text(
+                    isLoadingDetail
+                        ? 'Loading route & samples…'
+                        : 'Load Detail (Route + Samples)',
+                  ),
+                ),
+              ),
+
+            // Activities section
+            if (detail != null && detail['workoutActivities'] != null)
+              _buildSection(
+                'Workout Activities',
+                Icons.sports_score,
+                _buildActivitiesContent(detail['workoutActivities'] as List),
+              ),
+
+            // Route section
+            if (detail != null && detail['route'] != null)
+              _buildSection(
+                'Route',
+                Icons.route,
+                _buildRouteContent(detail['route'] as List),
+              ),
+
+            // Associated samples section
+            if (detail != null && detail['associatedSamples'] != null)
+              _buildSection(
+                'Associated Samples',
+                Icons.show_chart,
+                _buildSamplesContent(
+                    detail['associatedSamples'] as Map<String, dynamic>),
+              ),
+
+            // Raw JSON (always shown)
+            _buildSection(
+              'Raw JSON',
+              Icons.data_object,
+              Container(
+                constraints: const BoxConstraints(maxHeight: 400),
+                child: SingleChildScrollView(
+                  child: SelectableText(
+                    _fullJson(i),
+                    style: const TextStyle(
+                      fontFamily: 'monospace',
+                      fontSize: 11,
+                      height: 1.5,
+                    ),
+                  ),
+                ),
+              ),
+            ),
+          ],
+        ],
+      ),
+    );
+  }
+
+  // ── Section wrapper ─────────────────────────────────────────────────────
+
+  Widget _buildSection(String title, IconData icon, Widget content) {
+    return Container(
+      decoration: BoxDecoration(
+        color: Colors.grey[50],
+        border: Border(top: BorderSide(color: Colors.grey[200]!)),
+      ),
+      child: ExpansionTile(
+        leading: Icon(icon, size: 18, color: Colors.blueGrey),
+        title: Text(title,
+            style: const TextStyle(fontSize: 13, fontWeight: FontWeight.w600)),
+        childrenPadding:
+            const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+        children: [content],
+      ),
+    );
+  }
+
+  // ── Activities content ──────────────────────────────────────────────────
+
+  Widget _buildActivitiesContent(List activities) {
+    if (activities.isEmpty) {
+      return const Text('No workout activities (single-activity workout)',
+          style: TextStyle(color: Colors.grey, fontSize: 12));
+    }
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Text('${activities.length} activity segment(s)',
+            style: TextStyle(fontSize: 12, color: Colors.grey[700])),
+        const SizedBox(height: 6),
+        ...activities.map<Widget>((a) {
+          final act = a as Map<String, dynamic>;
+          final type = act['workoutActivityType'] ?? 'Unknown';
+          final start = (act['startDate'] as String? ?? '').split('T').first;
+          final dur = act['durationSeconds'];
+          final durStr =
+              dur is num ? '${(dur / 60).round()}m' : '';
+          return Padding(
+            padding: const EdgeInsets.only(bottom: 4),
+            child: Text(
+              '• $type  $start  $durStr',
+              style: const TextStyle(fontFamily: 'monospace', fontSize: 11),
+            ),
+          );
+        }),
+      ],
+    );
+  }
+
+  // ── Route content ───────────────────────────────────────────────────────
+
+  Widget _buildRouteContent(List route) {
+    if (route.isEmpty) {
+      return const Text('No GPS route data for this workout',
+          style: TextStyle(color: Colors.grey, fontSize: 12));
+    }
+    final first = route.first as Map<String, dynamic>;
+    final last = route.last as Map<String, dynamic>;
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Text('${route.length} GPS point(s)',
+            style: TextStyle(
+                fontSize: 12,
+                fontWeight: FontWeight.w600,
+                color: Colors.grey[800])),
+        const SizedBox(height: 6),
+        _kvRow('First',
+            '${_fmtCoord(first['latitude'])} , ${_fmtCoord(first['longitude'])}  alt ${_fmtNum(first['altitude'])}m'),
+        _kvRow('Last',
+            '${_fmtCoord(last['latitude'])} , ${_fmtCoord(last['longitude'])}  alt ${_fmtNum(last['altitude'])}m'),
+        _kvRow('First timestamp', '${first['timestamp'] ?? ''}'),
+        _kvRow('Last timestamp', '${last['timestamp'] ?? ''}'),
+      ],
+    );
+  }
+
+  // ── Samples content ─────────────────────────────────────────────────────
+
+  Widget _buildSamplesContent(Map<String, dynamic> samples) {
+    if (samples.isEmpty) {
+      return const Text('No associated quantity samples',
+          style: TextStyle(color: Colors.grey, fontSize: 12));
+    }
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: samples.entries.map((entry) {
+        final typeId = entry.key;
+        final data = entry.value as Map<String, dynamic>;
+        final count = data['count'] ?? 0;
+        final unit = data['unit'] ?? '';
+        final sampleList = data['samples'] as List? ?? [];
+
+        // Compute min/avg/max from the sample values.
+        double? minVal, maxVal, sumVal;
+        for (final s in sampleList) {
+          final v = (s as Map<String, dynamic>)['value'];
+          if (v is num) {
+            final d = v.toDouble();
+            minVal = (minVal == null || d < minVal) ? d : minVal;
+            maxVal = (maxVal == null || d > maxVal) ? d : maxVal;
+            sumVal = (sumVal ?? 0) + d;
+          }
+        }
+        final avgVal =
+            (sumVal != null && sampleList.isNotEmpty)
+                ? sumVal / sampleList.length
+                : null;
+
+        // Shorten the identifier for display.
+        final shortName = typeId.split('.').last;
+
+        return Padding(
+          padding: const EdgeInsets.only(bottom: 6),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Text(
+                '$shortName  ($count samples, $unit)',
+                style: const TextStyle(
+                    fontWeight: FontWeight.w600,
+                    fontSize: 12,
+                    fontFamily: 'monospace'),
+              ),
+              if (minVal != null)
+                Text(
+                  '  min: ${minVal.toStringAsFixed(2)}  avg: ${avgVal?.toStringAsFixed(2)}  max: ${maxVal?.toStringAsFixed(2)}',
+                  style: TextStyle(
+                      fontSize: 11,
+                      fontFamily: 'monospace',
+                      color: Colors.grey[700]),
+                ),
+            ],
+          ),
+        );
+      }).toList(),
+    );
+  }
+
+  // ── Tiny helpers ────────────────────────────────────────────────────────
+
+  Widget _kvRow(String key, String value) => Padding(
+        padding: const EdgeInsets.only(bottom: 2),
+        child: Text('$key: $value',
+            style: const TextStyle(fontFamily: 'monospace', fontSize: 11)),
+      );
+
+  String _fmtCoord(dynamic v) =>
+      v is num ? v.toStringAsFixed(6) : v.toString();
+
+  String _fmtNum(dynamic v) =>
+      v is num ? v.toStringAsFixed(1) : v.toString();
 
   String _fmtDate(DateTime d) =>
       '${d.year}-${d.month.toString().padLeft(2, '0')}-${d.day.toString().padLeft(2, '0')}';

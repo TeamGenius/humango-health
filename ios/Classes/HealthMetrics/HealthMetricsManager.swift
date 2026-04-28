@@ -459,7 +459,7 @@ public class HealthMetricsManager: NSObject {
         let filteredSamples: [HKQuantitySample]
         if metricType.requiresAppleSourceFilter {
             let appleSamples = samples.filter {
-                $0.sourceRevision.source.bundleIdentifier.hasPrefix("com.apple.health")
+                $0.sourceRevision.source.bundleIdentifier.lowercased().hasPrefix("com.apple.health")
             }
             filteredSamples = appleSamples.isEmpty ? samples : appleSamples
             if !appleSamples.isEmpty && appleSamples.count < samples.count {

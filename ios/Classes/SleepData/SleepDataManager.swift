@@ -323,7 +323,7 @@ public class SleepDataManager: NSObject, AppLifecycleObserver {
         // Build the per-sample list using the same Apple-source filter applied
         // internally by calculateSleepPayload so sample list and totals are consistent.
         let appleSamples = rawSamples.filter {
-            $0.sourceRevision.source.bundleIdentifier.hasPrefix("com.apple.health")
+            $0.sourceRevision.source.bundleIdentifier.lowercased().hasPrefix("com.apple.health")
         }
         let filteredSamples: [HKCategorySample] = appleSamples.isEmpty ? rawSamples : appleSamples
         let huSamples = filteredSamples.map { convertSampleToHuSleepSample($0) }
@@ -746,14 +746,14 @@ public class SleepDataManager: NSObject, AppLifecycleObserver {
 
         // ── Tier 1: Apple-platform source priority ─────────────────────────────
         let appleSamples = samples.filter {
-            $0.sourceRevision.source.bundleIdentifier.hasPrefix("com.apple.health")
+            $0.sourceRevision.source.bundleIdentifier.lowercased().hasPrefix("com.apple.health")
         }
         if !appleSamples.isEmpty {
             let droppedCount = samples.count - appleSamples.count
             if droppedCount > 0 {
                 let droppedBundles = Set(
                     samples
-                        .filter { !$0.sourceRevision.source.bundleIdentifier.hasPrefix("com.apple.health") }
+                        .filter { !$0.sourceRevision.source.bundleIdentifier.lowercased().hasPrefix("com.apple.health") }
                         .map { $0.sourceRevision.source.bundleIdentifier }
                 )
                 debugPrint("🛏️ [SleepDataManager] calculateSleepPayload: Tier 1 — dropped \(droppedCount) third-party sample(s) from: \(droppedBundles.joined(separator: ", "))")

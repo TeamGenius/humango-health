@@ -1,3 +1,14 @@
+## 1.0.12 — 2026-04-28
+
+### Improvements
+
+#### Multisport: move series_data to parent level
+
+**iOS (`HuWorkout.swift`):**
+- `toMultisportDict()` now emits `series_data` (quantity samples + GPS locations) at the parent-level workout object instead of duplicating it into every session. Sessions no longer carry `series_data` — the Dart `WorkoutSession` fields (`quantitySeries`, `route`) gracefully default to empty lists. Single-sport workouts are unaffected.
+
+---
+
 ## 1.0.11 — 2026-04-26
 
 ### Bug Fixes

@@ -211,8 +211,7 @@ public struct HuWorkout {
                 "duration":           Int(round(activityDuration)),
                 "events":             activityEvents,
                 "metadata":           formatMetadata(metadata: activity.metadata),
-                "statistics":         activityStats,
-                "series_data":        seriesData
+                "statistics":         activityStats
             ]
             sessions.append(session)
         }
@@ -226,6 +225,7 @@ public struct HuWorkout {
             "sport":              sport.name,
             "statistics":         formatStatistics(statistics: statistics),
             "metadata":           formatMetadata(metadata: metadata),
+            "series_data":        seriesData,
             "sessions":           sessions
         ]
     }
