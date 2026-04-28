@@ -1,3 +1,15 @@
+## 1.0.13 — 2026-04-28
+
+### Changes
+
+#### Lower iOS deployment target from 18.0 to 17.0
+
+- Podspec platform set to `ios, '17.0'`
+- Example app Xcode project `IPHONEOS_DEPLOYMENT_TARGET` updated to `17.0` (all build configs)
+- No code changes required — all HealthKit and WorkoutKit APIs used are available on iOS 17.0 or earlier
+
+---
+
 ## 1.0.12 — 2026-04-28
 
 ### Improvements
