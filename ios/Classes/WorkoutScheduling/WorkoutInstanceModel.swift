@@ -143,7 +143,6 @@ enum Sport: String, Codable, CaseIterable {
     case volleyball        = "VOLLEYBALL"
     case handball          = "HANDBALL"
     case basketball        = "BASKETBALL"
-    case multisport        = "MULTISPORT"
     case elliptical        = "ELLIPTICAL"
 }
 
@@ -177,7 +176,6 @@ extension Sport {
         case .volleyball:        return .volleyball
         case .handball:          return .handball
         case .basketball:        return .basketball
-        case .multisport:        return .swimBikeRun
         case .elliptical:        return .elliptical
         }
     }
