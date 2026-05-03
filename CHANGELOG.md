@@ -1,3 +1,23 @@
+## 1.0.14 — 2026-05-03
+
+### Features
+
+#### Swimming workouts now use CustomWorkout (structured blocks support)
+
+Swimming variants (`swimming`, `poolSwimming`, `openWaterSwimming`) previously routed to `SingleGoalWorkout`, limiting them to a single distance or time goal. They now use the unified `CustomWorkout` builder, gaining full structured-workout support.
+
+**iOS (`WorkoutPlanBuilder.swift`):**
+- All swimming variants route through `buildCustomWorkoutItem` instead of `SingleGoalWorkout`, gaining warmup/cooldown steps, interval blocks with repeats, and pace/HR/power alerts.
+- New `resolveSwimmingLocation(_:)` — derives `HKWorkoutSessionLocationType` from `Sport.impliedLocation` (`poolSwimming` → `.indoor`, `openWaterSwimming` → `.outdoor`), then `poolSize` presence (→ `.indoor`), then `summary.indoorOutdoor`, falling back to `.unknown`. This skips the "Pool or Open Water?" Apple Watch prompt when the answer is already known.
+- New `resolveSwimmingMeasurementUnit(_:)` — infers `"meter"` or `"yard"` from the `pool_size` string (e.g. `"25m"` → meter, `"25y"` → yard), falling back to `summary.measurementUnit`.
+- Empty-blocks fallback: swimming workouts with no structured blocks produce a single-interval `CustomWorkout` using the pool-size-aware measurement unit.
+
+**iOS (`WorkoutInstanceModel.swift`):**
+- `Sport.isSwimmingType` — returns `true` for `swimming`, `poolSwimming`, `openWaterSwimming`.
+- `Sport.impliedLocation` — returns `.indoor` for `poolSwimming`, `.outdoor` for `openWaterSwimming`, `nil` otherwise.
+
+---
+
 ## 1.0.13 — 2026-04-28
 
 ### Changes

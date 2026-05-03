@@ -26,7 +26,7 @@ Create Dart equivalents for all WorkoutKit classes:
 |---------------------|------------|---------|
 | `WorkoutPlan` | `WorkoutPlan` | Container for scheduled workout |
 | `CustomWorkout` | `CustomWorkout` | Multi-step custom workout structure |
-| `SingleGoalWorkout` | `SingleGoalWorkout` | Simple single-goal workout (swimming) |
+| `SingleGoalWorkout` | `SingleGoalWorkout` | Simple single-goal workout (no longer used for swimming — see below) |
 | `SwimBikeRunWorkout` | `SwimBikeRunWorkout` | Triathlon multi-sport workout |
 | `WorkoutStep` | `WorkoutStep` | Individual workout step/segment |
 | `IntervalBlock` | `IntervalBlock` | Repeating interval block |
@@ -36,7 +36,7 @@ Create Dart equivalents for all WorkoutKit classes:
 
 #### 3. Workout Type Mapping
 
-- **Swimming workouts** → `SingleGoalWorkout`
+- **Swimming workouts** → `CustomWorkout` (with swimming-specific location and measurement-unit resolution via `resolveSwimmingLocation` / `resolveSwimmingMeasurementUnit`)
 - **All other activities** (running, cycling, HIIT, strength, etc.) → `CustomWorkout`
 - **Triathlon workouts** → `SwimBikeRunWorkout`
 
