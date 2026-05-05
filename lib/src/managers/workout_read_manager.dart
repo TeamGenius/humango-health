@@ -45,22 +45,8 @@ class WorkoutReadManager {
     return [];
   }
 
-  /// Set workout type import preferences
-  /// Controls which workout types should be imported during fetch/monitoring
-  Future<void> setImportPreferences({
-    required bool running,
-    required bool cycling,
-    required bool swimming,
-  }) async {
-    final args = {'running': running, 'cycling': cycling, 'swimming': swimming};
-    await _methodChannel.invokeMethod('setImportPreferences', args);
-  }
-
-  /// Fetches all workouts in the given date range directly from HealthKit,
-  /// without applying the user's import preferences. Every matching workout type
-  /// is returned.
-  ///
-  /// Use this when you need an unfiltered snapshot (e.g. audit, re-sync).
+  /// Fetches all workouts in the given date range directly from HealthKit.
+  /// Every matching workout type is returned.
   Future<List<String>> fetchAllWorkouts(
     DateTime startDate, {
     DateTime? endDate,

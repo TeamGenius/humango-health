@@ -14,21 +14,6 @@ public class WorkoutServiceChannel: NSObject {
     private let workoutAnchoredBatchLimit = 100
     private var healthStore: HKHealthStore { SharedHealthKitStore.shared }
     
-    // User preferences for workout filtering
-    private var unImportWorkout: [String] {
-        var excluded: [String] = []
-        if !(UserDefaults.standard.object(forKey: UserDefaultsKeys.isImportRunning) as? Bool ?? true) {
-            excluded.append("Running")
-        }
-        if !(UserDefaults.standard.object(forKey: UserDefaultsKeys.isImportCycling) as? Bool ?? true) {
-            excluded.append("Cycling")
-        }
-        if !(UserDefaults.standard.object(forKey: UserDefaultsKeys.isImportSwimming) as? Bool ?? true) {
-            excluded.append("Swimming")
-        }
-        return excluded
-    }
-    
     func handle(_ call: FlutterMethodCall, result: @escaping FlutterResult) {
         switch call.method {
         case "readWorkouts":
@@ -37,8 +22,7 @@ public class WorkoutServiceChannel: NSObject {
             handleStartMonitoring(call, result)
         case "stopWorkoutMonitoring":
             handleStopMonitoring(result)
-        case "setImportPreferences":
-            handleSetImportPreferences(call, result)
+
         case "fetchAllWorkouts":
             handleFetchAllWorkouts(call, result)
         default:
@@ -97,9 +81,6 @@ public class WorkoutServiceChannel: NSObject {
             options: []
         )
         
-        let excludedTypes = unImportWorkout
-        debugPrint("Read Workouts: Excluded workout types: \(excludedTypes)")
-        
         repeat {
             batchNumber += 1
             // Create a query descriptor that reads a batch of matching samples
@@ -120,12 +101,6 @@ public class WorkoutServiceChannel: NSObject {
                 // Skip incomplete workouts
                 guard workout.endDate > workout.startDate else {
                     debugPrint("Read Workouts: Skipping incomplete workout: \(workout.uuid.uuidString)")
-                    continue
-                }
-                
-                // Filter based on user preferences
-                if excludedTypes.contains(workout.workoutActivityType.name) {
-                    debugPrint("Read Workouts: Skipping due to preferences: \(workout.workoutActivityType.name)")
                     continue
                 }
                 
@@ -392,24 +367,7 @@ public class WorkoutServiceChannel: NSObject {
         result(nil)
     }
     
-    private func handleSetImportPreferences(_ call: FlutterMethodCall, _ result: @escaping FlutterResult) {
-        guard let args = call.arguments as? [String: Bool] else {
-            result(FlutterError(code: "INVALID_ARGS", message: "Missing or invalid preferences", details: nil))
-            return
-        }
-        
-        let running = args["running"] ?? true
-        let cycling = args["cycling"] ?? true
-        let swimming = args["swimming"] ?? true
-        
-        UserDefaults.standard.set(running, forKey: UserDefaultsKeys.isImportRunning)
-        UserDefaults.standard.set(cycling, forKey: UserDefaultsKeys.isImportCycling)
-        UserDefaults.standard.set(swimming, forKey: UserDefaultsKeys.isImportSwimming)
-        UserDefaults.standard.synchronize()
-        
-        debugPrint("Read Workouts: Import preferences updated - Running: \(running), Cycling: \(cycling), Swimming: \(swimming)")
-        result(nil)
-    }
+
 
     // MARK: - Fetch All Workouts (no preference filter)
 
@@ -514,8 +472,7 @@ public class WorkoutServiceChannel: NSObject {
     // MARK: - Public Native iOS Workout Read API
 
     /// Fetch completed workouts within a date range and return them as JSON strings.
-    /// Applies the user's import preferences (running / cycling / swimming exclusions)
-    /// identical to the Flutter `readWorkouts` method channel call.
+    /// All workout types are returned — filtering is the client's responsibility.
     ///
     /// ```swift
     /// let end   = Date()

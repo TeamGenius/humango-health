@@ -2,7 +2,7 @@
 
 A comprehensive Flutter plugin for integrating iOS HealthKit and WorkoutKit functionalities natively into the Humango platform.
 
-> **Version 1.0.10** — See [CHANGELOG](CHANGELOG.md) for what's new.
+> **Version 1.0.15** — See [CHANGELOG](CHANGELOG.md) for what's new.
 
 ## Table of Contents
 
@@ -15,6 +15,7 @@ A comprehensive Flutter plugin for integrating iOS HealthKit and WorkoutKit func
 - [Delegate Delivery](#delegate-delivery)
 - [Permission Handling](#permission-handling)
 - [Workout Scheduling (Push)](#push-workouts-scheduling)
+  - [Supported Sports](#supported-sports-workout-push)
   - [Swimming Workouts & Pool Size](#swimming-workouts--pool-size)
   - [Removing Scheduled Workouts](#removing-scheduled-workouts)
   - [Remove All Scheduled Workouts](#remove-all-scheduled-workouts)
@@ -154,6 +155,27 @@ Do **not** set a delegate or call start methods after logout until the user logs
 ---
 
 ## Delegate Delivery
+
+---
+
+## Supported Sports (Workout Push)
+
+The plugin supports scheduling the following sports to Apple Watch via WorkoutKit. The `sport` field in push payloads must be one of these values (SCREAMING_SNAKE_CASE):
+
+| Sport Key | JSON Value | HKWorkoutActivityType | Notes |
+|-----------|-----------|----------------------|-------|
+| `running` | `RUNNING` | `.running` | |
+| `cycling` | `CYCLING` | `.cycling` | |
+| `swimming` | `SWIMMING` | `.swimming` | Location derived from `pool_size` or `indoor_outdoor` |
+| `poolSwimming` | `POOL_SWIMMING` | `.swimming` | Location forced to `.indoor` |
+| `openWaterSwimming` | `OPEN_WATER_SWIMMING` | `.swimming` | Location forced to `.outdoor` |
+| `strength` | `STRENGTH` | `.traditionalStrengthTraining` | |
+| `hiking` | `HIKING` | `.hiking` | |
+| `walking` | `WALKING` | `.walking` | |
+| `rowing` | `ROWING` | `.rowing` | |
+| `elliptical` | `ELLIPTICAL` | `.elliptical` | |
+
+> **Note:** Unsupported sport values in the push JSON will cause a decoding error. For workout **reading**, all HealthKit activity types are supported — the restriction above applies only to push/scheduling.
 
 ---
 

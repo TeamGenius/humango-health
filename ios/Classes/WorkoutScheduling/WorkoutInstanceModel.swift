@@ -119,31 +119,12 @@ enum Sport: String, Codable, CaseIterable {
     case running           = "RUNNING"
     case cycling           = "CYCLING"
     case swimming          = "SWIMMING"
+    case poolSwimming      = "POOL_SWIMMING"
+    case openWaterSwimming = "OPEN_WATER_SWIMMING"
     case strength          = "STRENGTH"
     case hiking            = "HIKING"
     case walking           = "WALKING"
-    case yoga              = "YOGA"
-    case paddling          = "PADDLING"
-    case alpineSkiing      = "ALPINE_SKIING"
     case rowing            = "ROWING"
-    case cardio            = "CARDIO"
-    case nordicSkiing      = "NORDIC_SKIING"
-    case snowshoeing       = "SNOWSHOEING"
-    case poolSwimming      = "POOL_SWIMMING"
-    case openWaterSwimming = "OPEN_WATER_SWIMMING"
-    case hiit              = "HIIT"
-    case hyrox             = "HYROX"
-    case soccer            = "SOCCER"
-    case tennis            = "TENNIS"
-    case squash            = "SQUASH"
-    case pickleball        = "PICKLEBALL"
-    case badminton         = "BADMINTON"
-    case baseball          = "BASEBALL"
-    case hockey            = "HOCKEY"
-    case volleyball        = "VOLLEYBALL"
-    case handball          = "HANDBALL"
-    case basketball        = "BASKETBALL"
-    case multisport        = "MULTISPORT"
     case elliptical        = "ELLIPTICAL"
 }
 
@@ -159,25 +140,7 @@ extension Sport {
         case .strength:          return .traditionalStrengthTraining
         case .hiking:            return .hiking
         case .walking:           return .walking
-        case .yoga:              return .yoga
-        case .paddling:          return .paddleSports
-        case .alpineSkiing:      return .downhillSkiing
         case .rowing:            return .rowing
-        case .cardio:            return .mixedCardio
-        case .nordicSkiing:      return .crossCountrySkiing
-        case .snowshoeing:       return .snowSports
-        case .hiit, .hyrox:      return .highIntensityIntervalTraining
-        case .soccer:            return .soccer
-        case .tennis:            return .tennis
-        case .squash:            return .squash
-        case .pickleball:        return .pickleball
-        case .badminton:         return .badminton
-        case .baseball:          return .baseball
-        case .hockey:            return .hockey
-        case .volleyball:        return .volleyball
-        case .handball:          return .handball
-        case .multisport:        return .swimBikeRun
-        case .basketball:        return .basketball
         case .elliptical:        return .elliptical
         }
     }
@@ -189,9 +152,6 @@ extension Sport {
         default: return false
         }
     }
-
-    /// True for multisport (requires SwimBikeRunWorkout builder — not yet implemented).
-    var isMultisport: Bool { self == .multisport }
 
     /// Explicit location override for swimming variants.
     /// `.poolSwimming` → `.indoor`, `.openWaterSwimming` → `.outdoor`, everything else → `nil`.

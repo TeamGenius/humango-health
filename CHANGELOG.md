@@ -1,3 +1,29 @@
+## 1.0.15 — 2026-05-05
+
+### Changes
+
+#### Trimmed Sport enum to supported sports only
+
+The `Sport` enum (workout push model) now contains only the 10 sports actually supported for scheduling to Apple Watch. Unsupported sports have been removed — sending an unsupported sport value in push JSON will cause a decoding error.
+
+**Supported sports:** `RUNNING`, `CYCLING`, `SWIMMING`, `POOL_SWIMMING`, `OPEN_WATER_SWIMMING`, `STRENGTH`, `HIKING`, `WALKING`, `ROWING`, `ELLIPTICAL`
+
+**Removed (19):** `YOGA`, `PADDLING`, `ALPINE_SKIING`, `CARDIO`, `NORDIC_SKIING`, `SNOWSHOEING`, `HIIT`, `HYROX`, `SOCCER`, `TENNIS`, `SQUASH`, `PICKLEBALL`, `BADMINTON`, `BASEBALL`, `HOCKEY`, `VOLLEYBALL`, `HANDBALL`, `BASKETBALL`, `MULTISPORT`
+
+**iOS (`WorkoutInstanceModel.swift`):**
+- Removed 19 cases from the `Sport` enum and their `hkWorkoutType` switch arms.
+- Removed `isMultisport` property (`.multisport` case no longer exists).
+
+**Dart (`workout_enums.dart`):**
+- Removed 19 cases from `AppleSport` enum, `jsonValue` getter, and `fromJsonValue` factory.
+
+**README:**
+- Added "Supported Sports (Workout Push)" section documenting the 10 valid push sport values and their HKWorkoutActivityType mappings.
+
+> **Note:** Workout *reading* remains unaffected — all HealthKit activity types are still supported for reading via `HKWorkoutActivityType.name`.
+
+---
+
 ## 1.0.14 — 2026-05-03
 
 ### Features
@@ -15,6 +41,32 @@ Swimming variants (`swimming`, `poolSwimming`, `openWaterSwimming`) previously r
 **iOS (`WorkoutInstanceModel.swift`):**
 - `Sport.isSwimmingType` — returns `true` for `swimming`, `poolSwimming`, `openWaterSwimming`.
 - `Sport.impliedLocation` — returns `.indoor` for `poolSwimming`, `.outdoor` for `openWaterSwimming`, `nil` otherwise.
+
+#### Sport names now use camelCase backend keys
+
+The `"sport"` field in workout payloads (`HuWorkout.toDict()`, `toMultisportDict()`) now emits camelCase keys matching the backend mapping (e.g. `"functionalStrengthTraining"` instead of `"Functional Strength Training"`, `"highIntensityIntervalTraining"` instead of `"HIIT"`, `"swimBikeRun"` instead of `"Triathlon"`).
+
+**iOS (`HKWorkoutActivityType+Extensions.swift`):**
+- Rewrote `HKWorkoutActivityType.name` to return camelCase backend keys for all 90+ activity types.
+- Added missing sports: `cricket`, `underwaterDiving`, `transition`, `cardioDance`, `socialDance`.
+- Default/unknown types now return `"other"`.
+
+**iOS (`WorkoutServiceChannel.swift`):**
+- Removed `unImportWorkout` filtering logic and `handleSetImportPreferences` — workout type filtering is now the client app's responsibility.
+- `readWorkouts` now returns all workout types (same as `fetchAllWorkouts`).
+
+**iOS (`UserDefaultsKeys.swift`):**
+- Removed `isImportRunning`, `isImportCycling`, `isImportSwimming` keys.
+
+**iOS (`HumangoHealthPlugin.swift`):**
+- Removed `setImportPreferences` from method channel routing.
+
+**Dart (`WorkoutReadManager`):**
+- Removed `setImportPreferences()` method.
+- Updated `fetchAllWorkouts()` doc comment (no longer references import preferences).
+
+**Example app (`RawWorkoutsChannel.swift`):**
+- Updated `activityTypeName(_:)` to return camelCase keys consistent with the main plugin.
 
 ---
 

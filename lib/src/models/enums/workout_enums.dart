@@ -68,7 +68,7 @@ enum WorkoutAlertType { heartRate, pace, power, cadence, time, distance }
 enum WorkoutAlertMetric { current, average, zone }
 
 /// Represents a sport type for the `sport` field in raw workout push JSON.
-/// Mirrors the iOS native `Sport` enum exactly — 28 cases.
+/// Mirrors the iOS native `Sport` enum exactly — 10 supported cases.
 /// Use [jsonValue] when building push payloads; use [AppleSportExtension.fromJsonValue]
 /// when parsing received workout data (e.g. [ScheduledWorkoutInfo.sport]).
 enum AppleSport {
@@ -80,26 +80,7 @@ enum AppleSport {
   strength,
   hiking,
   walking,
-  yoga,
-  paddling,
-  alpineSkiing,
   rowing,
-  cardio,
-  nordicSkiing,
-  snowshoeing,
-  hiit,
-  hyrox,
-  soccer,
-  tennis,
-  squash,
-  pickleball,
-  badminton,
-  baseball,
-  hockey,
-  volleyball,
-  handball,
-  basketball,
-  multisport,
   elliptical,
 }
 
@@ -125,46 +106,8 @@ extension AppleSportExtension on AppleSport {
         return 'HIKING';
       case AppleSport.walking:
         return 'WALKING';
-      case AppleSport.yoga:
-        return 'YOGA';
-      case AppleSport.paddling:
-        return 'PADDLING';
-      case AppleSport.alpineSkiing:
-        return 'ALPINE_SKIING';
       case AppleSport.rowing:
         return 'ROWING';
-      case AppleSport.cardio:
-        return 'CARDIO';
-      case AppleSport.nordicSkiing:
-        return 'NORDIC_SKIING';
-      case AppleSport.snowshoeing:
-        return 'SNOWSHOEING';
-      case AppleSport.hiit:
-        return 'HIIT';
-      case AppleSport.hyrox:
-        return 'HYROX';
-      case AppleSport.soccer:
-        return 'SOCCER';
-      case AppleSport.tennis:
-        return 'TENNIS';
-      case AppleSport.squash:
-        return 'SQUASH';
-      case AppleSport.pickleball:
-        return 'PICKLEBALL';
-      case AppleSport.badminton:
-        return 'BADMINTON';
-      case AppleSport.baseball:
-        return 'BASEBALL';
-      case AppleSport.hockey:
-        return 'HOCKEY';
-      case AppleSport.volleyball:
-        return 'VOLLEYBALL';
-      case AppleSport.handball:
-        return 'HANDBALL';
-      case AppleSport.basketball:
-        return 'BASKETBALL';
-      case AppleSport.multisport:
-        return 'MULTISPORT';
       case AppleSport.elliptical:
         return 'ELLIPTICAL';
     }
@@ -191,46 +134,8 @@ extension AppleSportExtension on AppleSport {
         return AppleSport.hiking;
       case 'WALKING':
         return AppleSport.walking;
-      case 'YOGA':
-        return AppleSport.yoga;
-      case 'PADDLING':
-        return AppleSport.paddling;
-      case 'ALPINE_SKIING':
-        return AppleSport.alpineSkiing;
       case 'ROWING':
         return AppleSport.rowing;
-      case 'CARDIO':
-        return AppleSport.cardio;
-      case 'NORDIC_SKIING':
-        return AppleSport.nordicSkiing;
-      case 'SNOWSHOEING':
-        return AppleSport.snowshoeing;
-      case 'HIIT':
-        return AppleSport.hiit;
-      case 'HYROX':
-        return AppleSport.hyrox;
-      case 'SOCCER':
-        return AppleSport.soccer;
-      case 'TENNIS':
-        return AppleSport.tennis;
-      case 'SQUASH':
-        return AppleSport.squash;
-      case 'PICKLEBALL':
-        return AppleSport.pickleball;
-      case 'BADMINTON':
-        return AppleSport.badminton;
-      case 'BASEBALL':
-        return AppleSport.baseball;
-      case 'HOCKEY':
-        return AppleSport.hockey;
-      case 'VOLLEYBALL':
-        return AppleSport.volleyball;
-      case 'HANDBALL':
-        return AppleSport.handball;
-      case 'BASKETBALL':
-        return AppleSport.basketball;
-      case 'MULTISPORT':
-        return AppleSport.multisport;
       case 'ELLIPTICAL':
         return AppleSport.elliptical;
       default:

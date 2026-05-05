@@ -106,7 +106,7 @@ public class HumangoHealthPlugin: NSObject, FlutterPlugin {
       } else if call.method == "requestAuthorization" {
           let types = (call.arguments as? [String: Any])?["types"] as? [String]
           PermissionManager.shared.requestAuthorization(typeIdentifiers: types, result: result)
-      } else if ["readWorkouts", "startWorkoutMonitoring", "stopWorkoutMonitoring", "setImportPreferences", "fetchAllWorkouts"].contains(call.method) {
+      } else if ["readWorkouts", "startWorkoutMonitoring", "stopWorkoutMonitoring", "fetchAllWorkouts"].contains(call.method) {
           // Workout read channel
           workoutReadChannel.handle(call, result: result)
       } else if ["scheduleWorkoutsFromFlutter", "clearAppleScheduledWorkouts", "requestAuthorizationForWorkoutPush", "getScheduledWorkouts", "computeWorkoutJsonHash", "removeAllScheduledWorkouts", "removeScheduledWorkouts"].contains(call.method) {
