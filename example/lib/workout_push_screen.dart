@@ -210,6 +210,47 @@ class _WorkoutPushScreenState extends State<WorkoutPushScreen> {
       ],
     ),
     _Scenario(
+      label: 'Swimming — Open Water',
+      icon: Icons.waves,
+      color: Colors.blue.shade800,
+      workouts: [
+        {
+          'schedule_id': 'swim-ow-test-001',
+          'sport': 'SWIMMING',
+          'distance': 2000.0,
+          'duration': 3600,
+          'summary': {
+            'name': 'Test: Open Water Swim',
+            'sport': 'SWIMMING',
+            'indoor_outdoor': 'OUTDOOR',
+            'measurement_unit': 'meter',
+          },
+          'blocks': [
+            {
+              'type': 'WARMUP',
+              'duration': 600,
+              'distance': 400.0,
+              'measurement_unit': 'meter',
+            },
+            {
+              'type': 'INTERVAL',
+              'duration': 2400,
+              'distance': 1200.0,
+              'measurement_unit': 'meter',
+              'zone_unit': 'HR',
+              'target_range': {'low': 135, 'high': 165},
+            },
+            {
+              'type': 'COOLDOWN',
+              'duration': 600,
+              'distance': 400.0,
+              'measurement_unit': 'meter',
+            },
+          ],
+        },
+      ],
+    ),
+    _Scenario(
       label: 'Warmup only',
       icon: Icons.whatshot,
       color: Colors.orange,
@@ -721,6 +762,180 @@ class _WorkoutPushScreenState extends State<WorkoutPushScreen> {
       ],
     ),
     // ── End unit display scenarios ─────────────────────────────────────────
+    // ── Indoor / Outdoor location scenarios ───────────────────────────────
+    _Scenario(
+      label: 'Outdoor Running',
+      icon: Icons.directions_run,
+      color: Colors.lightGreen.shade700,
+      workouts: [
+        {
+          'schedule_id': 'run-outdoor-test-001',
+          'sport': 'RUNNING',
+          'duration': 1800,
+          'distance': 5000.0,
+          'summary': {
+            'name': 'Test: Outdoor Run',
+            'sport': 'RUNNING',
+            'indoor_outdoor': 'OUTDOOR',
+            'measurement_unit': 'second',
+          },
+          'blocks': [
+            {
+              'type': 'WARMUP',
+              'duration': 300,
+              'distance': 800.0,
+              'measurement_unit': 'second',
+              'zone_unit': 'PACE',
+              'target_range': {'low': 600, 'high': 480},
+            },
+            {
+              'type': 'INTERVAL',
+              'duration': 1200,
+              'distance': 3500.0,
+              'measurement_unit': 'second',
+              'zone_unit': 'HR',
+              'target_range': {'low': 140, 'high': 165},
+            },
+            {
+              'type': 'COOLDOWN',
+              'duration': 300,
+              'distance': 700.0,
+              'measurement_unit': 'second',
+              'zone_unit': 'PACE',
+              'target_range': {'low': 720, 'high': 540},
+            },
+          ],
+        },
+      ],
+    ),
+    _Scenario(
+      label: 'Indoor Running (Treadmill)',
+      icon: Icons.directions_run,
+      color: Colors.deepPurple.shade400,
+      workouts: [
+        {
+          'schedule_id': 'run-indoor-test-001',
+          'sport': 'RUNNING',
+          'duration': 1800,
+          'summary': {
+            'name': 'Test: Indoor Run',
+            'sport': 'RUNNING',
+            'indoor_outdoor': 'INDOOR',
+            'measurement_unit': 'second',
+          },
+          'blocks': [
+            {
+              'type': 'WARMUP',
+              'duration': 300,
+              'measurement_unit': 'second',
+              'zone_unit': 'HR',
+              'target_range': {'low': 110, 'high': 130},
+            },
+            {
+              'type': 'INTERVAL',
+              'duration': 1200,
+              'measurement_unit': 'second',
+              'zone_unit': 'HR',
+              'target_range': {'low': 140, 'high': 165},
+            },
+            {
+              'type': 'COOLDOWN',
+              'duration': 300,
+              'measurement_unit': 'second',
+              'zone_unit': 'HR',
+              'target_range': {'low': 100, 'high': 125},
+            },
+          ],
+        },
+      ],
+    ),
+    _Scenario(
+      label: 'Outdoor Cycling',
+      icon: Icons.directions_bike,
+      color: Colors.blueGrey.shade700,
+      workouts: [
+        {
+          'schedule_id': 'cycle-outdoor-test-001',
+          'sport': 'CYCLING',
+          'duration': 2700,
+          'distance': 20000.0,
+          'summary': {
+            'name': 'Test: Outdoor Cycle',
+            'sport': 'CYCLING',
+            'indoor_outdoor': 'OUTDOOR',
+            'measurement_unit': 'second',
+          },
+          'blocks': [
+            {
+              'type': 'WARMUP',
+              'duration': 600,
+              'distance': 4000.0,
+              'measurement_unit': 'second',
+              'zone_unit': 'POWER',
+              'target_range': {'low': 100, 'high': 150},
+            },
+            {
+              'type': 'INTERVAL',
+              'duration': 1500,
+              'distance': 13000.0,
+              'measurement_unit': 'second',
+              'zone_unit': 'POWER',
+              'target_range': {'low': 200, 'high': 260},
+            },
+            {
+              'type': 'COOLDOWN',
+              'duration': 600,
+              'distance': 3000.0,
+              'measurement_unit': 'second',
+              'zone_unit': 'POWER',
+              'target_range': {'low': 80, 'high': 120},
+            },
+          ],
+        },
+      ],
+    ),
+    _Scenario(
+      label: 'Indoor Cycling (Trainer)',
+      icon: Icons.directions_bike,
+      color: Colors.pink.shade700,
+      workouts: [
+        {
+          'schedule_id': 'cycle-indoor-test-001',
+          'sport': 'CYCLING',
+          'duration': 2700,
+          'summary': {
+            'name': 'Test: Indoor Cycle',
+            'sport': 'CYCLING',
+            'indoor_outdoor': 'INDOOR',
+            'measurement_unit': 'second',
+          },
+          'blocks': [
+            {
+              'type': 'WARMUP',
+              'duration': 600,
+              'measurement_unit': 'second',
+              'zone_unit': 'POWER',
+              'target_range': {'low': 100, 'high': 150},
+            },
+            {
+              'type': 'INTERVAL',
+              'duration': 1500,
+              'measurement_unit': 'second',
+              'zone_unit': 'POWER',
+              'target_range': {'low': 200, 'high': 260},
+            },
+            {
+              'type': 'COOLDOWN',
+              'duration': 600,
+              'measurement_unit': 'second',
+              'zone_unit': 'POWER',
+              'target_range': {'low': 80, 'high': 120},
+            },
+          ],
+        },
+      ],
+    ),
+    // ── End indoor / outdoor location scenarios ───────────────────────────
     _Scenario(
       label: '1 Mile Tempo (Real Workout)',
       icon: Icons.route,

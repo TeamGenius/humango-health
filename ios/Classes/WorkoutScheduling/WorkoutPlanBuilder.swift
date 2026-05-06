@@ -28,7 +28,12 @@ class WorkoutPlanBuilder {
         for workout in workouts {
             print("🏗 Building: \(workout.summary?.name ?? "Unnamed") | sport: \(workout.sport.rawValue)")
 
-            let item = buildCustomWorkoutItem(from: workout)
+            let item: ScheduledWorkoutItem?
+            if workout.sport.isSwimmingType {
+                item = buildSingleGoalSwimItem(from: workout)
+            } else {
+                item = buildCustomWorkoutItem(from: workout)
+            }
             if let item = item {
                 scheduledItems.append(item)
             }
@@ -57,6 +62,70 @@ class WorkoutPlanBuilder {
         return .open
     }
 
+    // MARK: - SingleGoalWorkout builder (Swimming)
+
+    /// Builds a `SingleGoalWorkout` for swimming so Apple Watch correctly renders
+    /// "Pool Swim" or "Open Water Swim". `SingleGoalWorkout` does NOT support
+    /// displayName / warmup / interval / cooldown — the workout is flattened
+    /// into a single goal derived from the top-level distance or duration.
+    private func buildSingleGoalSwimItem(
+        from workout: WorkoutInstanceModelElement
+    ) -> ScheduledWorkoutItem? {
+
+        let activity = workout.sport.hkWorkoutType
+
+        // Location: INDOOR → .indoor, else → .outdoor
+        let location = resolveLocation(workout)
+
+        // Swimming-specific location: indoor → pool, outdoor → openWater
+        let swimmingLocation: HKWorkoutSwimmingLocationType
+        if let implied = workout.sport.impliedLocation {
+            // Honour POOL_SWIMMING / OPEN_WATER_SWIMMING explicit sport overrides
+            swimmingLocation = (implied == .indoor) ? .pool : .openWater
+        } else {
+            swimmingLocation = (location == .indoor) ? .pool : .openWater
+        }
+
+        // Build the goal from top-level distance (preferred) or duration.
+        // Swimming distances are converted using pool_size to choose meters/yards
+        // (resolveSwimmingMeasurementUnit) — falls back to summary.measurement_unit.
+        let measurementUnit = resolveSwimmingMeasurementUnit(workout)
+        let goal: WorkoutGoal = resolveSwimGoal(
+            workout: workout,
+            swimmingLocation: swimmingLocation,
+            measurementUnit: measurementUnit
+        )
+
+        // Pre-validate goal support
+        guard SingleGoalWorkout.supportsGoal(goal, activity: activity, location: location) else {
+            let openGoal: WorkoutGoal = .open
+            let swim = SingleGoalWorkout(
+                activity: activity,
+                location: location,
+                swimmingLocation: swimmingLocation,
+                goal: openGoal
+            )
+            return ScheduledWorkoutItem(
+                workout: .goal(swim),
+                scheduledDate: workout.date,
+                workoutModel: workout
+            )
+        }
+
+        let swim = SingleGoalWorkout(
+            activity: activity,
+            location: location,
+            swimmingLocation: swimmingLocation,
+            goal: goal
+        )
+
+        return ScheduledWorkoutItem(
+            workout: .goal(swim),
+            scheduledDate: workout.date,
+            workoutModel: workout
+        )
+    }
+
     // MARK: - CustomWorkout builder (Non-swimming)
 
     private func buildCustomWorkoutItem(
@@ -66,13 +135,10 @@ class WorkoutPlanBuilder {
         let sport    = workout.sport.rawValue
         let activity = workout.sport.hkWorkoutType
 
-        // Swimming has special location resolution (impliedLocation, poolSize)
-        let location: HKWorkoutSessionLocationType
-        if workout.sport.isSwimmingType {
-            location = resolveSwimmingLocation(workout)
-        } else {
-            location = workout.summary?.indoorOutdoor?.hkLocationType ?? .unknown
-        }
+        // Unified location rule for ALL sports (Swimming, Running, Cycling, Walking, etc.):
+        //   summary.indoor_outdoor == "INDOOR"  → .indoor
+        //   anything else (OUTDOOR / nil)        → .outdoor
+        let location: HKWorkoutSessionLocationType = resolveLocation(workout)
 
         let allBlocks = workout.blocks ?? []
         // Top-level unit preference: all incoming distances are meters; this drives the
@@ -150,8 +216,6 @@ class WorkoutPlanBuilder {
             intervalBlocks = [IntervalBlock(steps: [step], iterations: 1)]
         }
 
-        print("  warmup=\(warmupStep != nil) blocks=\(intervalBlocks.count) cooldown=\(cooldownStep != nil)")
-
         // ── CustomWorkout init throws StateError — always use try ────────
         do {
             let customWorkout = try CustomWorkout(
@@ -170,7 +234,6 @@ class WorkoutPlanBuilder {
             )
 
         } catch let stateError as StateError {
-            // Re-throw so the Manager can send it back to Flutter
             let errorDesc = "StateError: \(stateError.localizedDescription) Raw: \(stateError)"
            // throw NSError(domain: "WorkoutBuilder", code: 1, userInfo: [NSLocalizedDescriptionKey: errorDesc])
         } catch {
@@ -310,7 +373,6 @@ class WorkoutPlanBuilder {
             location: location
         )
 
-        print("    [child \(block.type ?? "?")] purpose=\(purpose) goal=\(step.step.goal)")
         return step
     }
 
@@ -379,29 +441,50 @@ class WorkoutPlanBuilder {
         return .open
     }
 
+    // MARK: - Location helper
+
+    /// Unified location resolver for ALL sports (Swimming, Running, Cycling, Walking, etc.).
+    /// `summary.indoor_outdoor == "INDOOR"` → `.indoor`, otherwise (OUTDOOR or nil) → `.outdoor`.
+    private func resolveLocation(_ workout: WorkoutInstanceModelElement) -> HKWorkoutSessionLocationType {
+        let raw = workout.summary?.indoorOutdoor
+        return (raw == .indoor) ? .indoor : .outdoor
+    }
+
     // MARK: - Swimming helpers
 
-    /// Resolves the location for swimming workouts.
-    /// • Sport.impliedLocation present (POOL_SWIMMING → .indoor, OPEN_WATER_SWIMMING → .outdoor)
-    /// • pool_size present  → .indoor — skips the "Pool or Open Water?" Watch prompt
-    /// • pool_size absent   → derive from summary.indoor_outdoor, fall back to .unknown
-    private func resolveSwimmingLocation(_ workout: WorkoutInstanceModelElement) -> HKWorkoutSessionLocationType {
-        if let implied = workout.sport.impliedLocation {
-            return implied
-        } else if workout.poolSize != nil {
-            return WorkoutLocation.indoor.hkLocationType
-        } else {
-            return workout.summary?.indoorOutdoor?.hkLocationType ?? .unknown
-        }
+    /// Resolves the swimming goal.
+    ///
+    /// We deliberately do NOT use `.poolSwimDistanceWithTime` (iOS 18 / watchOS 11+),
+    /// because:
+    ///  • `#available` on the iPhone only guards the iOS process — not the paired watch.
+    ///  • If the iPhone is on iOS 18 but the paired watch is still on watchOS 10,
+    ///    the goal cannot be decoded on the watch and the workout effectively
+    ///    disappears from the Workout app.
+    ///  • There is no reliable public API on iOS to read the paired watch's OS
+    ///    version, so we cannot safely gate this at runtime.
+    ///
+    /// To guarantee the workout is **always scheduled and visible** on the watch,
+    /// we always fall back to a plain `.distance` / `.time` / `.open` goal via
+    /// `resolveTopLevelGoal`. The "Pool Swim" / "Open Water Swim" UI on the watch
+    /// is driven by `swimmingLocation` on `SingleGoalWorkout` — independent of
+    /// the goal type.
+    private func resolveSwimGoal(
+        workout: WorkoutInstanceModelElement,
+        swimmingLocation: HKWorkoutSwimmingLocationType,
+        measurementUnit: String?
+    ) -> WorkoutGoal {
+        return resolveTopLevelGoal(
+            distance: workout.distance,
+            duration: workout.duration,
+            measurementUnit: measurementUnit
+        )
     }
 
     /// Resolves the measurement unit for swimming workouts based on pool size.
     /// nil or contains "m" (e.g. "25m", "50m") → "meter"; otherwise (e.g. "25y") → "yard".
     private func resolveSwimmingMeasurementUnit(_ workout: WorkoutInstanceModelElement) -> String? {
         if let ps = workout.poolSize {
-            let unit = (!ps.isEmpty && !ps.lowercased().contains("m")) ? "yard" : "meter"
-            print("  → pool_size='\(ps)' resolved to measurement unit: \(unit)")
-            return unit
+            return (!ps.isEmpty && !ps.lowercased().contains("m")) ? "yard" : "meter"
         }
         return workout.summary?.measurementUnit
     }

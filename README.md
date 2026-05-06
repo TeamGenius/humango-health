@@ -2,7 +2,7 @@
 
 A comprehensive Flutter plugin for integrating iOS HealthKit and WorkoutKit functionalities natively into the Humango platform.
 
-> **Version 1.0.15** — See [CHANGELOG](CHANGELOG.md) for what's new.
+> **Version 1.0.16** — See [CHANGELOG](CHANGELOG.md) for what's new.
 
 ## Table of Contents
 
@@ -166,9 +166,9 @@ The plugin supports scheduling the following sports to Apple Watch via WorkoutKi
 |-----------|-----------|----------------------|-------|
 | `running` | `RUNNING` | `.running` | |
 | `cycling` | `CYCLING` | `.cycling` | |
-| `swimming` | `SWIMMING` | `.swimming` | Location derived from `pool_size` or `indoor_outdoor` |
-| `poolSwimming` | `POOL_SWIMMING` | `.swimming` | Location forced to `.indoor` |
-| `openWaterSwimming` | `OPEN_WATER_SWIMMING` | `.swimming` | Location forced to `.outdoor` |
+| `swimming` | `SWIMMING` | `.swimming` | `SingleGoalWorkout`; swimming location derived from `indoor_outdoor` (INDOOR → pool, else → openWater) |
+| `poolSwimming` | `POOL_SWIMMING` | `.swimming` | `SingleGoalWorkout`; swimming location forced to `.pool` — Apple Watch shows **"Pool Swim"** |
+| `openWaterSwimming` | `OPEN_WATER_SWIMMING` | `.swimming` | `SingleGoalWorkout`; swimming location forced to `.openWater` — Apple Watch shows **"Open Water Swim"** |
 | `strength` | `STRENGTH` | `.traditionalStrengthTraining` | |
 | `hiking` | `HIKING` | `.hiking` | |
 | `walking` | `WALKING` | `.walking` | |

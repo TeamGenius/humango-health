@@ -1,3 +1,34 @@
+## 1.0.16 — 2026-05-06
+
+### Changes
+
+#### Swimming workouts now use SingleGoalWorkout with correct Pool / Open Water label
+
+All swimming variants (`SWIMMING`, `POOL_SWIMMING`, `OPEN_WATER_SWIMMING`) are routed to `SingleGoalWorkout` instead of `CustomWorkout`. `SingleGoalWorkout` accepts an explicit `swimmingLocation` parameter (`.pool` / `.openWater`), which causes Apple Watch to display the correct workout label — **"Pool Swim"** or **"Open Water Swim"** — regardless of iOS / watchOS version.
+
+`CustomWorkout` does not expose a swimming-location parameter; any swim workout scheduled through it was always displayed as "Pool Swim" on the watch.
+
+**iOS (`WorkoutPlanBuilder.swift`):**
+- New `buildSingleGoalSwimItem(from:)` — builds `SingleGoalWorkout(activity:location:swimmingLocation:goal:)` for all swimming sports.
+- New `resolveSwimGoal(workout:swimmingLocation:measurementUnit:)` — always delegates to `resolveTopLevelGoal` (`.distance` / `.time` / `.open`). `.poolSwimDistanceWithTime` (iOS 18 / watchOS 11+) is intentionally **not** used: the `#available` check guards only the iOS process; there is no public API to read the paired watch's OS version, so using that goal type on an iOS 18 phone paired with a watchOS 10 watch silently drops the workout on the watch.
+- `resolveSwimmingMeasurementUnit(_:)` — infers `"meter"` / `"yard"` from `pool_size` string (e.g. `"25m"` → meter, `"25y"` → yard), falling back to `summary.measurement_unit`.
+- Swimming sports dispatched from `createCustomWorkouts` via `Sport.isSwimmingType`.
+
+> **Trade-off:** `SingleGoalWorkout` does not support `displayName`, warmup/cooldown steps, or interval blocks. Swimming workouts are flattened to a single goal. Structured swim workouts would require `CustomWorkout`, but that permanently loses the correct Pool/Open Water label on the watch.
+
+#### Unified indoor/outdoor location logic for all sports
+
+All sports now resolve location through a single `resolveLocation(_:)` helper:
+- `summary.indoor_outdoor == "INDOOR"` → `.indoor`
+- anything else (OUTDOOR or nil) → `.outdoor`
+
+`POOL_SWIMMING` and `OPEN_WATER_SWIMMING` additionally override `swimmingLocation` via `Sport.impliedLocation` (`.pool` / `.openWater` respectively), independently of `summary.indoor_outdoor`.
+
+**Example app (`workout_push_screen.dart`):**
+- Added four new test scenarios: Outdoor Running, Indoor Running (Treadmill), Outdoor Cycling, Indoor Cycling (Trainer) — covering indoor/outdoor permutations with appropriate alert types (pace/HR for running, power for cycling).
+
+---
+
 ## 1.0.15 — 2026-05-05
 
 ### Changes
