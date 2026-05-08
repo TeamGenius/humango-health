@@ -3,7 +3,6 @@ import Flutter
 import HealthKit
 import UIKit
 import CoreLocation
-import WorkoutKit
 
 public class WorkoutServiceChannel: NSObject {
     public static let shared = WorkoutServiceChannel()
@@ -186,19 +185,7 @@ public class WorkoutServiceChannel: NSObject {
         debugPrint("[isUserEnteredWorkout] full raw metadata = \(String(describing: workout.metadata))")
         // ─────────────────────────────────────────────────────────────────
 
-        // Resolve scheduleId via WorkoutPlan ID
-        if let workoutPlan = try? await workout.workoutPlan {
-            let planIdStr = workoutPlan.id.uuidString
-            if let scheduleId = ScheduledWorkoutStore.shared.findWorkoutByPlanId(planIdStr) {
-                dictMetaData["isScheduledWorkout"] = true
-                dictMetaData["scheduledWorkoutId"] = scheduleId
-                debugPrint("Read Workouts: processWorkout matched scheduleId: \(scheduleId) for planId: \(planIdStr)")
-            } else {
-                dictMetaData["isScheduledWorkout"] = false
-            }
-        } else {
-            dictMetaData["isScheduledWorkout"] = false
-        }
+        dictMetaData["isScheduledWorkout"] = false
 
         debugPrint("Read Workouts: Creating HuWorkout with \(locations.count) locations and \(series.reduce(0) { $0 + $1.count }) samples")
         
@@ -505,119 +492,6 @@ public class WorkoutServiceChannel: NSObject {
     func fetchAllWorkouts(startDate: Date, endDate: Date) async throws -> [String] {
         let results = try await fetchAllWorkoutsRaw(startDate: startDate, endDate: endDate)
         return results
-    }
-
-    /// Resolve whether a workout was scheduled via WorkoutKit by fetching its `workoutPlan`.
-    /// Returns a dictionary with `workoutPlanId` and `scheduledWorkoutId` (if found).
-    ///
-    /// This is intentionally separated from the read/monitoring pipelines because
-    /// `workout.workoutPlan` is an async WorkoutKit property that can hang indefinitely
-    /// when the network is unavailable. The client iOS app can call this on-demand
-    /// (e.g. after receiving the workout via `onWorkoutReady`) with its own timeout policy.
-    ///
-    /// ```swift
-    /// let result = await HumangoHealthPlugin.shared?.resolveScheduledWorkoutId(
-    ///     workoutUUID: "E3F1A2B4-..."
-    /// )
-    /// // result: ["workoutPlanId": "...", "scheduledWorkoutId": "...", "isScheduledWorkout": true]
-    /// ```
-    func resolveScheduledWorkoutId(workoutUUID: String) async -> [String: Any] {
-
-        // Step 1: Parse UUID
-        guard let uuid = UUID(uuidString: workoutUUID) else {
-            debugPrint("[WorkoutServiceChannel] resolveScheduledWorkoutId: ❌ STEP1 invalid UUID — \(workoutUUID)")
-            return ["error": "INVALID_UUID", "isScheduledWorkout": false]
-        }
-        debugPrint("[WorkoutServiceChannel] resolveScheduledWorkoutId: ✅ STEP1 UUID parsed: \(uuid)")
-
-        // Step 2: Fetch the HKWorkout by UUID
-        let predicate = HKQuery.predicateForObject(with: uuid)
-        let descriptor = HKSampleQueryDescriptor(
-            predicates: [.workout(predicate)],
-            sortDescriptors: [SortDescriptor(\.startDate, order: .reverse)],
-            limit: 1
-        )
-
-        let workout: HKWorkout
-        do {
-            guard let found = try await descriptor.result(for: healthStore).first else {
-                debugPrint("[WorkoutServiceChannel] resolveScheduledWorkoutId: ❌ STEP2 HKWorkout not found for UUID — \(workoutUUID)")
-                return ["error": "WORKOUT_NOT_FOUND", "isScheduledWorkout": false]
-            }
-            workout = found
-        } catch {
-            debugPrint("[WorkoutServiceChannel] resolveScheduledWorkoutId: ❌ STEP2 HKWorkout query threw error — \(error)")
-            return ["error": "QUERY_ERROR", "isScheduledWorkout": false]
-        }
-
-        debugPrint("[WorkoutServiceChannel] resolveScheduledWorkoutId: ✅ STEP2 HKWorkout found — type=\(workout.workoutActivityType.name) start=\(workout.startDate)")
-
-        // Step 3: Wait until at least 2 minutes have elapsed since workout end before fetching
-        // workoutPlan. WorkoutKit needs time to sync after a workout completes — fetching
-        // too soon causes it to hang waiting for the server.
-        let minWaitSeconds: TimeInterval = 2 * 60
-        let elapsed = Date().timeIntervalSince(workout.endDate)
-        if elapsed < minWaitSeconds {
-            let waitSeconds = minWaitSeconds - elapsed
-            debugPrint("[WorkoutServiceChannel] resolveScheduledWorkoutId: ⏳ STEP3 workout ended \(Int(elapsed))s ago — waiting \(Int(waitSeconds))s before fetching workoutPlan")
-            try? await Task.sleep(nanoseconds: UInt64(waitSeconds * 1_000_000_000))
-            debugPrint("[WorkoutServiceChannel] resolveScheduledWorkoutId: ✅ STEP3 wait complete — proceeding to fetch workoutPlan")
-        } else {
-            debugPrint("[WorkoutServiceChannel] resolveScheduledWorkoutId: ✅ STEP3 workout ended \(Int(elapsed))s ago — no wait needed")
-        }
-
-        debugPrint("[WorkoutServiceChannel] resolveScheduledWorkoutId: ⏳ STEP3 calling workout.workoutPlan (15s timeout)…")
-
-        // Race workout.workoutPlan against a 15-second hard timeout.
-        // withTaskGroup is NOT used here because it implicitly awaits all child tasks
-        // before returning — even after cancelAll() — so a non-cancellable WorkoutKit
-        // property would still hang. withCheckedContinuation + two detached tasks gives
-        // a true first-wins race; the losing task is abandoned (acceptable leak — it
-        // will complete/fail on its own).
-        let workoutPlan: WorkoutPlan? = await withCheckedContinuation { continuation in
-            let lock = NSLock()
-            var hasResumed = false
-
-            func resumeOnce(with value: WorkoutPlan?) {
-                lock.lock()
-                defer { lock.unlock() }
-                guard !hasResumed else { return }
-                hasResumed = true
-                continuation.resume(returning: value)
-            }
-
-            Task.detached { resumeOnce(with: try? await workout.workoutPlan) }
-            Task.detached {
-                try? await Task.sleep(nanoseconds: 15_000_000_000) // 15s
-                resumeOnce(with: nil)
-            }
-        }
-
-        let timedOut = workoutPlan == nil
-        debugPrint("[WorkoutServiceChannel] resolveScheduledWorkoutId: ✅ STEP3 workout.workoutPlan returned — plan=\(workoutPlan == nil ? (timedOut ? "TIMED OUT" : "nil") : workoutPlan!.id.uuidString)")
-
-        guard let resolvedPlan = workoutPlan else {
-            return ["isScheduledWorkout": false, "timedOut": timedOut]
-        }
-
-        // Step 4: Look up scheduleId
-        let planIdStr = resolvedPlan.id.uuidString
-        debugPrint("[WorkoutServiceChannel] resolveScheduledWorkoutId: ✅ STEP4 looking up planId=\(planIdStr) in ScheduledWorkoutStore")
-
-        if let scheduleId = ScheduledWorkoutStore.shared.findWorkoutByPlanId(planIdStr) {
-            debugPrint("[WorkoutServiceChannel] resolveScheduledWorkoutId: ✅ STEP4 matched scheduleId=\(scheduleId)")
-            return [
-                "isScheduledWorkout": true,
-                "workoutPlanId": planIdStr,
-                "scheduledWorkoutId": scheduleId,
-            ]
-        } else {
-            debugPrint("[WorkoutServiceChannel] resolveScheduledWorkoutId: ℹ️ STEP4 planId found but no matching scheduleId in store")
-            return [
-                "isScheduledWorkout": false,
-                "workoutPlanId": planIdStr,
-            ]
-        }
     }
 
     /// Stops all active monitoring.

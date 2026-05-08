@@ -180,24 +180,6 @@ public class HumangoHealthPlugin: NSObject, FlutterPlugin {
       try await workoutReadChannel.fetchAllWorkouts(startDate: startDate, endDate: endDate)
   }
 
-  /// Resolve whether a workout (by HealthKit UUID) was created from a scheduled WorkoutKit workout.
-  /// Returns `workoutPlanId` and `scheduledWorkoutId` when a match is found in `ScheduledWorkoutStore`.
-  ///
-  /// **Important:** This calls `workout.workoutPlan` which is an async WorkoutKit property that
-  /// may hang when the network is unavailable. The client app should wrap this call in a timeout.
-  ///
-  /// ```swift
-  /// let info = await HumangoHealthPlugin.shared?.resolveScheduledWorkoutId(
-  ///     workoutUUID: "E3F1A2B4-..."
-  /// ) ?? [:]
-  /// if info["isScheduledWorkout"] as? Bool == true {
-  ///     let scheduleId = info["scheduledWorkoutId"] as? String
-  /// }
-  /// ```
-  public func resolveScheduledWorkoutId(workoutUUID: String) async -> [String: Any] {
-      await workoutReadChannel.resolveScheduledWorkoutId(workoutUUID: workoutUUID)
-  }
-
   // MARK: - Public Native iOS Health Metrics Monitoring
 
   /// Start monitoring one or more health metric types.

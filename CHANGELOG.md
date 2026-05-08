@@ -1,3 +1,21 @@
+## 1.0.17 — 2026-05-08
+
+### Changes
+
+#### Removed `workout.workoutPlan` fetching from the read workouts pipeline
+
+The `readWorkouts` / `fetchAllWorkouts` pipeline no longer calls `workout.workoutPlan` (WorkoutKit) during batch processing. After a logout → login cycle, WorkoutKit resets its local cache and re-syncs from the network; the unguarded `try? await workout.workoutPlan` call had no timeout and would hang indefinitely, blocking every workout in the batch (up to 100 at a time) and causing `readWorkouts` to never return.
+
+**`WorkoutServiceChannel.swift`:**
+- Removed `import WorkoutKit`.
+- `processWorkout`: replaced the `if let workoutPlan = try? await workout.workoutPlan { … }` block with `dictMetaData["isScheduledWorkout"] = false`. All workouts are marked `isScheduledWorkout = false` in the batch read path.
+- Removed the `resolveScheduledWorkoutId(workoutUUID:)` method entirely.
+
+**`HumangoHealthPlugin.swift`:**
+- Removed the `public func resolveScheduledWorkoutId(workoutUUID:)` forwarding method.
+
+---
+
 ## 1.0.16 — 2026-05-06
 
 ### Changes
