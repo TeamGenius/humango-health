@@ -1,3 +1,17 @@
+## 1.0.18 — 2026-05-09
+
+### Bug fix
+
+#### Single-sport segmented workouts (e.g. cycling) no longer serialized as multisport
+
+The `isMultisport` property in `HuWorkout` previously returned `true` whenever `workoutActivities.count > 1`. Apple Watch records segmented single-sport workouts (e.g. a cycling ride split into 10 lap segments) with multiple `HKWorkoutActivity` entries, causing them to be routed through `toMultisportDict()` and produce an incorrect `sessions` array in the output JSON.
+
+**`HuWorkout.swift`:**
+- `isMultisport` now returns `true` only when `sport == .swimBikeRun`. All other sport types — regardless of how many activity segments they contain — are serialized as single-sport workouts via `toSingleSportDict()`.
+- Segment events for single-sport workouts (emitted from the independent `activities.count > 1` guard in `toSingleSportDict()`) are unaffected.
+
+---
+
 ## 1.0.17 — 2026-05-08
 
 ### Changes

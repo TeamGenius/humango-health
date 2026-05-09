@@ -97,13 +97,10 @@ public struct HuWorkout {
         self.metadata          = metadata
     }
 
-    /// Returns `true` when the workout contains multiple sub-activities
-    /// (e.g. Triathlon: Run → Transition → Bike → Transition → Swim).
+    /// Returns `true` only for SwimBikeRun (Triathlon) workouts.
+    /// Segmented single-sport workouts (e.g. cycling with multiple laps) are NOT multisport.
     public var isMultisport: Bool {
-        if #available(iOS 16.0, *), let activities = workoutActivities, activities.count > 1 {
-            return true
-        }
-        return false
+        return sport == .swimBikeRun
     }
 
     public func toDict() -> [String: Any]? {
