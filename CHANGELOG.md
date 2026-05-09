@@ -1,3 +1,24 @@
+## 1.0.19 — 2026-05-09
+
+### Performance
+
+#### Removed dead HTTP plumbing from `RouteService` and `WorkoutServiceChannel`
+
+`RouteService` carried `apiURL`, `authToken`, and the `defaults: UserDefaults` stored property and init parameter solely to support an HTTP upload path that was removed in an earlier version. None of these were referenced anywhere in the class. Removing them eliminates a redundant `UserDefaults` read on every `RouteService` construction and shrinks the class surface.
+
+`WorkoutServiceChannel` previously built an intermediate `payloadString` from `huWorkout.toJson()` and then discarded it without use — the result was never passed to a delegate or returned. That allocation is removed; callers that need the JSON string produce it directly from the returned `HuWorkout`.
+
+**`RouteService.swift`:**
+- Removed `private let defaults: UserDefaults` stored property.
+- Removed `private var apiURL: URL?` computed property.
+- Removed `private var authToken: String?` computed property.
+- Removed `defaults: UserDefaults = .standard` init parameter.
+
+**`WorkoutServiceChannel.swift`:**
+- Removed unused `payloadString` local variable and its associated `String(data:encoding:)` allocation.
+
+---
+
 ## 1.0.18 — 2026-05-09
 
 ### Bug fix

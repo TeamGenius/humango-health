@@ -19,35 +19,18 @@ class RouteService {
     private var updateTask: Task<Void, Never>?
     private var observer: HKObserverQuery?
     private var workoutRoutes : [HKWorkoutRoute] = []
-    private let defaults: UserDefaults
-
     /// Debounce task: waits 3 minutes after the last route update before pushing the workout.
     /// If new route data arrives within the window, this task is cancelled and restarted.
     private var routeDebounceTask: Task<Void, Never>?
     /// Duration (in seconds) to wait for additional route updates before finalizing the workout push.
     private static let routeUpdateWaitSeconds: UInt64 = 1 * 60  // 1 minute
 
-    private var apiURL: URL? {
-        guard
-            let urlString = defaults.string(forKey: UserDefaultsKeys.apiURL),
-            let url = URL(string: urlString)
-        else { return nil }
-        return url
-    }
-
-    private var authToken: String? {
-        defaults.string(forKey: UserDefaultsKeys.token)
-    }
-
     init(
         workout: HKWorkout,
-        defaults: UserDefaults = .standard,
         healthStore: HKHealthStore = SharedHealthKitStore.shared
     ) {
-        self.defaults = defaults
         self.healthStore = healthStore
         self.workout = workout
-
     }
     
     /// Expose endDate for external checks without exposing full workout
@@ -361,13 +344,6 @@ class RouteService {
                 metadata: dictMetaData
             )
 
-            let payloadString: String
-            if let jsonData = huWorkout.toJson(), let jsonString = String(data: jsonData, encoding: .utf8) {
-                payloadString = jsonString
-            } else {
-                payloadString = "{}"
-            }
-
             await pushWorkout(finalWorkout: huWorkout)
         } catch {
             debugPrint("[RouteService] handleCompleteWorkout error: \(error)")
@@ -380,12 +356,6 @@ class RouteService {
     // request from the host app's handler finishes.
     func pushWorkout(finalWorkout: HuWorkout) async {
         let deviceId = finalWorkout.deviceActivityId
-        let payloadString: String
-        if let jsonData = finalWorkout.toJson(), let jsonString = String(data: jsonData, encoding: .utf8) {
-            payloadString = jsonString
-        } else {
-            payloadString = "{}"
-        }
 
         if let delegate = HumangoHealthPlugin.delegate {
             await delegate.onWorkoutReady(workout: finalWorkout, deviceId: deviceId)

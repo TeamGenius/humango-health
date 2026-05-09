@@ -204,13 +204,6 @@ public class WorkoutServiceChannel: NSObject {
             metadata: dictMetaData
         )
         
-        let payloadString: String
-        if let jsonData = huWorkout.toJson(), let jsonString = String(data: jsonData, encoding: .utf8) {
-            payloadString = jsonString
-        } else {
-            payloadString = "{}"
-        }
-        
         return huWorkout
     }
     
