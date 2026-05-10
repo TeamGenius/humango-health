@@ -1,3 +1,30 @@
+## 1.0.20 — 2026-05-10
+
+### Changes
+
+#### Swimming workouts now use CustomWorkout (pool) or SingleGoalWorkout (open water) based on indoor/outdoor location
+
+Swimming workout scheduling has been refactored to use two distinct WorkoutKit types depending on the `indoor_outdoor` field:
+
+- **SWIMMING + INDOOR** → `CustomWorkout` with `.poolSwimDistanceWithTime` goals (iOS 18+ / watchOS 11+). Supports structured warmup, interval blocks (including REPEAT), and cooldown. Falls back to `.distance` goals on iOS 17.
+- **SWIMMING + OUTDOOR** → `SingleGoalWorkout` with `swimmingLocation: .openWater`. Apple Watch displays **"Open Water Swim"** UI. Uses a single top-level goal (distance or time).
+
+Previously all swimming variants used `SingleGoalWorkout`, which could not express structured intervals and always flattened to a single goal.
+
+`POOL_SWIMMING` and `OPEN_WATER_SWIMMING` sport values are no longer used in routing — only `SWIMMING` is expected from the backend, with `summary.indoor_outdoor` determining the workout type.
+
+**iOS (`WorkoutPlanBuilder.swift`):**
+- `createCustomWorkouts()` routing: `isSwimmingType && !isPoolSwimWorkout()` → `buildSingleGoalSwimItem()` (outdoor), else → `buildCustomWorkoutItem()` (pool + all other sports).
+- New `isPoolSwimWorkout(_:)` — returns `true` when `sport == .swimming && resolveLocation() == .indoor`.
+- New `buildSingleGoalSwimItem(from:)` — builds `SingleGoalWorkout` with `swimmingLocation: .openWater` and `supportsGoal` validation.
+- `buildCustomWorkoutItem(from:)` — `isPoolSwimming` flag propagated through `resolveGoal()`, `buildWorkoutStep()`, `buildIntervalBlocks()`, and `buildIntervalStep()`.
+- `resolveGoal()` — new `isPoolSwimming` parameter; when `true` with both distance and duration on iOS 18+, returns `.poolSwimDistanceWithTime(Measurement<UnitLength>, Measurement<UnitDuration>)`.
+- `resolveSwimmingMeasurementUnit(_:)` — infers `"meter"` / `"yard"` from `pool_size` (e.g. `"25m"` → meter, `"25y"` → yard), falling back to `summary.measurement_unit`.
+- `CustomWorkout` init now uses `activity`, `location`, and `displayName` from the workout model (no longer hardcoded).
+- Removed all `.poolSwimming` case references from routing logic.
+
+---
+
 ## 1.0.19 — 2026-05-09
 
 ### Performance

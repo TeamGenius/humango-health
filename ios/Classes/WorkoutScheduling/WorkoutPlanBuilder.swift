@@ -18,7 +18,9 @@ class WorkoutPlanBuilder {
     // MARK: - Public entry point
 
     /// Converts decoded JSON workouts into `ScheduledWorkoutItem` objects.
-    /// All sports use `CustomWorkout` (supports `displayName`).
+    /// SWIMMING + indoor → `CustomWorkout` with `.poolSwimDistanceWithTime` goals (iOS 18+).
+    /// SWIMMING + outdoor → `SingleGoalWorkout` with `swimmingLocation: .openWater`.
+    /// All other sports → `CustomWorkout`.
     func createCustomWorkouts(
         workouts: [WorkoutInstanceModelElement]
     ) -> [ScheduledWorkoutItem] {
@@ -29,7 +31,7 @@ class WorkoutPlanBuilder {
             print("🏗 Building: \(workout.summary?.name ?? "Unnamed") | sport: \(workout.sport.rawValue)")
 
             let item: ScheduledWorkoutItem?
-            if workout.sport.isSwimmingType {
+            if workout.sport.isSwimmingType && !isPoolSwimWorkout(workout) {
                 item = buildSingleGoalSwimItem(from: workout)
             } else {
                 item = buildCustomWorkoutItem(from: workout)
@@ -40,6 +42,13 @@ class WorkoutPlanBuilder {
         }
 
         return scheduledItems
+    }
+
+    /// Returns `true` when the workout should be built as a pool-swim `CustomWorkout`.
+    /// Criteria: sport is SWIMMING with indoor location (via `resolveLocation`).
+    private func isPoolSwimWorkout(_ workout: WorkoutInstanceModelElement) -> Bool {
+        guard workout.sport == .swimming else { return false }
+        return resolveLocation(workout) == .indoor
     }
 
     /// Derives a top-level `WorkoutGoal` from workout-level distance/duration fields.
@@ -62,61 +71,39 @@ class WorkoutPlanBuilder {
         return .open
     }
 
-    // MARK: - SingleGoalWorkout builder (Swimming)
+    // MARK: - SingleGoalWorkout builder (outdoor swimming)
 
-    /// Builds a `SingleGoalWorkout` for swimming so Apple Watch correctly renders
-    /// "Pool Swim" or "Open Water Swim". `SingleGoalWorkout` does NOT support
-    /// displayName / warmup / interval / cooldown — the workout is flattened
-    /// into a single goal derived from the top-level distance or duration.
+    /// Builds a `SingleGoalWorkout` for outdoor swimming (SWIMMING + outdoor).
+    /// Uses `swimmingLocation: .openWater` so Apple Watch renders "Open Water Swim" UI.
     private func buildSingleGoalSwimItem(
         from workout: WorkoutInstanceModelElement
     ) -> ScheduledWorkoutItem? {
 
         let activity = workout.sport.hkWorkoutType
-
-        // Location: INDOOR → .indoor, else → .outdoor
         let location = resolveLocation(workout)
 
-        // Swimming-specific location: indoor → pool, outdoor → openWater
-        let swimmingLocation: HKWorkoutSwimmingLocationType
-        if let implied = workout.sport.impliedLocation {
-            // Honour POOL_SWIMMING / OPEN_WATER_SWIMMING explicit sport overrides
-            swimmingLocation = (implied == .indoor) ? .pool : .openWater
-        } else {
-            swimmingLocation = (location == .indoor) ? .pool : .openWater
-        }
+        let swimmingLocation: HKWorkoutSwimmingLocationType = .openWater
 
-        // Build the goal from top-level distance (preferred) or duration.
-        // Swimming distances are converted using pool_size to choose meters/yards
-        // (resolveSwimmingMeasurementUnit) — falls back to summary.measurement_unit.
         let measurementUnit = resolveSwimmingMeasurementUnit(workout)
-        let goal: WorkoutGoal = resolveSwimGoal(
-            workout: workout,
-            swimmingLocation: swimmingLocation,
+        let goal = resolveTopLevelGoal(
+            distance: workout.distance,
+            duration: workout.duration,
             measurementUnit: measurementUnit
         )
 
-        // Pre-validate goal support
-        guard SingleGoalWorkout.supportsGoal(goal, activity: activity, location: location) else {
-            let openGoal: WorkoutGoal = .open
-            let swim = SingleGoalWorkout(
-                activity: activity,
-                location: location,
-                swimmingLocation: swimmingLocation,
-                goal: openGoal
-            )
-            return ScheduledWorkoutItem(
-                workout: .goal(swim),
-                scheduledDate: workout.date,
-                workoutModel: workout
-            )
+        // Pre-validate goal support; fallback to .open if unsupported
+        let validatedGoal: WorkoutGoal
+        if SingleGoalWorkout.supportsGoal(goal, activity: activity, location: location) {
+            validatedGoal = goal
+        } else {
+            validatedGoal = .open
         }
 
         let swim = SingleGoalWorkout(
             activity: activity,
             location: location,
             swimmingLocation: swimmingLocation,
-            goal: goal
+            goal: validatedGoal
         )
 
         return ScheduledWorkoutItem(
@@ -126,7 +113,7 @@ class WorkoutPlanBuilder {
         )
     }
 
-    // MARK: - CustomWorkout builder (Non-swimming)
+    // MARK: - CustomWorkout builder
 
     private func buildCustomWorkoutItem(
         from workout: WorkoutInstanceModelElement
@@ -140,11 +127,20 @@ class WorkoutPlanBuilder {
         //   anything else (OUTDOOR / nil)        → .outdoor
         let location: HKWorkoutSessionLocationType = resolveLocation(workout)
 
+        // Pool swimming detection: SWIMMING with indoor location.
+        // Drives `.poolSwimDistanceWithTime` goal usage on iOS 18+.
+        let isPoolSwimming: Bool = (workout.sport == .swimming && location == .indoor)
+
         let allBlocks = workout.blocks ?? []
         // Top-level unit preference: all incoming distances are meters; this drives the
         // WorkoutKit goal/display unit (e.g. "mile", "km"). Per-block measurement_unit
         // still decides whether a step goal is time-based or distance-based.
-        let workoutUnit = workout.unit
+        let workoutUnit: String?
+        if workout.sport.isSwimmingType {
+            workoutUnit = resolveSwimmingMeasurementUnit(workout)
+        } else {
+            workoutUnit = workout.unit
+        }
 
         // ── Split by type ────────────────────────────────────────────────
         let warmupBlocksList   = allBlocks.filter { $0.type?.uppercased() == "WARMUP"   }
@@ -173,16 +169,16 @@ class WorkoutPlanBuilder {
 
         if hasInterval {
             warmupStep      = hasWarmup
-                ? buildWorkoutStep(from: warmupBlocksList.first!, sport: sport, activity: activity, location: location, workoutUnit: workoutUnit)
+                ? buildWorkoutStep(from: warmupBlocksList.first!, sport: sport, activity: activity, location: location, workoutUnit: workoutUnit, isPoolSwimming: isPoolSwimming)
                 : nil
             cooldownStep    = hasCooldown
-                ? buildWorkoutStep(from: cooldownBlocksList.last!, sport: sport, activity: activity, location: location, workoutUnit: workoutUnit)
+                ? buildWorkoutStep(from: cooldownBlocksList.last!, sport: sport, activity: activity, location: location, workoutUnit: workoutUnit, isPoolSwimming: isPoolSwimming)
                 : nil
             mainForInterval = intervalBlocksList
         } else if hasWarmup && hasCooldown {
             // No interval blocks — warmup fills the interval section, cooldown stays in its slot
             warmupStep      = nil
-            cooldownStep    = buildWorkoutStep(from: cooldownBlocksList.last!, sport: sport, activity: activity, location: location, workoutUnit: workoutUnit)
+            cooldownStep    = buildWorkoutStep(from: cooldownBlocksList.last!, sport: sport, activity: activity, location: location, workoutUnit: workoutUnit, isPoolSwimming: isPoolSwimming)
             mainForInterval = warmupBlocksList
         } else if hasCooldown {
             // No interval, no warmup — cooldown fills the interval section
@@ -196,20 +192,16 @@ class WorkoutPlanBuilder {
             mainForInterval = warmupBlocksList
         }
 
-        var intervalBlocks = buildIntervalBlocks(from: mainForInterval, sport: sport, activity: activity, location: location, workoutUnit: workoutUnit)
+        var intervalBlocks = buildIntervalBlocks(from: mainForInterval, sport: sport, activity: activity, location: location, workoutUnit: workoutUnit, isPoolSwimming: isPoolSwimming)
 
-        // Swimming (or any sport) with no blocks: wrap the top-level goal into a single interval block
+        // No blocks: wrap the top-level goal into a single interval block
         if intervalBlocks.isEmpty {
-            let effectiveMeasurementUnit: String?
-            if workout.sport.isSwimmingType {
-                effectiveMeasurementUnit = resolveSwimmingMeasurementUnit(workout)
-            } else {
-                effectiveMeasurementUnit = workoutUnit
-            }
-            let topGoal = resolveTopLevelGoal(
+            let topGoal = resolveGoal(
+                measurementUnit: workoutUnit,
                 distance: workout.distance,
                 duration: workout.duration,
-                measurementUnit: effectiveMeasurementUnit
+                workoutUnit: workoutUnit,
+                isPoolSwimming: isPoolSwimming
             )
             var step = IntervalStep(.work)
             step.step.goal = topGoal
@@ -288,7 +280,8 @@ class WorkoutPlanBuilder {
         sport: String,
         activity: HKWorkoutActivityType,
         location: HKWorkoutSessionLocationType,
-        workoutUnit: String? = nil
+        workoutUnit: String? = nil,
+        isPoolSwimming: Bool = false
     ) -> [IntervalBlock] {
 
         var result: [IntervalBlock] = []
@@ -303,7 +296,8 @@ class WorkoutPlanBuilder {
                 step.step.goal  = resolveGoal(measurementUnit: block.measurementUnit,
                                               distance: block.distance,
                                               duration: block.duration,
-                                              workoutUnit: workoutUnit)
+                                              workoutUnit: workoutUnit,
+                                              isPoolSwimming: isPoolSwimming)
                 step.step.alert = resolveAlert(zoneUnit: block.zoneUnit,
                                                targetRange: block.targetRange,
                                                sport: sport,
@@ -316,7 +310,8 @@ class WorkoutPlanBuilder {
                 step.step.goal  = resolveGoal(measurementUnit: block.measurementUnit,
                                               distance: block.distance,
                                               duration: block.duration,
-                                              workoutUnit: workoutUnit)
+                                              workoutUnit: workoutUnit,
+                                              isPoolSwimming: isPoolSwimming)
                 step.step.alert = resolveAlert(zoneUnit: block.zoneUnit,
                                                targetRange: block.targetRange,
                                                sport: sport,
@@ -334,7 +329,7 @@ class WorkoutPlanBuilder {
                 }
 
                 let steps: [IntervalStep] = children.map {
-                    buildIntervalStep(from: $0, sport: sport, activity: activity, location: location, workoutUnit: workoutUnit)
+                    buildIntervalStep(from: $0, sport: sport, activity: activity, location: location, workoutUnit: workoutUnit, isPoolSwimming: isPoolSwimming)
                 }
                 result.append(IntervalBlock(steps: steps, iterations: iterations))
 
@@ -353,7 +348,8 @@ class WorkoutPlanBuilder {
         sport: String,
         activity: HKWorkoutActivityType,
         location: HKWorkoutSessionLocationType,
-        workoutUnit: String? = nil
+        workoutUnit: String? = nil,
+        isPoolSwimming: Bool = false
     ) -> IntervalStep {
 
         let purpose = intervalStepPurpose(for: block.type)
@@ -363,7 +359,8 @@ class WorkoutPlanBuilder {
             measurementUnit: block.measurementUnit,
             distance: block.distance,
             duration: block.duration,
-            workoutUnit: workoutUnit
+            workoutUnit: workoutUnit,
+            isPoolSwimming: isPoolSwimming
         )
         step.step.alert = resolveAlert(
             zoneUnit: block.zoneUnit,
@@ -383,14 +380,16 @@ class WorkoutPlanBuilder {
         sport: String,
         activity: HKWorkoutActivityType,
         location: HKWorkoutSessionLocationType,
-        workoutUnit: String? = nil
+        workoutUnit: String? = nil,
+        isPoolSwimming: Bool = false
     ) -> WorkoutStep {
 
         let goal  = resolveGoal(
             measurementUnit: block.measurementUnit,
             distance: block.distance,
             duration: block.duration,
-            workoutUnit: workoutUnit
+            workoutUnit: workoutUnit,
+            isPoolSwimming: isPoolSwimming
         )
         let alert = resolveAlert(
             zoneUnit: block.zoneUnit,
@@ -419,11 +418,28 @@ class WorkoutPlanBuilder {
         measurementUnit: String?,
         distance: Double?,
         duration: Int?,
-        workoutUnit: String? = nil
+        workoutUnit: String? = nil,
+        isPoolSwimming: Bool = false
     ) -> WorkoutGoal {
         // All incoming distances are in meters. measurement_unit decides goal TYPE
         // (distance vs time). workoutUnit (top-level) overrides the output UnitLength
         // so Apple Watch displays the goal in the caller's preferred unit.
+
+        // Pool swimming with both distance and duration → .poolSwimDistanceWithTime (iOS 18+)
+        if isPoolSwimming,
+           isDistanceUnit(measurementUnit),
+           let dist = distance, dist > 0,
+           let dur = duration, dur > 0 {
+            if #available(iOS 18.0, *) {
+                let unitLength = lengthUnit(for: workoutUnit ?? measurementUnit)
+                let distMeasurement = Measurement(value: dist, unit: UnitLength.meters)
+                    .converted(to: unitLength)
+                let timeMeasurement = Measurement(value: Double(dur), unit: UnitDuration.seconds)
+                return .poolSwimDistanceWithTime(distMeasurement, timeMeasurement)
+            }
+            // Fall through to standard distance goal on iOS 17
+        }
+
         if isDistanceUnit(measurementUnit), let dist = distance, dist > 0 {
             let unitLength     = lengthUnit(for: workoutUnit ?? measurementUnit)
             let convertedValue = Measurement(value: dist, unit: UnitLength.meters)
@@ -451,34 +467,6 @@ class WorkoutPlanBuilder {
     }
 
     // MARK: - Swimming helpers
-
-    /// Resolves the swimming goal.
-    ///
-    /// We deliberately do NOT use `.poolSwimDistanceWithTime` (iOS 18 / watchOS 11+),
-    /// because:
-    ///  • `#available` on the iPhone only guards the iOS process — not the paired watch.
-    ///  • If the iPhone is on iOS 18 but the paired watch is still on watchOS 10,
-    ///    the goal cannot be decoded on the watch and the workout effectively
-    ///    disappears from the Workout app.
-    ///  • There is no reliable public API on iOS to read the paired watch's OS
-    ///    version, so we cannot safely gate this at runtime.
-    ///
-    /// To guarantee the workout is **always scheduled and visible** on the watch,
-    /// we always fall back to a plain `.distance` / `.time` / `.open` goal via
-    /// `resolveTopLevelGoal`. The "Pool Swim" / "Open Water Swim" UI on the watch
-    /// is driven by `swimmingLocation` on `SingleGoalWorkout` — independent of
-    /// the goal type.
-    private func resolveSwimGoal(
-        workout: WorkoutInstanceModelElement,
-        swimmingLocation: HKWorkoutSwimmingLocationType,
-        measurementUnit: String?
-    ) -> WorkoutGoal {
-        return resolveTopLevelGoal(
-            distance: workout.distance,
-            duration: workout.duration,
-            measurementUnit: measurementUnit
-        )
-    }
 
     /// Resolves the measurement unit for swimming workouts based on pool size.
     /// nil or contains "m" (e.g. "25m", "50m") → "meter"; otherwise (e.g. "25y") → "yard".
