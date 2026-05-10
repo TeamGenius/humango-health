@@ -174,12 +174,18 @@ class WorkoutPlanBuilder {
             cooldownStep    = hasCooldown
                 ? buildWorkoutStep(from: cooldownBlocksList.last!, sport: sport, activity: activity, location: location, workoutUnit: workoutUnit, isPoolSwimming: isPoolSwimming)
                 : nil
-            mainForInterval = intervalBlocksList
+            // Extra warmups (all except first) go before main intervals;
+            // extra cooldowns (all except last) go after main intervals.
+            let extraWarmups   = hasWarmup   ? Array(warmupBlocksList.dropFirst())   : []
+            let extraCooldowns = hasCooldown ? Array(cooldownBlocksList.dropLast())  : []
+            mainForInterval = extraWarmups + intervalBlocksList + extraCooldowns
         } else if hasWarmup && hasCooldown {
-            // No interval blocks — warmup fills the interval section, cooldown stays in its slot
+            // No interval blocks — warmup fills the interval section, cooldown stays in its slot.
+            // Extra cooldowns (all except last) are appended after warmup blocks.
+            let extraCooldowns = Array(cooldownBlocksList.dropLast())
             warmupStep      = nil
             cooldownStep    = buildWorkoutStep(from: cooldownBlocksList.last!, sport: sport, activity: activity, location: location, workoutUnit: workoutUnit, isPoolSwimming: isPoolSwimming)
-            mainForInterval = warmupBlocksList
+            mainForInterval = warmupBlocksList + extraCooldowns
         } else if hasCooldown {
             // No interval, no warmup — cooldown fills the interval section
             warmupStep      = nil
@@ -317,6 +323,14 @@ class WorkoutPlanBuilder {
                                                sport: sport,
                                                activity: activity,
                                                location: location)
+                // Set displayName so Apple Watch labels the step (iOS 18+/watchOS 11+)
+                if #available(iOS 18.0, watchOS 11.0, *) {
+                    switch blockType {
+                    case "WARMUP":   step.step.displayName = "Warmup"
+                    case "COOLDOWN": step.step.displayName = "Cooldown"
+                    default: break
+                    }
+                }
                 result.append(IntervalBlock(steps: [step], iterations: 1))
 
             case "REPEAT":
@@ -369,6 +383,16 @@ class WorkoutPlanBuilder {
             activity: activity,
             location: location
         )
+
+        // Set displayName so Apple Watch labels the step (iOS 18+/watchOS 11+)
+        if #available(iOS 18.0, watchOS 11.0, *) {
+            let t = block.type?.uppercased() ?? ""
+            switch t {
+            case "WARMUP":   step.step.displayName = "Warmup"
+            case "COOLDOWN": step.step.displayName = "Cooldown"
+            default: break
+            }
+        }
 
         return step
     }

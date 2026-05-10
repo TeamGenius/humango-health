@@ -167,6 +167,47 @@ class _WorkoutPushScreenState extends State<WorkoutPushScreen> {
         },
       ],
     ),
+     _Scenario(
+      label: 'Swimming — only 25 m Pool (meters)',
+      icon: Icons.pool,
+      color: Colors.cyan,
+      workouts: [
+        {
+          'schedule_id': 'swim-25m-test-001',
+          'sport': 'SWIMMING',
+          'distance': 1500.0,
+          'duration': 2700,
+          'pool_size': '25m',
+          'summary': {
+            'name': 'Test: 25 m Pool Swim',
+            'sport': 'SWIMMING',
+            'measurement_unit': 'meter',
+          },
+          'blocks': [
+            {
+              'type': 'WARMUP',
+              'duration': 300,
+              'distance': 200.0,
+              'measurement_unit': 'meter',
+            },
+            {
+              'type': 'INTERVAL',
+              'duration': 1800,
+              'distance': 1000.0,
+              'measurement_unit': 'meter',
+              'zone_unit': 'HR',
+              'target_range': {'low': 130, 'high': 160},
+            },
+            {
+              'type': 'COOLDOWN',
+              'duration': 600,
+              'distance': 300.0,
+              'measurement_unit': 'meter',
+            },
+          ],
+        },
+      ],
+    ),
     _Scenario(
       label: 'Swimming — 25 yd Pool (yards)',
       icon: Icons.pool,
@@ -312,6 +353,7 @@ class _WorkoutPushScreenState extends State<WorkoutPushScreen> {
               'zone_unit': 'PACE',
               'target_range': {'low': 433, 'high': 616},
             },
+          
             {
               'type': 'COOLDOWN',
               'duration': 600,
@@ -324,16 +366,33 @@ class _WorkoutPushScreenState extends State<WorkoutPushScreen> {
       ],
     ),
     _Scenario(
-      label: 'Interval + Cooldown (no warmup)',
+      label: '2 Warmups + Interval + Cooldown',
       icon: Icons.fitness_center,
       color: Colors.deepOrange,
       workouts: [
         {
-          'schedule_id': 'interval-cooldown-test-001',
+          'schedule_id': 'multi-warmup-interval-001',
           'sport': 'CYCLING',
-          'duration': 1800,
-          'summary': {'name': 'Test: Interval + Cooldown', 'sport': 'CYCLING'},
+          'duration': 2700,
+          'summary': {
+            'name': 'Test: 2 Warmups + Interval + Cooldown',
+            'sport': 'CYCLING',
+          },
           'blocks': [
+            {
+              'type': 'WARMUP',
+              'duration': 600,
+              'measurement_unit': 'second',
+              'zone_unit': 'POWER',
+              'target_range': {'low': 85, 'high': 128},
+            },
+            {
+              'type': 'WARMUP',
+              'duration': 300,
+              'measurement_unit': 'second',
+              'zone_unit': 'POWER',
+              'target_range': {'low': 100, 'high': 150},
+            },
             {
               'type': 'INTERVAL',
               'duration': 1200,
@@ -347,6 +406,201 @@ class _WorkoutPushScreenState extends State<WorkoutPushScreen> {
               'measurement_unit': 'second',
               'zone_unit': 'POWER',
               'target_range': {'low': 85, 'high': 128},
+            },
+          ],
+        },
+      ],
+    ),
+    _Scenario(
+      label: 'Warmup + Interval + 2 Cooldowns',
+      icon: Icons.ac_unit,
+      color: Colors.indigo.shade400,
+      workouts: [
+        {
+          'schedule_id': 'multi-cooldown-interval-001',
+          'sport': 'CYCLING',
+          'duration': 2700,
+          'summary': {
+            'name': 'Test: Warmup + Interval + 2 Cooldowns',
+            'sport': 'CYCLING',
+          },
+          'blocks': [
+            {
+              'type': 'WARMUP',
+              'duration': 600,
+              'measurement_unit': 'second',
+              'zone_unit': 'POWER',
+              'target_range': {'low': 85, 'high': 128},
+            },
+            {
+              'type': 'INTERVAL',
+              'duration': 1200,
+              'measurement_unit': 'second',
+              'zone_unit': 'POWER',
+              'target_range': {'low': 191, 'high': 222},
+            },
+            {
+              'type': 'COOLDOWN',
+              'duration': 300,
+              'measurement_unit': 'second',
+              'zone_unit': 'POWER',
+              'target_range': {'low': 100, 'high': 140},
+            },
+            {
+              'type': 'COOLDOWN',
+              'duration': 600,
+              'measurement_unit': 'second',
+              'zone_unit': 'POWER',
+              'target_range': {'low': 85, 'high': 128},
+            },
+          ],
+        },
+      ],
+    ),
+    _Scenario(
+      label: '2 Warmups + 2 Cooldowns (no interval)',
+      icon: Icons.swap_vert,
+      color: Colors.pink.shade400,
+      workouts: [
+        {
+          'schedule_id': 'multi-warmup-cooldown-001',
+          'sport': 'RUNNING',
+          'duration': 2100,
+          'summary': {
+            'name': 'Test: 2 Warmups + 2 Cooldowns',
+            'sport': 'RUNNING',
+          },
+          'blocks': [
+            {
+              'type': 'WARMUP',
+              'duration': 600,
+              'measurement_unit': 'second',
+              'zone_unit': 'PACE',
+              'target_range': {'low': 600, 'high': 480},
+            },
+            {
+              'type': 'WARMUP',
+              'duration': 300,
+              'measurement_unit': 'second',
+              'zone_unit': 'PACE',
+              'target_range': {'low': 500, 'high': 420},
+            },
+            {
+              'type': 'COOLDOWN',
+              'duration': 600,
+              'measurement_unit': 'second',
+              'zone_unit': 'PACE',
+              'target_range': {'low': 600, 'high': 500},
+            },
+            {
+              'type': 'COOLDOWN',
+              'duration': 600,
+              'measurement_unit': 'second',
+              'zone_unit': 'PACE',
+              'target_range': {'low': 720, 'high': 600},
+            },
+          ],
+        },
+      ],
+    ),
+    _Scenario(
+      label: '2 Cooldowns only',
+      icon: Icons.arrow_downward,
+      color: Colors.cyan.shade700,
+      workouts: [
+        {
+          'schedule_id': 'multi-cooldown-only-001',
+          'sport': 'CYCLING',
+          'duration': 1100,
+          'summary': {
+            'name': 'Test: 2 Cooldowns Only',
+            'sport': 'CYCLING',
+          },
+          'blocks': [
+            {
+              'type': 'COOLDOWN',
+              'duration': 500,
+              'measurement_unit': 'second',
+              'zone_unit': 'POWER',
+              'target_range': {'low': 100, 'high': 140},
+            },
+            {
+              'type': 'COOLDOWN',
+              'duration': 600,
+              'measurement_unit': 'second',
+              'zone_unit': 'POWER',
+              'target_range': {'low': 85, 'high': 128},
+            },
+          ],
+        },
+      ],
+    ),
+    _Scenario(
+      label: '2 Warmups only',
+      icon: Icons.arrow_upward,
+      color: Colors.orange.shade700,
+      workouts: [
+        {
+          'schedule_id': 'multi-warmup-only-001',
+          'sport': 'CYCLING',
+          'duration': 1100,
+          'summary': {
+            'name': 'Test: 2 Warmups Only',
+            'sport': 'CYCLING',
+          },
+          'blocks': [
+            {
+              'type': 'WARMUP',
+              'duration': 600,
+              'measurement_unit': 'second',
+              'zone_unit': 'POWER',
+              'target_range': {'low': 85, 'high': 128},
+            },
+            {
+              'type': 'WARMUP',
+              'duration': 500,
+              'measurement_unit': 'second',
+              'zone_unit': 'POWER',
+              'target_range': {'low': 100, 'high': 150},
+            },
+          ],
+        },
+      ],
+    ),
+    _Scenario(
+      label: 'Warmup + 2 Cooldowns (no interval)',
+      icon: Icons.vertical_align_bottom,
+      color: Colors.teal.shade400,
+      workouts: [
+        {
+          'schedule_id': 'warmup-multi-cooldown-001',
+          'sport': 'RUNNING',
+          'duration': 1700,
+          'summary': {
+            'name': 'Test: Warmup + 2 Cooldowns',
+            'sport': 'RUNNING',
+          },
+          'blocks': [
+            {
+              'type': 'WARMUP',
+              'duration': 600,
+              'measurement_unit': 'second',
+              'zone_unit': 'PACE',
+              'target_range': {'low': 600, 'high': 480},
+            },
+            {
+              'type': 'COOLDOWN',
+              'duration': 500,
+              'measurement_unit': 'second',
+              'zone_unit': 'PACE',
+              'target_range': {'low': 600, 'high': 500},
+            },
+            {
+              'type': 'COOLDOWN',
+              'duration': 600,
+              'measurement_unit': 'second',
+              'zone_unit': 'PACE',
+              'target_range': {'low': 720, 'high': 600},
             },
           ],
         },

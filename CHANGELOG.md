@@ -1,3 +1,26 @@
+## 1.0.21 — 2026-05-10
+
+### Bug fix
+
+#### Multiple WARMUP / COOLDOWN blocks no longer silently dropped
+
+`WorkoutPlanBuilder` previously kept only the first WARMUP and the last COOLDOWN block when building a `CustomWorkout`. Any additional warmup or cooldown blocks were silently discarded, losing structured workout data.
+
+Extra warmup blocks (all except the first) are now converted to `IntervalBlock` steps with `.recovery` purpose and prepended before the main interval blocks. Extra cooldown blocks (all except the last) are similarly appended after the main interval blocks. This preserves all blocks in the workout plan sent to Apple Watch.
+
+On iOS 18+ / watchOS 11+, extra warmup and cooldown steps set `WorkoutStep.displayName` to `"Warmup"` / `"Cooldown"` so the Apple Watch UI labels them correctly.
+
+**iOS (`WorkoutPlanBuilder.swift`):**
+- `buildCustomWorkoutItem(from:)` — hasInterval branch: extra warmups (`Array(warmupBlocksList.dropFirst())`) prepended before `intervalBlocksList`; extra cooldowns (`Array(cooldownBlocksList.dropLast())`) appended after.
+- `buildCustomWorkoutItem(from:)` — hasWarmup+hasCooldown (no interval) branch: extra cooldowns appended after warmup blocks.
+- `buildIntervalBlocks(from:…)` — WARMUP/COOLDOWN cases now set `step.step.displayName` on iOS 18+ / watchOS 11+.
+- `buildIntervalStep(from:…)` — same `displayName` logic for REPEAT children.
+
+**Example app (`workout_push_screen.dart`):**
+- Added six test scenarios: 2 Warmups + Interval + Cooldown, Warmup + Interval + 2 Cooldowns, 2 Warmups + 2 Cooldowns (no interval), 2 Cooldowns only, 2 Warmups only, Warmup + 2 Cooldowns (no interval).
+
+---
+
 ## 1.0.20 — 2026-05-10
 
 ### Changes
