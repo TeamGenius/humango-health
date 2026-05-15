@@ -84,7 +84,7 @@ class WorkoutPlanBuilder {
 
         let swimmingLocation: HKWorkoutSwimmingLocationType = .openWater
 
-        let measurementUnit = resolveSwimmingMeasurementUnit(workout)
+        let measurementUnit = resolveWorkoutUnit(workout)
         let goal = resolveTopLevelGoal(
             distance: workout.distance,
             duration: workout.duration,
@@ -132,15 +132,9 @@ class WorkoutPlanBuilder {
         let isPoolSwimming: Bool = (workout.sport == .swimming && location == .indoor)
 
         let allBlocks = workout.blocks ?? []
-        // Top-level unit preference: all incoming distances are meters; this drives the
-        // WorkoutKit goal/display unit (e.g. "mile", "km"). Per-block measurement_unit
-        // still decides whether a step goal is time-based or distance-based.
-        let workoutUnit: String?
-        if workout.sport.isSwimmingType {
-            workoutUnit = resolveSwimmingMeasurementUnit(workout)
-        } else {
-            workoutUnit = workout.unit
-        }
+        // Top-level unit preference derived from metricType:
+        // imperial → mile/yard, metric → km/meter, unspecified/nil → fallback to workout.unit
+        let workoutUnit: String? = resolveWorkoutUnit(workout)
 
         // ── Split by type ────────────────────────────────────────────────
         let warmupBlocksList   = allBlocks.filter { $0.type?.uppercased() == "WARMUP"   }
@@ -303,7 +297,9 @@ class WorkoutPlanBuilder {
                                               distance: block.distance,
                                               duration: block.duration,
                                               workoutUnit: workoutUnit,
-                                              isPoolSwimming: isPoolSwimming)
+                                              isPoolSwimming: isPoolSwimming,
+                                              zoneUnit: block.zoneUnit,
+                                              targetRange: block.targetRange)
                 step.step.alert = resolveAlert(zoneUnit: block.zoneUnit,
                                                targetRange: block.targetRange,
                                                sport: sport,
@@ -317,7 +313,9 @@ class WorkoutPlanBuilder {
                                               distance: block.distance,
                                               duration: block.duration,
                                               workoutUnit: workoutUnit,
-                                              isPoolSwimming: isPoolSwimming)
+                                              isPoolSwimming: isPoolSwimming,
+                                              zoneUnit: block.zoneUnit,
+                                              targetRange: block.targetRange)
                 step.step.alert = resolveAlert(zoneUnit: block.zoneUnit,
                                                targetRange: block.targetRange,
                                                sport: sport,
@@ -374,7 +372,9 @@ class WorkoutPlanBuilder {
             distance: block.distance,
             duration: block.duration,
             workoutUnit: workoutUnit,
-            isPoolSwimming: isPoolSwimming
+            isPoolSwimming: isPoolSwimming,
+            zoneUnit: block.zoneUnit,
+            targetRange: block.targetRange
         )
         step.step.alert = resolveAlert(
             zoneUnit: block.zoneUnit,
@@ -413,7 +413,9 @@ class WorkoutPlanBuilder {
             distance: block.distance,
             duration: block.duration,
             workoutUnit: workoutUnit,
-            isPoolSwimming: isPoolSwimming
+            isPoolSwimming: isPoolSwimming,
+            zoneUnit: block.zoneUnit,
+            targetRange: block.targetRange
         )
         let alert = resolveAlert(
             zoneUnit: block.zoneUnit,
@@ -443,35 +445,42 @@ class WorkoutPlanBuilder {
         distance: Double?,
         duration: Int?,
         workoutUnit: String? = nil,
-        isPoolSwimming: Bool = false
+        isPoolSwimming: Bool = false,
+        zoneUnit: String? = nil,
+        targetRange: TargetRange? = nil
     ) -> WorkoutGoal {
-        // All incoming distances are in meters. measurement_unit decides goal TYPE
-        // (distance vs time). workoutUnit (top-level) overrides the output UnitLength
-        // so Apple Watch displays the goal in the caller's preferred unit.
-
-        // Pool swimming with both distance and duration → .poolSwimDistanceWithTime (iOS 18+)
-        if isPoolSwimming,
-           isDistanceUnit(measurementUnit),
-           let dist = distance, dist > 0,
-           let dur = duration, dur > 0 {
-            if #available(iOS 18.0, *) {
-                let unitLength = lengthUnit(for: workoutUnit ?? measurementUnit)
-                let distMeasurement = Measurement(value: dist, unit: UnitLength.meters)
-                    .converted(to: unitLength)
-                let timeMeasurement = Measurement(value: Double(dur), unit: UnitDuration.seconds)
-                return .poolSwimDistanceWithTime(distMeasurement, timeMeasurement)
-            }
-            // Fall through to standard distance goal on iOS 17
-        }
+        // measurement_unit is the primary discriminator:
+        // distance units (meter, yard, km, mile) → distance-based goal
+        // time units (second, minute) → duration-based goal
 
         if isDistanceUnit(measurementUnit), let dist = distance, dist > 0 {
-            let unitLength     = lengthUnit(for: workoutUnit ?? measurementUnit)
+            let unitLength = lengthUnit(for: workoutUnit ?? measurementUnit)
+
+            // Pool swimming → .poolSwimDistanceWithTime (iOS 18+)
+            // Swimming distance is already in target unit (yards/meters).
+            // Duration is calculated from pace when zone_unit is PACE/SPEED.
+            if isPoolSwimming {
+                if #available(iOS 18.0, *) {
+                    let distMeasurement = Measurement(value: dist, unit: unitLength)
+                    let durationSeconds = calculateDurationFromPace(
+                        distance: dist,
+                        measurementUnit: workoutUnit ?? measurementUnit,
+                        zoneUnit: zoneUnit,
+                        targetRange: targetRange,
+                        fallbackDuration: duration
+                    )
+                    let timeMeasurement = Measurement(value: durationSeconds, unit: UnitDuration.seconds)
+                    return .poolSwimDistanceWithTime(distMeasurement, timeMeasurement)
+                }
+            }
+
+            // Non-swimming: distance is in meters, convert to target unit
             let convertedValue = Measurement(value: dist, unit: UnitLength.meters)
                 .converted(to: unitLength).value
             return .distance(convertedValue, unitLength)
         }
 
-        if let dur = duration, dur > 0 {
+        if isTimeUnit(measurementUnit), let dur = duration, dur > 0 {
             if measurementUnit?.lowercased() == "minute" {
                 return .time(Double(dur), .minutes)
             }
@@ -479,6 +488,36 @@ class WorkoutPlanBuilder {
         }
 
         return .open
+    }
+
+    /// Calculates duration in seconds from pace/speed target range.
+    /// Pace values are in seconds per 1000m. Average of low+high gives avg pace.
+    /// Duration = distance_in_meters / avg_speed_mps
+    private func calculateDurationFromPace(
+        distance: Double,
+        measurementUnit: String?,
+        zoneUnit: String?,
+        targetRange: TargetRange?,
+        fallbackDuration: Int?
+    ) -> Double {
+        let unit = zoneUnit?.uppercased() ?? ""
+        let isPaceOrSpeed = (unit == "PACE" || unit == "SPEED")
+
+        if isPaceOrSpeed,
+           let low = targetRange?.low, let high = targetRange?.high,
+           low > 0 || high > 0 {
+            let avgPace = Double(low + high) / 2.0
+            guard avgPace > 0 else {
+                return Double(fallbackDuration ?? 0)
+            }
+            // Convert distance to meters for speed calculation
+            let distInMeters = Measurement(value: distance, unit: lengthUnit(for: measurementUnit))
+                .converted(to: .meters).value
+            let avgSpeedMps = 1000.0 / avgPace
+            return distInMeters / avgSpeedMps
+        }
+
+        return Double(fallbackDuration ?? 0)
     }
 
     // MARK: - Location helper
@@ -490,15 +529,21 @@ class WorkoutPlanBuilder {
         return (raw == .indoor) ? .indoor : .outdoor
     }
 
-    // MARK: - Swimming helpers
+    // MARK: - Unit resolution
 
-    /// Resolves the measurement unit for swimming workouts based on pool size.
-    /// nil or contains "m" (e.g. "25m", "50m") → "meter"; otherwise (e.g. "25y") → "yard".
-    private func resolveSwimmingMeasurementUnit(_ workout: WorkoutInstanceModelElement) -> String? {
-        if let ps = workout.poolSize {
-            return (!ps.isEmpty && !ps.lowercased().contains("m")) ? "yard" : "meter"
+    /// Resolves the preferred display unit for workout goals based on `metricType`.
+    /// - `.imperial`: swimming → "yard", non-swimming → "mile"
+    /// - `.metric`: swimming → "meter", non-swimming → "km"
+    /// - `.unspecified` or nil: falls back to `workout.unit` or "meter"
+    private func resolveWorkoutUnit(_ workout: WorkoutInstanceModelElement) -> String? {
+        switch workout.metricType {
+        case .imperial:
+            return workout.sport.isSwimmingType ? "yard" : "mile"
+        case .metric:
+            return workout.sport.isSwimmingType ? "meter" : "km"
+        case .unspecified, .none:
+            return workout.unit ?? "meter"
         }
-        return workout.summary?.measurementUnit
     }
 
     // MARK: - Alert resolution (with pre-validation)
@@ -578,6 +623,11 @@ class WorkoutPlanBuilder {
     private func isDistanceUnit(_ unit: String?) -> Bool {
         guard let u = unit?.lowercased() else { return false }
         return ["meter", "km", "mile", "yard"].contains(u)
+    }
+
+    private func isTimeUnit(_ unit: String?) -> Bool {
+        guard let u = unit?.lowercased() else { return false }
+        return ["second", "minute"].contains(u)
     }
 
     private func lengthUnit(for unit: String?) -> UnitLength {

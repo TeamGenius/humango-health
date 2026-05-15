@@ -135,7 +135,7 @@ class _WorkoutPushScreenState extends State<WorkoutPushScreen> {
           'sport': 'SWIMMING',
           'distance': 1500.0,
           'duration': 2700,
-          'pool_size': '25m',
+          'metric_type': 'METRIC',
           'summary': {
             'name': 'Test: 25 m Pool Swim',
             'sport': 'SWIMMING',
@@ -177,7 +177,7 @@ class _WorkoutPushScreenState extends State<WorkoutPushScreen> {
           'sport': 'SWIMMING',
           'distance': 1500.0,
           'duration': 2700,
-          'pool_size': '25m',
+          'metric_type': 'METRIC',
           'summary': {
             'name': 'Test: 25 m Pool Swim',
             'sport': 'SWIMMING',
@@ -218,7 +218,7 @@ class _WorkoutPushScreenState extends State<WorkoutPushScreen> {
           'sport': 'SWIMMING',
           'distance': 1650.0,
           'duration': 2700,
-          'pool_size': '25y',
+          'metric_type': 'IMPERIAL',
           'summary': {
             'name': 'Test: 25 yd Pool Swim',
             'sport': 'SWIMMING',
@@ -366,49 +366,19 @@ class _WorkoutPushScreenState extends State<WorkoutPushScreen> {
       ],
     ),
     _Scenario(
-      label: '2 Warmups + Interval + Cooldown',
+      label: 'Swimming — Building Endurance in Open Water',
       icon: Icons.fitness_center,
       color: Colors.deepOrange,
       workouts: [
-        {
-          'schedule_id': 'multi-warmup-interval-001',
-          'sport': 'CYCLING',
-          'duration': 2700,
-          'summary': {
-            'name': 'Test: 2 Warmups + Interval + Cooldown',
-            'sport': 'CYCLING',
-          },
-          'blocks': [
-            {
-              'type': 'WARMUP',
-              'duration': 600,
-              'measurement_unit': 'second',
-              'zone_unit': 'POWER',
-              'target_range': {'low': 85, 'high': 128},
-            },
-            {
-              'type': 'WARMUP',
-              'duration': 300,
-              'measurement_unit': 'second',
-              'zone_unit': 'POWER',
-              'target_range': {'low': 100, 'high': 150},
-            },
-            {
-              'type': 'INTERVAL',
-              'duration': 1200,
-              'measurement_unit': 'second',
-              'zone_unit': 'POWER',
-              'target_range': {'low': 191, 'high': 222},
-            },
-            {
-              'type': 'COOLDOWN',
-              'duration': 600,
-              'measurement_unit': 'second',
-              'zone_unit': 'POWER',
-              'target_range': {'low': 85, 'high': 128},
-            },
-          ],
-        },
+        {"schedule_id":"60149942","date":"2026-05-19T01:15:00Z","sport":"SWIMMING","workout_id":684068,"average_intensity":77,"blocks":[{"block_intent":"WARMUP","cadence_min":0,"distance":85,"duration":180,"equipment_type":"","id":2095424,"intensity":72,"measurement_unit":"second","sport":"SWIMMING","target_range":{"high":1875,"low":2344},"training_load":1,"type":"WARMUP","zone_unit":"PACE"},{"block_intent":"WARMUP","cadence_min":0,"distance":0,"duration":30,"equipment_type":"","id":2095425,"intensity":0,"measurement_unit":"second","sport":"SWIMMING","target_range":{"high":1515,"low":1596},"training_load":0,"type":"REST","zone_unit":"PACE"},{"block_intent":"WARMUP","cadence_min":0,"distance":101,"duration":180,"equipment_type":"","id":2095426,"intensity":83,"measurement_unit":"second","sport":"SWIMMING","target_range":{"high":1705,"low":1875},"training_load":2,"type":"WARMUP","zone_unit":"PACE"},{"block_intent":"WARMUP","cadence_min":0,"distance":0,"duration":30,"equipment_type":"","id":2095427,"intensity":0,"measurement_unit":"second","sport":"SWIMMING","target_range":{"high":1515,"low":1596},"training_load":0,"type":"REST","zone_unit":"PACE"},{"block_intent":"WARMUP","cadence_min":0,"distance":109,"duration":180,"equipment_type":"","id":2095428,"intensity":90,"measurement_unit":"second","sport":"SWIMMING","target_range":{"high":1596,"low":1705},"training_load":3,"type":"WARMUP","zone_unit":"PACE"},{"block_intent":"MAINSET","cadence_min":0,"distance":0,"duration":60,"equipment_type":"","id":2095429,"intensity":0,"measurement_unit":"second","sport":"SWIMMING","target_range":{"high":1515,"low":1596},"training_load":0,"type":"REST","zone_unit":"PACE"},{"blocks":[{"block_intent":"MAINSET","cadence_min":0,"distance":168,"duration":300,"equipment_type":"","id":2095432,"intensity":83,"measurement_unit":"second","sport":"SWIMMING","target_range":{"high":1705,"low":1875},"training_load":4,"type":"INTERVAL","zone_unit":"PACE"},{"block_intent":"MAINSET","cadence_min":0,"distance":0,"duration":60,"equipment_type":"","id":2095433,"intensity":0,"measurement_unit":"second","sport":"SWIMMING","target_range":{"high":1515,"low":1596},"training_load":0,"type":"REST","zone_unit":"PACE"},{"block_intent":"MAINSET","cadence_min":0,"distance":251,"duration":450,"equipment_type":"","id":2095434,"intensity":83,"measurement_unit":"second","sport":"SWIMMING","target_range":{"high":1705,"low":1875},"training_load":7,"type":"INTERVAL","zone_unit":"PACE"},{"block_intent":"MAINSET","cadence_min":0,"distance":0,"duration":60,"equipment_type":"","id":2095435,"intensity":0,"measurement_unit":"second","sport":"SWIMMING","target_range":{"high":1515,"low":1596},"training_load":0,"type":"REST","zone_unit":"PACE"},{"block_intent":"MAINSET","cadence_min":0,"distance":335,"duration":600,"equipment_type":"","id":2095436,"intensity":83,"measurement_unit":"second","sport":"SWIMMING","target_range":{"high":1705,"low":1875},"training_load":9,"type":"INTERVAL","zone_unit":"PACE"},{"block_intent":"MAINSET","cadence_min":0,"distance":0,"duration":120,"equipment_type":"","id":2095437,"intensity":0,"measurement_unit":"second","sport":"SWIMMING","target_range":{"high":1515,"low":1596},"training_load":0,"type":"REST","zone_unit":"PACE"}],"distance":754,"duration":1590,"repeat":1,"training_load":21,"type":"REPEAT"},{"block_intent":"COOLDOWN","cadence_min":0,"distance":142,"duration":300,"equipment_type":"","id":2095431,"intensity":72,"measurement_unit":"second","sport":"SWIMMING","target_range":{"high":1875,"low":2344},"training_load":3,"type":"COOLDOWN","zone_unit":"PACE"}],"distance":1191,"distance_ri_adjusted":null,"duration":2550,"duration_ri_adjusted":null,"id":29582,"index":0,"summary":{"author_id":null,"description":{"execution":"","fueling":"","general":"This can be adapted to a pool swim. If in open water, be sure to turn back after the 2nd swim and use your cool down to get back to shore.\nBuild your continuous swimming endurance at Z2. \n","purpose":"","tips":"","video_url":""},"elevation":null,"form":false,"measurement_unit":"second","name":"Building endurance in open water v4","sport":"SWIMMING","test_workout":false,"zone_unit":"PACE","tags":"endurance,midd","indoor_outdoor":"INDOOR","index_max":2,"brick":false},"tiz":[480,1530,180,0,0,0,0],"training_load":24,"external_url":null,"workout_chart":[{"duration":180,"intensity":72,"value":2109.5,"sport":"SWIMMING","stepPhoto":"https://source.unsplash.com/user/c_v_r/375x250","descriptions":"https://source.unsplash.com/user/c_v_r/375x250"},{"duration":30,"intensity":0,"value":1555.5,"sport":"SWIMMING","stepPhoto":"https://source.unsplash.com/user/c_v_r/375x250","descriptions":"https://source.unsplash.com/user/c_v_r/375x250"},{"duration":180,"intensity":83,"value":1790,"sport":"SWIMMING","stepPhoto":"https://source.unsplash.com/user/c_v_r/375x250","descriptions":"https://source.unsplash.com/user/c_v_r/375x250"},{"duration":30,"intensity":0,"value":1555.5,"sport":"SWIMMING","stepPhoto":"https://source.unsplash.com/user/c_v_r/375x250","descriptions":"https://source.unsplash.com/user/c_v_r/375x250"},{"duration":180,"intensity":90,"value":1650.5,"sport":"SWIMMING","stepPhoto":"https://source.unsplash.com/user/c_v_r/375x250","descriptions":"https://source.unsplash.com/user/c_v_r/375x250"},{"duration":60,"intensity":0,"value":1555.5,"sport":"SWIMMING","stepPhoto":"https://source.unsplash.com/user/c_v_r/375x250","descriptions":"https://source.unsplash.com/user/c_v_r/375x250"},{"duration":300,"intensity":83,"value":1790,"sport":"SWIMMING","stepPhoto":"https://source.unsplash.com/user/c_v_r/375x250","descriptions":"https://source.unsplash.com/user/c_v_r/375x250"},{"duration":60,"intensity":0,"value":1555.5,"sport":"SWIMMING","stepPhoto":"https://source.unsplash.com/user/c_v_r/375x250","descriptions":"https://source.unsplash.com/user/c_v_r/375x250"},{"duration":450,"intensity":83,"value":1790,"sport":"SWIMMING","stepPhoto":"https://source.unsplash.com/user/c_v_r/375x250","descriptions":"https://source.unsplash.com/user/c_v_r/375x250"},{"duration":60,"intensity":0,"value":1555.5,"sport":"SWIMMING","stepPhoto":"https://source.unsplash.com/user/c_v_r/375x250","descriptions":"https://source.unsplash.com/user/c_v_r/375x250"},{"duration":600,"intensity":83,"value":1790,"sport":"SWIMMING","stepPhoto":"https://source.unsplash.com/user/c_v_r/375x250","descriptions":"https://source.unsplash.com/user/c_v_r/375x250"},{"duration":120,"intensity":0,"value":1555.5,"sport":"SWIMMING","stepPhoto":"https://source.unsplash.com/user/c_v_r/375x250","descriptions":"https://source.unsplash.com/user/c_v_r/375x250"},{"duration":300,"intensity":72,"value":2109.5,"sport":"SWIMMING","stepPhoto":"https://source.unsplash.com/user/c_v_r/375x250","descriptions":"https://source.unsplash.com/user/c_v_r/375x250"}],"zone_target":"ENDURANCE","metric_type":"METRIC"}
+      ],
+    ),
+    _Scenario(
+      label: 'Swimming — Building Endurance OW v4 (Copy)',
+      icon: Icons.pool,
+      color: Colors.deepOrange.shade700,
+      workouts: [
+        {"schedule_id":"60149942-copy","date":"2026-05-19T01:15:00Z","sport":"SWIMMING","workout_id":684068,"average_intensity":77,"blocks":[{"block_intent":"WARMUP","cadence_min":0,"distance":85,"duration":180,"equipment_type":"","id":2095424,"intensity":72,"measurement_unit":"second","sport":"SWIMMING","target_range":{"high":1875,"low":2344},"training_load":1,"type":"WARMUP","zone_unit":"PACE"},{"block_intent":"WARMUP","cadence_min":0,"distance":0,"duration":30,"equipment_type":"","id":2095425,"intensity":0,"measurement_unit":"second","sport":"SWIMMING","target_range":{"high":1515,"low":1596},"training_load":0,"type":"REST","zone_unit":"PACE"},{"block_intent":"WARMUP","cadence_min":0,"distance":101,"duration":180,"equipment_type":"","id":2095426,"intensity":83,"measurement_unit":"second","sport":"SWIMMING","target_range":{"high":1705,"low":1875},"training_load":2,"type":"WARMUP","zone_unit":"PACE"},{"block_intent":"WARMUP","cadence_min":0,"distance":0,"duration":30,"equipment_type":"","id":2095427,"intensity":0,"measurement_unit":"second","sport":"SWIMMING","target_range":{"high":1515,"low":1596},"training_load":0,"type":"REST","zone_unit":"PACE"},{"block_intent":"WARMUP","cadence_min":0,"distance":109,"duration":180,"equipment_type":"","id":2095428,"intensity":90,"measurement_unit":"second","sport":"SWIMMING","target_range":{"high":1596,"low":1705},"training_load":3,"type":"WARMUP","zone_unit":"PACE"},{"block_intent":"MAINSET","cadence_min":0,"distance":0,"duration":60,"equipment_type":"","id":2095429,"intensity":0,"measurement_unit":"second","sport":"SWIMMING","target_range":{"high":1515,"low":1596},"training_load":0,"type":"REST","zone_unit":"PACE"},{"blocks":[{"block_intent":"MAINSET","cadence_min":0,"distance":168,"duration":300,"equipment_type":"","id":2095432,"intensity":83,"measurement_unit":"second","sport":"SWIMMING","target_range":{"high":1705,"low":1875},"training_load":4,"type":"INTERVAL","zone_unit":"PACE"},{"block_intent":"MAINSET","cadence_min":0,"distance":0,"duration":60,"equipment_type":"","id":2095433,"intensity":0,"measurement_unit":"second","sport":"SWIMMING","target_range":{"high":1515,"low":1596},"training_load":0,"type":"REST","zone_unit":"PACE"},{"block_intent":"MAINSET","cadence_min":0,"distance":251,"duration":450,"equipment_type":"","id":2095434,"intensity":83,"measurement_unit":"second","sport":"SWIMMING","target_range":{"high":1705,"low":1875},"training_load":7,"type":"INTERVAL","zone_unit":"PACE"},{"block_intent":"MAINSET","cadence_min":0,"distance":0,"duration":60,"equipment_type":"","id":2095435,"intensity":0,"measurement_unit":"second","sport":"SWIMMING","target_range":{"high":1515,"low":1596},"training_load":0,"type":"REST","zone_unit":"PACE"},{"block_intent":"MAINSET","cadence_min":0,"distance":335,"duration":600,"equipment_type":"","id":2095436,"intensity":83,"measurement_unit":"second","sport":"SWIMMING","target_range":{"high":1705,"low":1875},"training_load":9,"type":"INTERVAL","zone_unit":"PACE"},{"block_intent":"MAINSET","cadence_min":0,"distance":0,"duration":120,"equipment_type":"","id":2095437,"intensity":0,"measurement_unit":"second","sport":"SWIMMING","target_range":{"high":1515,"low":1596},"training_load":0,"type":"REST","zone_unit":"PACE"}],"distance":754,"duration":1590,"repeat":1,"training_load":21,"type":"REPEAT"},{"block_intent":"COOLDOWN","cadence_min":0,"distance":142,"duration":300,"equipment_type":"","id":2095431,"intensity":72,"measurement_unit":"second","sport":"SWIMMING","target_range":{"high":1875,"low":2344},"training_load":3,"type":"COOLDOWN","zone_unit":"PACE"}],"distance":1191,"distance_ri_adjusted":null,"duration":2550,"duration_ri_adjusted":null,"id":29582,"index":0,"summary":{"author_id":null,"description":{"execution":"","fueling":"","general":"This can be adapted to a pool swim. If in open water, be sure to turn back after the 2nd swim and use your cool down to get back to shore.\nBuild your continuous swimming endurance at Z2. \n","purpose":"","tips":"","video_url":""},"elevation":null,"form":false,"measurement_unit":"second","name":"Building endurance in open water v4","sport":"SWIMMING","test_workout":false,"zone_unit":"PACE","tags":"endurance,midd","indoor_outdoor":"INDOOR","index_max":2,"brick":false},"tiz":[480,1530,180,0,0,0,0],"training_load":24,"external_url":null,"workout_chart":[{"duration":180,"intensity":72,"value":2109.5,"sport":"SWIMMING","stepPhoto":"https://source.unsplash.com/user/c_v_r/375x250","descriptions":"https://source.unsplash.com/user/c_v_r/375x250"},{"duration":30,"intensity":0,"value":1555.5,"sport":"SWIMMING","stepPhoto":"https://source.unsplash.com/user/c_v_r/375x250","descriptions":"https://source.unsplash.com/user/c_v_r/375x250"},{"duration":180,"intensity":83,"value":1790,"sport":"SWIMMING","stepPhoto":"https://source.unsplash.com/user/c_v_r/375x250","descriptions":"https://source.unsplash.com/user/c_v_r/375x250"},{"duration":30,"intensity":0,"value":1555.5,"sport":"SWIMMING","stepPhoto":"https://source.unsplash.com/user/c_v_r/375x250","descriptions":"https://source.unsplash.com/user/c_v_r/375x250"},{"duration":180,"intensity":90,"value":1650.5,"sport":"SWIMMING","stepPhoto":"https://source.unsplash.com/user/c_v_r/375x250","descriptions":"https://source.unsplash.com/user/c_v_r/375x250"},{"duration":60,"intensity":0,"value":1555.5,"sport":"SWIMMING","stepPhoto":"https://source.unsplash.com/user/c_v_r/375x250","descriptions":"https://source.unsplash.com/user/c_v_r/375x250"},{"duration":300,"intensity":83,"value":1790,"sport":"SWIMMING","stepPhoto":"https://source.unsplash.com/user/c_v_r/375x250","descriptions":"https://source.unsplash.com/user/c_v_r/375x250"},{"duration":60,"intensity":0,"value":1555.5,"sport":"SWIMMING","stepPhoto":"https://source.unsplash.com/user/c_v_r/375x250","descriptions":"https://source.unsplash.com/user/c_v_r/375x250"},{"duration":450,"intensity":83,"value":1790,"sport":"SWIMMING","stepPhoto":"https://source.unsplash.com/user/c_v_r/375x250","descriptions":"https://source.unsplash.com/user/c_v_r/375x250"},{"duration":60,"intensity":0,"value":1555.5,"sport":"SWIMMING","stepPhoto":"https://source.unsplash.com/user/c_v_r/375x250","descriptions":"https://source.unsplash.com/user/c_v_r/375x250"},{"duration":600,"intensity":83,"value":1790,"sport":"SWIMMING","stepPhoto":"https://source.unsplash.com/user/c_v_r/375x250","descriptions":"https://source.unsplash.com/user/c_v_r/375x250"},{"duration":120,"intensity":0,"value":1555.5,"sport":"SWIMMING","stepPhoto":"https://source.unsplash.com/user/c_v_r/375x250","descriptions":"https://source.unsplash.com/user/c_v_r/375x250"},{"duration":300,"intensity":72,"value":2109.5,"sport":"SWIMMING","stepPhoto":"https://source.unsplash.com/user/c_v_r/375x250","descriptions":"https://source.unsplash.com/user/c_v_r/375x250"}],"zone_target":"ENDURANCE","metric_type":"METRIC"}
       ],
     ),
     _Scenario(
@@ -2113,6 +2083,1211 @@ class _WorkoutPushScreenState extends State<WorkoutPushScreen> {
         },
       ],
     ),
+    _Scenario(
+      label: 'Swimming — Beach Race Starts OW',
+      icon: Icons.waves,
+      color: Colors.cyan.shade800,
+      workouts: [
+        {
+          'schedule_id': 'swim-beach-race-starts-001',
+          'sport': 'SWIMMING',
+   "metric_type":"IMPERIAL",
+"average_intensity":84,
+"blocks":[
+{
+"block_intent":"WARMUP",
+"cadence_min":0,
+"distance":297,
+"duration":480,
+"equipment_type":"",
+"id":2095099,
+"intensity":72,
+"measurement_unit":"second",
+"sport":"SWIMMING",
+"target_range":{
+"high":1435,
+"low":1794
+},
+"training_load":4,
+"type":"WARMUP",
+"zone_unit":"PACE"
+},
+{
+"block_intent":"MAINSET",
+"cadence_min":0,
+"distance":0,
+"duration":60,
+"equipment_type":"",
+"id":2095100,
+"intensity":0,
+"measurement_unit":"second",
+"sport":"SWIMMING",
+"target_range":{
+"high":1160,
+"low":1222
+},
+"training_load":0,
+"type":"REST",
+"zone_unit":"PACE"
+},
+{
+"blocks":[
+{
+"block_intent":"MAINSET",
+"cadence_min":0,
+"distance":150,
+"duration":190,
+"equipment_type":"",
+"id":2095103,
+"intensity":90,
+"measurement_unit":"yard",
+"sport":"SWIMMING",
+"target_range":{
+"high":1222,
+"low":1305
+},
+"training_load":3,
+"type":"INTERVAL",
+"zone_unit":"PACE"
+},
+{
+"block_intent":"MAINSET",
+"cadence_min":0,
+"distance":0,
+"duration":5,
+"equipment_type":"",
+"id":2095104,
+"intensity":0,
+"measurement_unit":"second",
+"sport":"SWIMMING",
+"target_range":{
+"high":1160,
+"low":1222
+},
+"training_load":0,
+"type":"REST",
+"zone_unit":"PACE"
+},
+{
+"block_intent":"MAINSET",
+"cadence_min":0,
+"distance":150,
+"duration":179,
+"equipment_type":"",
+"id":2095105,
+"intensity":96,
+"measurement_unit":"yard",
+"sport":"SWIMMING",
+"target_range":{
+"high":1160,
+"low":1222
+},
+"training_load":4,
+"type":"INTERVAL",
+"zone_unit":"PACE"
+},
+{
+"block_intent":"MAINSET",
+"cadence_min":0,
+"distance":0,
+"duration":60,
+"equipment_type":"",
+"id":2095106,
+"intensity":0,
+"measurement_unit":"second",
+"sport":"SWIMMING",
+"target_range":{
+"high":1160,
+"low":1222
+},
+"training_load":0,
+"type":"REST",
+"zone_unit":"PACE"
+},
+{
+"block_intent":"MAINSET",
+"cadence_min":0,
+"distance":150,
+"duration":190,
+"equipment_type":"",
+"id":2095107,
+"intensity":90,
+"measurement_unit":"yard",
+"sport":"SWIMMING",
+"target_range":{
+"high":1222,
+"low":1305
+},
+"training_load":3,
+"type":"INTERVAL",
+"zone_unit":"PACE"
+},
+{
+"block_intent":"MAINSET",
+"cadence_min":0,
+"distance":0,
+"duration":5,
+"equipment_type":"",
+"id":2095108,
+"intensity":0,
+"measurement_unit":"second",
+"sport":"SWIMMING",
+"target_range":{
+"high":1160,
+"low":1222
+},
+"training_load":0,
+"type":"REST",
+"zone_unit":"PACE"
+},
+{
+"block_intent":"MAINSET",
+"cadence_min":0,
+"distance":150,
+"duration":179,
+"equipment_type":"",
+"id":2095109,
+"intensity":96,
+"measurement_unit":"yard",
+"sport":"SWIMMING",
+"target_range":{
+"high":1160,
+"low":1222
+},
+"training_load":4,
+"type":"INTERVAL",
+"zone_unit":"PACE"
+},
+{
+"block_intent":"MAINSET",
+"cadence_min":0,
+"distance":0,
+"duration":60,
+"equipment_type":"",
+"id":2095110,
+"intensity":0,
+"measurement_unit":"second",
+"sport":"SWIMMING",
+"target_range":{
+"high":1160,
+"low":1222
+},
+"training_load":0,
+"type":"REST",
+"zone_unit":"PACE"
+},
+{
+"block_intent":"MAINSET",
+"cadence_min":0,
+"distance":150,
+"duration":190,
+"equipment_type":"",
+"id":2095111,
+"intensity":90,
+"measurement_unit":"yard",
+"sport":"SWIMMING",
+"target_range":{
+"high":1222,
+"low":1305
+},
+"training_load":3,
+"type":"INTERVAL",
+"zone_unit":"PACE"
+},
+{
+"block_intent":"MAINSET",
+"cadence_min":0,
+"distance":0,
+"duration":5,
+"equipment_type":"",
+"id":2095112,
+"intensity":0,
+"measurement_unit":"second",
+"sport":"SWIMMING",
+"target_range":{
+"high":1160,
+"low":1222
+},
+"training_load":0,
+"type":"REST",
+"zone_unit":"PACE"
+},
+{
+"block_intent":"MAINSET",
+"cadence_min":0,
+"distance":150,
+"duration":179,
+"equipment_type":"",
+"id":2095113,
+"intensity":96,
+"measurement_unit":"yard",
+"sport":"SWIMMING",
+"target_range":{
+"high":1160,
+"low":1222
+},
+"training_load":4,
+"type":"INTERVAL",
+"zone_unit":"PACE"
+},
+{
+"block_intent":"MAINSET",
+"cadence_min":0,
+"distance":0,
+"duration":60,
+"equipment_type":"",
+"id":2095114,
+"intensity":0,
+"measurement_unit":"second",
+"sport":"SWIMMING",
+"target_range":{
+"high":1160,
+"low":1222
+},
+"training_load":0,
+"type":"REST",
+"zone_unit":"PACE"
+}
+],
+"distance":1800,
+"duration":2604,
+"repeat":2,
+"training_load":49,
+"type":"REPEAT"
+},
+{
+"block_intent":"COOLDOWN",
+"cadence_min":0,
+"distance":223,
+"duration":360,
+"equipment_type":"",
+"id":2095102,
+"intensity":72,
+"measurement_unit":"second",
+"sport":"SWIMMING",
+"target_range":{
+"high":1435,
+"low":1794
+},
+"training_load":3,
+"type":"COOLDOWN",
+"zone_unit":"PACE"
+}
+],
+"brick_summaries":[
+],
+"distance":2320,
+"duration":3504,
+"id":28962,
+"index":1,
+"intent":"INTENSITY",
+"interval_target":false,
+"main_duration":2664,
+"main_tiz":[
+0,
+0,
+1140,
+1074,
+0,
+0,
+0
+],
+"priority":0,
+"sport":"SWIMMING",
+"summary":{
+"brick":false,
+   "indoor_outdoor": "INDOOR",
+"description":{
+"execution":"",
+"fueling":"",
+"general":"Practice your strong beach race finishes and your sighting strategy with 3 x (1 x 150 at Z3, turn around, 1x 150 at Z4 and a quick run up to the beach, then recover while wading back in the water). ",
+"purpose":"",
+"tips":"",
+"video_url":""
+},
+"form":false,
+"index_max":4,
+"measurement_unit":"yard",
+"name":"Beach race finishes and sighting open water-2",
+"metric_type":"IMPERIAL",
+"private":false,
+"sport":"SWIMMING",
+"tags":"sprints,speed,midd,sprintd,form",
+"test_workout":false,
+"zone_unit":"HR"
+},
+
+"tiz":[
+840,
+0,
+1140,
+1074,
+0,
+0,
+0
+],
+"training_load":49,
+"workout_chart":[
+{
+"duration":480,
+"intensity":72,
+"sport":"SWIMMING",
+"value":1614.5
+},
+{
+"duration":60,
+"intensity":0,
+"sport":"SWIMMING",
+"value":1191
+},
+{
+"duration":190,
+"intensity":90,
+"sport":"SWIMMING",
+"value":1263.5
+},
+{
+"duration":5,
+"intensity":0,
+"sport":"SWIMMING",
+"value":1191
+},
+{
+"duration":179,
+"intensity":96,
+"sport":"SWIMMING",
+"value":1191
+},
+{
+"duration":60,
+"intensity":0,
+"sport":"SWIMMING",
+"value":1191
+},
+{
+"duration":190,
+"intensity":90,
+"sport":"SWIMMING",
+"value":1263.5
+},
+{
+"duration":5,
+"intensity":0,
+"sport":"SWIMMING",
+"value":1191
+},
+{
+"duration":179,
+"intensity":96,
+"sport":"SWIMMING",
+"value":1191
+},
+{
+"duration":60,
+"intensity":0,
+"sport":"SWIMMING",
+"value":1191
+},
+{
+"duration":190,
+"intensity":90,
+"sport":"SWIMMING",
+"value":1263.5
+},
+{
+"duration":5,
+"intensity":0,
+"sport":"SWIMMING",
+"value":1191
+},
+{
+"duration":179,
+"intensity":96,
+"sport":"SWIMMING",
+"value":1191
+},
+{
+"duration":60,
+"intensity":0,
+"sport":"SWIMMING",
+"value":1191
+},
+{
+"duration":190,
+"intensity":90,
+"sport":"SWIMMING",
+"value":1263.5
+},
+{
+"duration":5,
+"intensity":0,
+"sport":"SWIMMING",
+"value":1191
+},
+{
+"duration":179,
+"intensity":96,
+"sport":"SWIMMING",
+"value":1191
+},
+{
+"duration":60,
+"intensity":0,
+"sport":"SWIMMING",
+"value":1191
+},
+{
+"duration":190,
+"intensity":90,
+"sport":"SWIMMING",
+"value":1263.5
+},
+{
+"duration":5,
+"intensity":0,
+"sport":"SWIMMING",
+"value":1191
+},
+{
+"duration":179,
+"intensity":96,
+"sport":"SWIMMING",
+"value":1191
+},
+{
+"duration":60,
+"intensity":0,
+"sport":"SWIMMING",
+"value":1191
+},
+{
+"duration":190,
+"intensity":90,
+"sport":"SWIMMING",
+"value":1263.5
+},
+{
+"duration":5,
+"intensity":0,
+"sport":"SWIMMING",
+"value":1191
+},
+{
+"duration":179,
+"intensity":96,
+"sport":"SWIMMING",
+"value":1191
+},
+{
+"duration":60,
+"intensity":0,
+"sport":"SWIMMING",
+"value":1191
+},
+{
+"duration":360,
+"intensity":72,
+"sport":"SWIMMING",
+"value":1614.5
+}
+],
+"workout_id":677287,
+"zone_target":"THRESHOLD"
+
+        },
+     
+      ],
+    ),
+    _Scenario(
+      label: 'Running — Ultra Long Endurance (Imperial)',
+      icon: Icons.directions_run,
+      color: Colors.red.shade800,
+      workouts: [
+        {
+          "schedule_id": "ultra-endurance-imperial-001",
+          "date": "2026-05-19T08:00:00Z",
+          "sport": "RUNNING",
+          "metric_type": "IMPERIAL",
+          "average_intensity": 51,
+          "blocks": [
+            {
+              "block_intent": "WARMUP",
+              "cadence_min": 0,
+              "description": "Aim to reach Z2 by the end of your warm up",
+              "distance": 555,
+              "duration": 600,
+              "equipment_type": "",
+              "id": 2090346,
+              "intensity": 42,
+              "measurement_unit": "second",
+              "sport": "RUNNING",
+              "target_range": {"high": 140, "low": 122},
+              "training_load": 2,
+              "type": "WARMUP",
+              "zone_unit": "HR"
+            },
+            {
+              "block_intent": "MAINSET",
+              "cadence_min": 0,
+              "distance": 33789,
+              "duration": 29667,
+              "equipment_type": "",
+              "id": 2090347,
+              "intensity": 51,
+              "measurement_unit": "meter",
+              "sport": "RUNNING",
+              "target_range": {"high": 146, "low": 134},
+              "training_load": 214,
+              "type": "INTERVAL",
+              "zone_unit": "HR"
+            },
+            {
+              "block_intent": "COOLDOWN",
+              "cadence_min": 0,
+              "description": "Gradually lower heart rate to Z1 by the end of your warm down",
+              "distance": 555,
+              "duration": 600,
+              "equipment_type": "",
+              "id": 2090348,
+              "intensity": 42,
+              "measurement_unit": "second",
+              "sport": "RUNNING",
+              "target_range": {"high": 134, "low": 107},
+              "training_load": 2,
+              "type": "COOLDOWN",
+              "zone_unit": "HR"
+            }
+          ],
+          "distance": 34899,
+          "duration": 30867,
+          "id": 12644,
+          "index": 2,
+          "intent": "ENDURANCE",
+          "summary": {
+            "brick": false,
+            "description": {
+              "execution": "",
+              "fueling": "",
+              "general": "This session will improve your body's ability to endure hours of sustained activity with a more efficient metabolism.",
+              "purpose": "",
+              "tips": ""
+            },
+            "elevation": "HILLS",
+            "form": false,
+            "index_max": 8,
+            "measurement_unit": "meter",
+            "name": "Ultra long endurance-3 (Imperial)",
+            "sport": "RUNNING",
+            "tags": "ultra, ultra-xl",
+            "test_workout": false,
+            "zone_unit": "PACE",
+            "indoor_outdoor": "OUTDOOR"
+          },
+          "training_load": 220,
+          "workout_id": 25408,
+          "zone_target": "ENDURANCE"
+        },
+      ],
+    ),
+    _Scenario(
+      label: 'Running — Ultra Long Endurance (Metric)',
+      icon: Icons.directions_run,
+      color: Colors.green.shade800,
+      workouts: [
+        {
+          "schedule_id": "ultra-endurance-metric-001",
+          "date": "2026-05-19T08:00:00Z",
+          "sport": "RUNNING",
+          "metric_type": "METRIC",
+          "average_intensity": 51,
+          "blocks": [
+            {
+              "block_intent": "WARMUP",
+              "cadence_min": 0,
+              "description": "Aim to reach Z2 by the end of your warm up",
+              "distance": 555,
+              "duration": 600,
+              "equipment_type": "",
+              "id": 2090346,
+              "intensity": 42,
+              "measurement_unit": "second",
+              "sport": "RUNNING",
+              "target_range": {"high": 140, "low": 122},
+              "training_load": 2,
+              "type": "WARMUP",
+              "zone_unit": "HR"
+            },
+            {
+              "block_intent": "MAINSET",
+              "cadence_min": 0,
+              "distance": 33789,
+              "duration": 29667,
+              "equipment_type": "",
+              "id": 2090347,
+              "intensity": 51,
+              "measurement_unit": "meter",
+              "sport": "RUNNING",
+              "target_range": {"high": 146, "low": 134},
+              "training_load": 214,
+              "type": "INTERVAL",
+              "zone_unit": "HR"
+            },
+            {
+              "block_intent": "COOLDOWN",
+              "cadence_min": 0,
+              "description": "Gradually lower heart rate to Z1 by the end of your warm down",
+              "distance": 555,
+              "duration": 600,
+              "equipment_type": "",
+              "id": 2090348,
+              "intensity": 42,
+              "measurement_unit": "second",
+              "sport": "RUNNING",
+              "target_range": {"high": 134, "low": 107},
+              "training_load": 2,
+              "type": "COOLDOWN",
+              "zone_unit": "HR"
+            }
+          ],
+          "distance": 34899,
+          "duration": 30867,
+          "id": 12644,
+          "index": 2,
+          "intent": "ENDURANCE",
+          "summary": {
+            "brick": false,
+            "description": {
+              "execution": "",
+              "fueling": "",
+              "general": "This session will improve your body's ability to endure hours of sustained activity with a more efficient metabolism.",
+              "purpose": "",
+              "tips": ""
+            },
+            "elevation": "HILLS",
+            "form": false,
+            "index_max": 8,
+            "measurement_unit": "meter",
+            "name": "Ultra long endurance-3 (Metric)",
+            "sport": "RUNNING",
+            "tags": "ultra, ultra-xl",
+            "test_workout": false,
+            "zone_unit": "PACE",
+            "indoor_outdoor": "OUTDOOR"
+          },
+          "training_load": 220,
+          "workout_id": 25408,
+          "zone_target": "ENDURANCE"
+        },
+      ],
+    ),
+    _Scenario(
+      label: 'Running — Ultra Endurance (Power Alert)',
+      icon: Icons.directions_run,
+      color: Colors.purple.shade800,
+      workouts: [
+        {
+          "schedule_id": "ultra-endurance-power-001",
+          "date": "2026-05-19T08:00:00Z",
+          "sport": "RUNNING",
+          "metric_type": "METRIC",
+          "average_intensity": 51,
+          "blocks": [
+            {
+              "block_intent": "WARMUP",
+              "cadence_min": 0,
+              "description": "Aim to reach Z2 by the end of your warm up",
+              "distance": 555,
+              "duration": 600,
+              "equipment_type": "",
+              "id": 2090346,
+              "intensity": 49,
+              "measurement_unit": "second",
+              "sport": "RUNNING",
+              "target_range": {"high": 79, "low": 64},
+              "training_load": 4,
+              "type": "WARMUP",
+              "zone_unit": "POWER"
+            },
+            {
+              "block_intent": "MAINSET",
+              "cadence_min": 0,
+              "distance": 33789,
+              "duration": 29667,
+              "equipment_type": "",
+              "id": 2090347,
+              "intensity": 51,
+              "measurement_unit": "meter",
+              "sport": "RUNNING",
+              "target_range": {"high": 91, "low": 64},
+              "training_load": 214,
+              "type": "INTERVAL",
+              "zone_unit": "POWER"
+            },
+            {
+              "block_intent": "COOLDOWN",
+              "cadence_min": 0,
+              "description": "Gradually lower heart rate to Z1 by the end of your warm down",
+              "distance": 555,
+              "duration": 600,
+              "equipment_type": "",
+              "id": 2090348,
+              "intensity": 38,
+              "measurement_unit": "second",
+              "sport": "RUNNING",
+              "target_range": {"high": 64, "low": 51},
+              "training_load": 2,
+              "type": "COOLDOWN",
+              "zone_unit": "POWER"
+            }
+          ],
+          "distance": 34899,
+          "duration": 30867,
+          "id": 12644,
+          "index": 2,
+          "intent": "ENDURANCE",
+          "summary": {
+            "brick": false,
+            "description": {
+              "execution": "",
+              "fueling": "",
+              "general": "This session will improve your body's ability to endure hours of sustained activity with a more efficient metabolism.",
+              "purpose": "",
+              "tips": ""
+            },
+            "elevation": "HILLS",
+            "form": false,
+            "index_max": 8,
+            "measurement_unit": "meter",
+            "name": "Ultra long endurance-3 (Power)",
+            "sport": "RUNNING",
+            "tags": "ultra, ultra-xl",
+            "test_workout": false,
+            "zone_unit": "POWER",
+            "indoor_outdoor": "OUTDOOR"
+          },
+          "training_load": 220,
+          "workout_id": 25408,
+          "zone_target": "ENDURANCE"
+        },
+      ],
+    ),
+    _Scenario(
+      label: 'Running — Ultra Endurance (Pace Alert)',
+      icon: Icons.directions_run,
+      color: Colors.indigo.shade800,
+      workouts: [
+        {
+          "schedule_id": "ultra-endurance-pace-001",
+          "date": "2026-05-19T08:00:00Z",
+          "sport": "RUNNING",
+          "metric_type": "METRIC",
+          "average_intensity": 51,
+          "blocks": [
+            {
+              "block_intent": "WARMUP",
+              "cadence_min": 0,
+              "description": "Aim to reach Z2 by the end of your warm up",
+              "distance": 555,
+              "duration": 600,
+              "equipment_type": "",
+              "id": 2090346,
+              "intensity": 49,
+              "measurement_unit": "second",
+              "sport": "RUNNING",
+              "target_range": {"high": 878, "low": 1082},
+              "training_load": 4,
+              "type": "WARMUP",
+              "zone_unit": "PACE"
+            },
+            {
+              "block_intent": "MAINSET",
+              "cadence_min": 0,
+              "distance": 33789,
+              "duration": 29667,
+              "equipment_type": "",
+              "id": 2090347,
+              "intensity": 51,
+              "measurement_unit": "meter",
+              "sport": "RUNNING",
+              "target_range": {"high": 757, "low": 1082},
+              "training_load": 214,
+              "type": "INTERVAL",
+              "zone_unit": "PACE"
+            },
+            {
+              "block_intent": "COOLDOWN",
+              "cadence_min": 0,
+              "description": "Gradually lower heart rate to Z1 by the end of your warm down",
+              "distance": 555,
+              "duration": 600,
+              "equipment_type": "",
+              "id": 2090348,
+              "intensity": 42,
+              "measurement_unit": "second",
+              "sport": "RUNNING",
+              "target_range": {"high": 1082, "low": 1352},
+              "training_load": 2,
+              "type": "COOLDOWN",
+              "zone_unit": "PACE"
+            }
+          ],
+          "distance": 34899,
+          "duration": 30867,
+          "id": 12644,
+          "index": 2,
+          "intent": "ENDURANCE",
+          "summary": {
+            "brick": false,
+            "description": {
+              "execution": "",
+              "fueling": "",
+              "general": "This session will improve your body's ability to endure hours of sustained activity with a more efficient metabolism.",
+              "purpose": "",
+              "tips": ""
+            },
+            "elevation": "HILLS",
+            "form": false,
+            "index_max": 8,
+            "measurement_unit": "meter",
+            "name": "Ultra long endurance-3 (Pace)",
+            "sport": "RUNNING",
+            "tags": "ultra, ultra-xl",
+            "test_workout": false,
+            "zone_unit": "PACE",
+            "indoor_outdoor": "OUTDOOR"
+          },
+          "training_load": 221,
+          "workout_id": 25408,
+          "zone_target": "ENDURANCE"
+        },
+      ],
+    ),
+    _Scenario(
+      label: 'Swimming — 200s Block Pool (Metric)',
+      icon: Icons.pool,
+      color: Colors.blue.shade900,
+      workouts: [
+        {
+          "schedule_id": "swim-200s-block-metric-001",
+          "date": "2026-05-19T08:00:00Z",
+          "sport": "SWIMMING",
+          "metric_type": "METRIC",
+          "average_intensity": 84,
+          "blocks": [
+            {
+              "blocks": [
+                {"block_intent": "MAINSET", "cadence_min": 0, "description": "Drill - 3/4 catch up", "distance": 100, "duration": 179, "equipment_type": "", "id": 2093880, "intensity": 83, "measurement_unit": "meter", "sport": "SWIMMING", "stroke_type": "DRILL", "target_range": {"high": 1705, "low": 1875}, "training_load": 2, "type": "WARMUP", "zone_unit": "PACE"},
+                {"block_intent": "MAINSET", "cadence_min": 0, "distance": 0, "duration": 30, "equipment_type": "", "id": 2093881, "intensity": 0, "measurement_unit": "second", "sport": "SWIMMING", "target_range": {"high": 1515, "low": 1596}, "training_load": 0, "type": "REST", "zone_unit": "PACE"}
+              ],
+              "distance": 200,
+              "duration": 418,
+              "repeat": 2,
+              "training_load": 5,
+              "type": "REPEAT"
+            },
+            {
+              "blocks": [
+                {"block_intent": "MAINSET", "cadence_min": 0, "description": "Kick with board and fins", "distance": 25, "duration": 45, "equipment_type": "SWIM_KICKBOARD,SWIM_FINS", "id": 2093882, "intensity": 83, "measurement_unit": "meter", "sport": "SWIMMING", "stroke_type": "DRILL", "target_range": {"high": 1705, "low": 1875}, "training_load": 0, "type": "WARMUP", "zone_unit": "PACE"},
+                {"block_intent": "MAINSET", "cadence_min": 0, "distance": 0, "duration": 30, "equipment_type": "", "id": 2093883, "intensity": 0, "measurement_unit": "second", "sport": "SWIMMING", "target_range": {"high": 1515, "low": 1596}, "training_load": 0, "type": "REST", "zone_unit": "PACE"}
+              ],
+              "distance": 100,
+              "duration": 300,
+              "repeat": 4,
+              "training_load": 2,
+              "type": "REPEAT"
+            },
+            {
+              "blocks": [
+                {"block_intent": "MAINSET", "cadence_min": 0, "description": "Build Z2 to Z6 by the end of each 50", "distance": 50, "duration": 72, "equipment_type": "", "id": 2093884, "intensity": 103, "measurement_unit": "meter", "sport": "SWIMMING", "target_range": {"high": 1429, "low": 1456}, "training_load": 2, "type": "WARMUP", "zone_unit": "PACE"},
+                {"block_intent": "MAINSET", "cadence_min": 0, "distance": 0, "duration": 45, "equipment_type": "", "id": 2093885, "intensity": 0, "measurement_unit": "second", "sport": "SWIMMING", "target_range": {"high": 1515, "low": 1596}, "training_load": 0, "type": "REST", "zone_unit": "PACE"}
+              ],
+              "distance": 200,
+              "duration": 468,
+              "repeat": 4,
+              "training_load": 8,
+              "type": "REPEAT"
+            },
+            {
+              "blocks": [
+                {"block_intent": "MAINSET", "cadence_min": 0, "distance": 200, "duration": 330, "equipment_type": "", "id": 2093886, "intensity": 90, "measurement_unit": "meter", "sport": "SWIMMING", "target_range": {"high": 1596, "low": 1705}, "training_load": 6, "type": "INTERVAL", "zone_unit": "PACE"},
+                {"block_intent": "MAINSET", "cadence_min": 0, "distance": 0, "duration": 20, "equipment_type": "", "id": 2093887, "intensity": 0, "measurement_unit": "second", "sport": "SWIMMING", "target_range": {"high": 1515, "low": 1596}, "training_load": 0, "type": "REST", "zone_unit": "PACE"}
+              ],
+              "distance": 1000,
+              "duration": 1750,
+              "repeat": 5,
+              "training_load": 33,
+              "type": "REPEAT"
+            },
+            {
+              "block_intent": "COOLDOWN",
+              "cadence_min": 0,
+              "description": "Gradually lower heart rate to Z1 by the end of your warm down",
+              "distance": 200,
+              "duration": 422,
+              "equipment_type": "",
+              "id": 2093879,
+              "intensity": 72,
+              "measurement_unit": "meter",
+              "sport": "SWIMMING",
+              "target_range": {"high": 1875, "low": 2344},
+              "training_load": 4,
+              "type": "COOLDOWN",
+              "zone_unit": "PACE"
+            }
+          ],
+          "distance": 1700,
+          "duration": 3358,
+          "id": 13012,
+          "index": 0,
+          "intent": "INTERVALS",
+          "summary": {
+            "brick": false,
+            "description": {
+              "execution": "",
+              "fueling": "",
+              "general": "After some high intensity (but short) efforts in your warm up settle into some 200 tempo intervals.",
+              "purpose": "",
+              "tips": ""
+            },
+            "form": false,
+            "index_max": 2,
+            "measurement_unit": "meter",
+            "name": "200's block (Metric)",
+            "pool_size": "25m",
+            "sport": "SWIMMING",
+            "tags": "novice, endurance",
+            "test_workout": false,
+            "zone_unit": "PACE",
+            "indoor_outdoor": "INDOOR"
+          },
+          "training_load": 40,
+          "workout_id": 26994,
+          "zone_target": "TEMPO"
+        },
+      ],
+    ),
+    _Scenario(
+      label: 'Swimming — Beach Race Pool (IMPERIAL/meters)',
+      icon: Icons.pool,
+      color: Colors.teal.shade900,
+      workouts: [
+        {
+          "schedule_id": "beach-race-metric-meters-001",
+          "date": "2026-05-19T08:00:00Z",
+          "sport": "SWIMMING",
+          "metric_type": "IMPERIAL",
+          "average_intensity": 86,
+          "blocks": [
+            {
+              "block_intent": "WARMUP",
+              "cadence_min": 0,
+              "distance": 227,
+              "duration": 480,
+              "equipment_type": "",
+              "id": 2095099,
+              "intensity": 72,
+              "measurement_unit": "second",
+              "sport": "SWIMMING",
+              "target_range": {"high": 1875, "low": 2344},
+              "training_load": 4,
+              "type": "WARMUP",
+              "zone_unit": "PACE"
+            },
+            {
+              "block_intent": "MAINSET",
+              "cadence_min": 0,
+              "distance": 0,
+              "duration": 60,
+              "equipment_type": "",
+              "id": 2095100,
+              "intensity": 0,
+              "measurement_unit": "second",
+              "sport": "SWIMMING",
+              "target_range": {"high": 1515, "low": 1596},
+              "training_load": 0,
+              "type": "REST",
+              "zone_unit": "PACE"
+            },
+            {
+              "blocks": [
+                {"block_intent": "MAINSET", "cadence_min": 0, "distance": 150, "duration": 248, "equipment_type": "", "id": 2095103, "intensity": 90, "measurement_unit": "meter", "sport": "SWIMMING", "target_range": {"high": 1596, "low": 1705}, "training_load": 5, "type": "INTERVAL", "zone_unit": "PACE"},
+                {"block_intent": "MAINSET", "cadence_min": 0, "distance": 0, "duration": 5, "equipment_type": "", "id": 2095104, "intensity": 0, "measurement_unit": "second", "sport": "SWIMMING", "target_range": {"high": 1515, "low": 1596}, "training_load": 0, "type": "REST", "zone_unit": "PACE"},
+                {"block_intent": "MAINSET", "cadence_min": 0, "distance": 150, "duration": 233, "equipment_type": "", "id": 2095105, "intensity": 96, "measurement_unit": "meter", "sport": "SWIMMING", "target_range": {"high": 1515, "low": 1596}, "training_load": 5, "type": "INTERVAL", "zone_unit": "PACE"},
+                {"block_intent": "MAINSET", "cadence_min": 0, "distance": 0, "duration": 60, "equipment_type": "", "id": 2095106, "intensity": 0, "measurement_unit": "second", "sport": "SWIMMING", "target_range": {"high": 1515, "low": 1596}, "training_load": 0, "type": "REST", "zone_unit": "PACE"},
+                {"block_intent": "MAINSET", "cadence_min": 0, "distance": 150, "duration": 248, "equipment_type": "", "id": 2095107, "intensity": 90, "measurement_unit": "meter", "sport": "SWIMMING", "target_range": {"high": 1596, "low": 1705}, "training_load": 5, "type": "INTERVAL", "zone_unit": "PACE"},
+                {"block_intent": "MAINSET", "cadence_min": 0, "distance": 0, "duration": 5, "equipment_type": "", "id": 2095108, "intensity": 0, "measurement_unit": "second", "sport": "SWIMMING", "target_range": {"high": 1515, "low": 1596}, "training_load": 0, "type": "REST", "zone_unit": "PACE"},
+                {"block_intent": "MAINSET", "cadence_min": 0, "distance": 150, "duration": 233, "equipment_type": "", "id": 2095109, "intensity": 96, "measurement_unit": "meter", "sport": "SWIMMING", "target_range": {"high": 1515, "low": 1596}, "training_load": 5, "type": "INTERVAL", "zone_unit": "PACE"},
+                {"block_intent": "MAINSET", "cadence_min": 0, "distance": 0, "duration": 60, "equipment_type": "", "id": 2095110, "intensity": 0, "measurement_unit": "second", "sport": "SWIMMING", "target_range": {"high": 1515, "low": 1596}, "training_load": 0, "type": "REST", "zone_unit": "PACE"},
+                {"block_intent": "MAINSET", "cadence_min": 0, "distance": 150, "duration": 248, "equipment_type": "", "id": 2095111, "intensity": 90, "measurement_unit": "meter", "sport": "SWIMMING", "target_range": {"high": 1596, "low": 1705}, "training_load": 5, "type": "INTERVAL", "zone_unit": "PACE"},
+                {"block_intent": "MAINSET", "cadence_min": 0, "distance": 0, "duration": 5, "equipment_type": "", "id": 2095112, "intensity": 0, "measurement_unit": "second", "sport": "SWIMMING", "target_range": {"high": 1515, "low": 1596}, "training_load": 0, "type": "REST", "zone_unit": "PACE"},
+                {"block_intent": "MAINSET", "cadence_min": 0, "distance": 150, "duration": 233, "equipment_type": "", "id": 2095113, "intensity": 96, "measurement_unit": "meter", "sport": "SWIMMING", "target_range": {"high": 1515, "low": 1596}, "training_load": 5, "type": "INTERVAL", "zone_unit": "PACE"},
+                {"block_intent": "MAINSET", "cadence_min": 0, "distance": 0, "duration": 60, "equipment_type": "", "id": 2095114, "intensity": 0, "measurement_unit": "second", "sport": "SWIMMING", "target_range": {"high": 1515, "low": 1596}, "training_load": 0, "type": "REST", "zone_unit": "PACE"}
+              ],
+              "distance": 1800,
+              "duration": 3276,
+              "repeat": 2,
+              "training_load": 64,
+              "type": "REPEAT"
+            },
+            {
+              "block_intent": "COOLDOWN",
+              "cadence_min": 0,
+              "distance": 171,
+              "duration": 360,
+              "equipment_type": "",
+              "id": 2095102,
+              "intensity": 72,
+              "measurement_unit": "second",
+              "sport": "SWIMMING",
+              "target_range": {"high": 1875, "low": 2344},
+              "training_load": 3,
+              "type": "COOLDOWN",
+              "zone_unit": "PACE"
+            }
+          ],
+          "distance": 2198,
+          "duration": 4176,
+          "id": 28962,
+          "index": 1,
+          "intent": "INTENSITY",
+          "summary": {
+            "brick": false,
+            "description": {
+              "execution": "",
+              "fueling": "",
+              "general": "Practice your strong beach race finishes and your sighting strategy with 3 x (1 x 150 at Z3, turn around, 1x 150 at Z4 and a quick run up to the beach, then recover while wading back in the water).",
+              "purpose": "",
+              "tips": ""
+            },
+            "form": false,
+            "index_max": 4,
+            "measurement_unit": "meter",
+            "name": "Beach race finishes and sighting open water-2 (Metric)",
+            "pool_size": "25m",
+            "sport": "SWIMMING",
+            "tags": "sprints,speed,midd,sprintd,form",
+            "test_workout": false,
+            "zone_unit": "PACE",
+            "indoor_outdoor": "INDOOR"
+          },
+          "training_load": 62,
+          "workout_id": 677287,
+          "zone_target": "THRESHOLD"
+        },
+      ],
+    ),
+ 
+    // _Scenario(
+    //   label: 'Swimming — Beach Race Pool (Metric/meters)',
+    //   icon: Icons.pool,
+    //   color: Colors.teal.shade900,
+    //   workouts: [
+    //     {
+    //       "schedule_id": "beach-race-metric-meters-001",
+    //       "date": "2026-05-19T08:00:00Z",
+    //       "sport": "SWIMMING",
+    //       "metric_type": "METRIC",
+    //       "average_intensity": 86,
+    //       "blocks": [
+    //         {
+    //           "block_intent": "WARMUP",
+    //           "cadence_min": 0,
+    //           "distance": 227,
+    //           "duration": 480,
+    //           "equipment_type": "",
+    //           "id": 2095099,
+    //           "intensity": 72,
+    //           "measurement_unit": "second",
+    //           "sport": "SWIMMING",
+    //           "target_range": {"high": 1875, "low": 2344},
+    //           "training_load": 4,
+    //           "type": "WARMUP",
+    //           "zone_unit": "PACE"
+    //         },
+    //         {
+    //           "block_intent": "MAINSET",
+    //           "cadence_min": 0,
+    //           "distance": 0,
+    //           "duration": 60,
+    //           "equipment_type": "",
+    //           "id": 2095100,
+    //           "intensity": 0,
+    //           "measurement_unit": "second",
+    //           "sport": "SWIMMING",
+    //           "target_range": {"high": 1515, "low": 1596},
+    //           "training_load": 0,
+    //           "type": "REST",
+    //           "zone_unit": "PACE"
+    //         },
+    //         {
+    //           "blocks": [
+    //             {"block_intent": "MAINSET", "cadence_min": 0, "distance": 150, "duration": 248, "equipment_type": "", "id": 2095103, "intensity": 90, "measurement_unit": "meter", "sport": "SWIMMING", "target_range": {"high": 1596, "low": 1705}, "training_load": 5, "type": "INTERVAL", "zone_unit": "PACE"},
+    //             {"block_intent": "MAINSET", "cadence_min": 0, "distance": 0, "duration": 5, "equipment_type": "", "id": 2095104, "intensity": 0, "measurement_unit": "second", "sport": "SWIMMING", "target_range": {"high": 1515, "low": 1596}, "training_load": 0, "type": "REST", "zone_unit": "PACE"},
+    //             {"block_intent": "MAINSET", "cadence_min": 0, "distance": 150, "duration": 233, "equipment_type": "", "id": 2095105, "intensity": 96, "measurement_unit": "meter", "sport": "SWIMMING", "target_range": {"high": 1515, "low": 1596}, "training_load": 5, "type": "INTERVAL", "zone_unit": "PACE"},
+    //             {"block_intent": "MAINSET", "cadence_min": 0, "distance": 0, "duration": 60, "equipment_type": "", "id": 2095106, "intensity": 0, "measurement_unit": "second", "sport": "SWIMMING", "target_range": {"high": 1515, "low": 1596}, "training_load": 0, "type": "REST", "zone_unit": "PACE"},
+    //             {"block_intent": "MAINSET", "cadence_min": 0, "distance": 150, "duration": 248, "equipment_type": "", "id": 2095107, "intensity": 90, "measurement_unit": "meter", "sport": "SWIMMING", "target_range": {"high": 1596, "low": 1705}, "training_load": 5, "type": "INTERVAL", "zone_unit": "PACE"},
+    //             {"block_intent": "MAINSET", "cadence_min": 0, "distance": 0, "duration": 5, "equipment_type": "", "id": 2095108, "intensity": 0, "measurement_unit": "second", "sport": "SWIMMING", "target_range": {"high": 1515, "low": 1596}, "training_load": 0, "type": "REST", "zone_unit": "PACE"},
+    //             {"block_intent": "MAINSET", "cadence_min": 0, "distance": 150, "duration": 233, "equipment_type": "", "id": 2095109, "intensity": 96, "measurement_unit": "meter", "sport": "SWIMMING", "target_range": {"high": 1515, "low": 1596}, "training_load": 5, "type": "INTERVAL", "zone_unit": "PACE"},
+    //             {"block_intent": "MAINSET", "cadence_min": 0, "distance": 0, "duration": 60, "equipment_type": "", "id": 2095110, "intensity": 0, "measurement_unit": "second", "sport": "SWIMMING", "target_range": {"high": 1515, "low": 1596}, "training_load": 0, "type": "REST", "zone_unit": "PACE"},
+    //             {"block_intent": "MAINSET", "cadence_min": 0, "distance": 150, "duration": 248, "equipment_type": "", "id": 2095111, "intensity": 90, "measurement_unit": "meter", "sport": "SWIMMING", "target_range": {"high": 1596, "low": 1705}, "training_load": 5, "type": "INTERVAL", "zone_unit": "PACE"},
+    //             {"block_intent": "MAINSET", "cadence_min": 0, "distance": 0, "duration": 5, "equipment_type": "", "id": 2095112, "intensity": 0, "measurement_unit": "second", "sport": "SWIMMING", "target_range": {"high": 1515, "low": 1596}, "training_load": 0, "type": "REST", "zone_unit": "PACE"},
+    //             {"block_intent": "MAINSET", "cadence_min": 0, "distance": 150, "duration": 233, "equipment_type": "", "id": 2095113, "intensity": 96, "measurement_unit": "meter", "sport": "SWIMMING", "target_range": {"high": 1515, "low": 1596}, "training_load": 5, "type": "INTERVAL", "zone_unit": "PACE"},
+    //             {"block_intent": "MAINSET", "cadence_min": 0, "distance": 0, "duration": 60, "equipment_type": "", "id": 2095114, "intensity": 0, "measurement_unit": "second", "sport": "SWIMMING", "target_range": {"high": 1515, "low": 1596}, "training_load": 0, "type": "REST", "zone_unit": "PACE"}
+    //           ],
+    //           "distance": 1800,
+    //           "duration": 3276,
+    //           "repeat": 2,
+    //           "training_load": 64,
+    //           "type": "REPEAT"
+    //         },
+    //         {
+    //           "block_intent": "COOLDOWN",
+    //           "cadence_min": 0,
+    //           "distance": 171,
+    //           "duration": 360,
+    //           "equipment_type": "",
+    //           "id": 2095102,
+    //           "intensity": 72,
+    //           "measurement_unit": "second",
+    //           "sport": "SWIMMING",
+    //           "target_range": {"high": 1875, "low": 2344},
+    //           "training_load": 3,
+    //           "type": "COOLDOWN",
+    //           "zone_unit": "PACE"
+    //         }
+    //       ],
+    //       "distance": 2198,
+    //       "duration": 4176,
+    //       "id": 28962,
+    //       "index": 1,
+    //       "intent": "INTENSITY",
+    //       "summary": {
+    //         "brick": false,
+    //         "description": {
+    //           "execution": "",
+    //           "fueling": "",
+    //           "general": "Practice your strong beach race finishes and your sighting strategy with 3 x (1 x 150 at Z3, turn around, 1x 150 at Z4 and a quick run up to the beach, then recover while wading back in the water).",
+    //           "purpose": "",
+    //           "tips": ""
+    //         },
+    //         "form": false,
+    //         "index_max": 4,
+    //         "measurement_unit": "meter",
+    //         "name": "Beach race finishes and sighting open water-2 (Metric)",
+    //         "pool_size": "25m",
+    //         "sport": "SWIMMING",
+    //         "tags": "sprints,speed,midd,sprintd,form",
+    //         "test_workout": false,
+    //         "zone_unit": "PACE",
+    //         "indoor_outdoor": "INDOOR"
+    //       },
+    //       "training_load": 62,
+    //       "workout_id": 677287,
+    //       "zone_target": "THRESHOLD"
+    //     },
+    //   ],
+    // ),
+ 
   ];
 
   // ── Date-format test scenario ──────────────────────────────────────────────
@@ -2215,6 +3390,9 @@ class _WorkoutPushScreenState extends State<WorkoutPushScreen> {
           sport:
               AppleSportExtension.fromJsonValue(m['sport'] as String? ?? '') ??
               AppleSport.running,
+          metricType:
+              MetricTypeExtension.fromJsonValue(m['metric_type'] as String? ?? '') ??
+              MetricType.unspecified,
           data: m,
         );
       }).toList();

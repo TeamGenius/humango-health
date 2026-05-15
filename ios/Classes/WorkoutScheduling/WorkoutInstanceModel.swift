@@ -14,6 +14,13 @@
 import Foundation
 import HealthKit
 
+// MARK: - MetricType
+enum MetricType: String, Codable {
+    case imperial    = "IMPERIAL"
+    case metric      = "METRIC"
+    case unspecified = "UNSPECIFIED"
+}
+
 // MARK: - WorkoutInstanceModelElement
 struct WorkoutInstanceModelElement: Codable {
     let averageIntensity: Int?
@@ -25,7 +32,6 @@ struct WorkoutInstanceModelElement: Codable {
     let duration: Int?
     let durationRiAdjusted: Double?
     let id, index, priority: Int?
-    let poolSize: String?
     let sport: Sport
     let summary: Summary?
     let tiz: [Int]?
@@ -36,8 +42,13 @@ struct WorkoutInstanceModelElement: Codable {
     /// Preferred display/goal unit for this sport. All incoming distance values are always in
     /// meters; this field tells WorkoutKit which unit to express goals in on Apple Watch.
     /// e.g. "mile", "km", "meter", "yard". Nil → falls back to per-block measurement_unit.
-    /// For SWIMMING, pool_size takes precedence over this field.
     let unit: String?
+    /// The measurement system preference from the client app.
+    /// Determines which units Apple Watch displays for distance-based goals:
+    /// - `.imperial`: mile (non-swimming) / yard (swimming)
+    /// - `.metric`: km (non-swimming) / meter (swimming)
+    /// - `.unspecified` or nil: falls back to `unit` field or defaults
+    let metricType: MetricType?
 
     enum CodingKeys: String, CodingKey {
         case averageIntensity = "average_intensity"
@@ -48,13 +59,13 @@ struct WorkoutInstanceModelElement: Codable {
         case duration
         case durationRiAdjusted = "duration_ri_adjusted"
         case id, index, priority
-        case poolSize = "pool_size"
         case sport, summary, tiz
         case trainingLoad = "training_load"
         case workoutChart = "workout_chart"
         case workoutID = "workout_id"
         case zoneTarget = "zone_target"
         case unit
+        case metricType = "metric_type"
     }
 
 }

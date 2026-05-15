@@ -24,6 +24,7 @@ import 'enums/workout_enums.dart';
 /// final entry = WorkoutPushEntry(
 ///   scheduleId: 'abc-123',
 ///   sport: AppleSport.running,
+///   metricType: MetricType.metric,
 ///   data: backendWorkoutJson,  // map from your server
 /// );
 /// await workoutPushManager.pushRawWorkouts([entry]);
@@ -37,6 +38,14 @@ class WorkoutPushEntry {
   /// Becomes the `sport` key in the serialized map (e.g. `'RUNNING'`).
   final AppleSport sport;
 
+  /// The measurement system preference.
+  /// Becomes the `metric_type` key in the serialized map (e.g. `'IMPERIAL'`).
+  /// Determines which units Apple Watch displays for distance-based goals:
+  /// - [MetricType.imperial]: mile (non-swimming) / yard (swimming)
+  /// - [MetricType.metric]: km (non-swimming) / meter (swimming)
+  /// - [MetricType.unspecified]: falls back to per-workout `unit` field or defaults
+  final MetricType metricType;
+
   /// The raw workout payload from your backend.
   /// Must contain `date` (ISO8601 string) and `blocks` (non-empty list).
   final Map<String, dynamic> data;
@@ -44,12 +53,19 @@ class WorkoutPushEntry {
   const WorkoutPushEntry({
     required this.scheduleId,
     required this.sport,
+    required this.metricType,
     required this.data,
   });
 
   /// Serializes this entry into the map format expected by the iOS native layer.
-  /// [scheduleId] and [sport.jsonValue] always override any values in [data].
+  /// [scheduleId], [sport.jsonValue], and [metricType.jsonValue] always override
+  /// any values in [data].
   Map<String, dynamic> toMap() {
-    return {...data, 'schedule_id': scheduleId, 'sport': sport.jsonValue};
+    return {
+      ...data,
+      'schedule_id': scheduleId,
+      'sport': sport.jsonValue,
+      'metric_type': metricType.jsonValue,
+    };
   }
 }

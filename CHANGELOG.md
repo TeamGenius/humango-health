@@ -1,3 +1,29 @@
+## 1.0.22 — 2026-05-15
+
+### Changes
+
+#### MetricType enum and measurement-unit–based goal resolution
+
+**Dart (`workout_push_entry.dart`, `workout_enums.dart`):**
+- Added `MetricType` enum (`imperial`, `metric`, `unspecified`) with JSON serialization (`IMPERIAL`, `METRIC`, `UNSPECIFIED`).
+- `WorkoutPushEntry` now includes a required `metricType` field, serialized as `metric_type` in the method-channel payload.
+
+**iOS (`WorkoutInstanceModel.swift`):**
+- Added `MetricType` enum and `metricType: MetricType?` property on `WorkoutInstanceModelElement`.
+- Removed `poolSize` from the model (no longer used for unit inference).
+
+**iOS (`WorkoutPlanBuilder.swift`):**
+- `resolveWorkoutUnit(_:)` — derives preferred length unit from `metricType`: imperial → mile/yard, metric → km/meter, unspecified → `workout.unit ?? "meter"`.
+- `resolveGoal(measurementUnit:…)` refactored — `measurement_unit` is now the **sole discriminator** for goal type: distance units (meter/yard/km/mile) → distance goal, time units (second/minute) → duration goal.
+- Pool swimming (`poolSwimDistanceWithTime`): distance is used as-is (already in target unit); duration is calculated from pace via `calculateDurationFromPace`.
+- `calculateDurationFromPace`: uses root-level `workoutUnit` for distance→meters conversion (falls back to block-level `measurementUnit` when root is nil). Averages target-range pace values (seconds/1000 m) to compute speed, then derives duration.
+- Added `isDistanceUnit(_:)` and `isTimeUnit(_:)` helpers.
+
+**Example app (`workout_push_screen.dart`):**
+- Added test scenarios: Swimming Building Endurance (Metric), Beach Race Starts OW (Imperial/yards), Ultra Long Endurance (Imperial), Ultra Long Endurance (Metric), Ultra Endurance (Power Alert), Ultra Endurance (Pace Alert), Swimming 200s Block Pool (Metric), Swimming Beach Race Pool (Metric/meters).
+
+---
+
 ## 1.0.21 — 2026-05-10
 
 ### Bug fix

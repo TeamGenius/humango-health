@@ -143,3 +143,40 @@ extension AppleSportExtension on AppleSport {
     }
   }
 }
+
+/// Represents the measurement system preference for workout goals.
+/// Determines which units Apple Watch displays for distance-based goals.
+enum MetricType {
+  imperial,
+  metric,
+  unspecified,
+}
+
+extension MetricTypeExtension on MetricType {
+  /// The JSON string sent to / received from the iOS native layer.
+  String get jsonValue {
+    switch (this) {
+      case MetricType.imperial:
+        return 'IMPERIAL';
+      case MetricType.metric:
+        return 'METRIC';
+      case MetricType.unspecified:
+        return 'UNSPECIFIED';
+    }
+  }
+
+  /// Parses a raw JSON string back into a [MetricType].
+  /// Returns `null` for unknown or empty values.
+  static MetricType? fromJsonValue(String value) {
+    switch (value) {
+      case 'IMPERIAL':
+        return MetricType.imperial;
+      case 'METRIC':
+        return MetricType.metric;
+      case 'UNSPECIFIED':
+        return MetricType.unspecified;
+      default:
+        return null;
+    }
+  }
+}
