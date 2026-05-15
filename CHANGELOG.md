@@ -1,4 +1,36 @@
+## 1.0.23 — 2026-05-15
+
+### Notes
+
+#### Pace alert display unit follows device Health preference
+
+Investigated and confirmed: WorkoutKit's `.speed(range, unit: .milesPerHour, metric: .current)` correctly passes imperial speed values to Apple Watch, but the **display unit** (min/KM vs min/MI) is controlled by the device's Apple Health "Walking + Running Distance" unit preference — not by the `UnitSpeed` parameter. This is Apple platform behavior and cannot be overridden via API.
+
+The code correctly converts pace to mph for imperial workouts. Users who want min/MI display must set: **Health app → Browse → Activity → Walking + Running Distance → Unit → Miles**.
+
+### Changes
+
+#### Added test scenario: Ultra Long Endurance (Imperial/Pace)
+
+New example scenario "Running — Ultra Long Endurance (Imperial/Pace)" with `metric_type: IMPERIAL`, 3 blocks (WARMUP 600s, INTERVAL 33789m, COOLDOWN 600s), all with PACE zone_unit. Validates imperial distance goal (21mi) and pace alert (29:00–23:32 min/MI) rendering on Apple Watch.
+
+---
+
 ## 1.0.22 — 2026-05-15
+
+### Bug fixes
+
+#### Block ordering preserved — interleaved warmups/rests no longer reordered
+
+`buildCustomWorkoutItem` previously split all blocks by type into separate lists, then concatenated them (`extraWarmups + intervalBlocksList + extraCooldowns`), destroying the backend's original interleaving order. A workout with blocks `WARMUP → REST → WARMUP → REST → REPEAT → COOLDOWN` would appear on Apple Watch as `Warmup → Warmup → Recovery → Recovery → Repeat → Cooldown`.
+
+Fixed: the first WARMUP and last COOLDOWN are extracted by index for their respective `WorkoutStep` slots; all remaining blocks stay in their original positions.
+
+#### `calculateDurationFromPace` now uses correct formula
+
+The pool-swim duration calculation was dividing distance by raw pace (`distInMeters / avgPace`) instead of by speed (`distInMeters / avgSpeedMps`). This produced near-zero durations (e.g. 0.09 sec instead of ~248 sec for a 150 m interval).
+
+Fixed: `return distInMeters / avgSpeedMps` where `avgSpeedMps = 1000.0 / avgPace`.
 
 ### Changes
 
