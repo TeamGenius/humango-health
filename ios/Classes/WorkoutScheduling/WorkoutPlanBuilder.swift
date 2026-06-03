@@ -122,9 +122,8 @@ class WorkoutPlanBuilder {
         let sport    = workout.sport.rawValue
         let activity = workout.sport.hkWorkoutType
 
-        // Unified location rule for ALL sports (Swimming, Running, Cycling, Walking, etc.):
-        //   summary.indoor_outdoor == "INDOOR"  → .indoor
-        //   anything else (OUTDOOR / nil)        → .outdoor
+        // Swimming → indoor/outdoor based on summary.indoor_outdoor
+        // All other sports → .unknown (Watch prompts user)
         let location: HKWorkoutSessionLocationType = resolveLocation(workout)
 
         // Pool swimming detection: SWIMMING with indoor location.
@@ -532,9 +531,10 @@ class WorkoutPlanBuilder {
 
     // MARK: - Location helper
 
-    /// Unified location resolver for ALL sports (Swimming, Running, Cycling, Walking, etc.).
-    /// `summary.indoor_outdoor == "INDOOR"` → `.indoor`, otherwise (OUTDOOR or nil) → `.outdoor`.
+    /// Location resolver: only swimming sports get indoor/outdoor resolution.
+    /// Non-swimming sports return `.unknown` so Apple Watch prompts the user.
     private func resolveLocation(_ workout: WorkoutInstanceModelElement) -> HKWorkoutSessionLocationType {
+        guard workout.sport.isSwimmingType else { return .unknown }
         let raw = workout.summary?.indoorOutdoor
         return (raw == .indoor) ? .indoor : .outdoor
     }

@@ -1,3 +1,13 @@
+## 1.0.24 — 2026-06-03
+
+### Changes
+
+#### Non-swimming workouts now use `.unknown` location
+
+`resolveLocation` no longer forces `.indoor` / `.outdoor` for non-swimming sports. Only swimming workouts resolve location from `summary.indoor_outdoor`; all other sports (Running, Cycling, Walking, etc.) now return `.unknown`, which lets Apple Watch prompt the user to choose indoor or outdoor at workout start.
+
+---
+
 ## 1.0.23 — 2026-05-15
 
 ### Notes
