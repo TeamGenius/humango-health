@@ -167,6 +167,7 @@ public class WorkoutServiceChannel: NSObject {
         // Build metadata
         var dictMetaData = workout.metadata ?? [:]
         dictMetaData["dataSource"] = workout.sourceRevision.source.name
+        dictMetaData["sourceBundleId"] = workout.sourceRevision.source.bundleIdentifier ?? ""
         dictMetaData["iosVersion"] = UIDevice.current.systemVersion
         // Stamp isUserEnteredWorkout — backend uses this to decide how to handle the workout.
         // HKWasUserEntered is stored as an ObjC BOOL boxed in NSNumber; in Swift's [String:Any]

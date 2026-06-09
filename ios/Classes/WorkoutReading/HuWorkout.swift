@@ -288,6 +288,7 @@ func formatMetadata(metadata: [String: Any]?) -> [String: Any] {
         case "WorkoutName":        out["WORKOUT_NAME"]          = value as? String ?? ""
         case "ScheduledWorkoutId": out["SCHEDULED_WORKOUT_ID"]  = value as? Int    ?? 0
         case "dataSource":         out["SOURCE_NAME"]           = value as? String ?? ""
+        case "sourceBundleId":     out["SOURCE_BUNDLE_ID"]      = value as? String ?? ""
         case "appVersion":         out["APP_VERSION"]           = value as? String ?? ""
         case "appBuild":           out["APP_BUILD"]             = value as? String ?? ""
         case "iosVersion":         out["IOS_VERSION"]           = value as? String ?? ""
