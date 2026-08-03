@@ -778,9 +778,6 @@ public class SleepDataManager: NSObject, AppLifecycleObserver {
 
         let orderedCandidates = tier2Bundles + otherBundles
 
-            "🛏️ [SleepDataManager] calculateSleepPayload: Apple absent — candidate bundle order: \(orderedCandidates.joined(separator: ", "))"
-        )
-
         for bundle in orderedCandidates {
             guard let bundleSamples = byBundle[bundle] else { continue }
             guard let payload = runGroupingAndCalculation(on: bundleSamples, label: bundle) else {
@@ -793,8 +790,6 @@ public class SleepDataManager: NSObject, AppLifecycleObserver {
         return nil
     }
 
-    /// Debug helper: prints all fetched samples in chronological order before
-    /// any source-priority or grouping logic is applied.
     private func logFetchedSamplesBeforeLogic(_ samples: [HKCategorySample]) {
         let sorted = samples.sorted { lhs, rhs in
             if lhs.startDate == rhs.startDate {
@@ -803,14 +798,7 @@ public class SleepDataManager: NSObject, AppLifecycleObserver {
             return lhs.startDate < rhs.startDate
         }
 
-        for (index, sample) in sorted.enumerated() {
-            let durationSeconds = Int(sample.endDate.timeIntervalSince(sample.startDate))
-            let stage = sleepStageString(from: sample.value)
-            let sourceName = sample.sourceRevision.source.name
-            let sourceBundle = sample.sourceRevision.source.bundleIdentifier
-                "🛏️ [SleepDataManager] pre-logic [\(index)] \(isoFormatter.string(from: sample.startDate)) -> \(isoFormatter.string(from: sample.endDate)) | stage=\(stage) | duration=\(durationSeconds)s | source=\(sourceName) (\(sourceBundle))"
-            )
-        }
+        _ = sorted
     }
 
     /// Runs the gap-grouping + span-filter + `buildAggregatedPayload` pipeline on a
