@@ -463,7 +463,7 @@ class WorkoutPlanBuilder {
         // time units (second, minute) → duration-based goal
 
         if isDistanceUnit(measurementUnit), let dist = distance, dist > 0 {
-            let unitLength = lengthUnit(for: workoutUnit ?? measurementUnit)
+            let unitLength = lengthUnit(for:measurementUnit ?? workoutUnit)
 
             // Pool swimming = SWIMMING sport + indoor location.
             // Outdoor swimming is routed to buildSingleGoalSwimItem and never reaches here.
