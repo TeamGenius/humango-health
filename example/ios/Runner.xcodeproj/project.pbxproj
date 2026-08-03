@@ -17,7 +17,10 @@
 		97C146FC1CF9000F007C117D /* Main.storyboard in Resources */ = {isa = PBXBuildFile; fileRef = 97C146FA1CF9000F007C117D /* Main.storyboard */; };
 		97C146FE1CF9000F007C117D /* Assets.xcassets in Resources */ = {isa = PBXBuildFile; fileRef = 97C146FD1CF9000F007C117D /* Assets.xcassets */; };
 		97C147011CF9000F007C117D /* LaunchScreen.storyboard in Resources */ = {isa = PBXBuildFile; fileRef = 97C146FF1CF9000F007C117D /* LaunchScreen.storyboard */; };
-		BB100001BB100001BB100001 /* ExampleSessionChannel.swift in Sources */ = {isa = PBXBuildFile; fileRef = BB100002BB100002BB100002 /* ExampleSessionChannel.swift */; };			CC200001CC200001CC200001 /* RawWorkoutsChannel.swift in Sources */ = {isa = PBXBuildFile; fileRef = CC200002CC200002CC200002 /* RawWorkoutsChannel.swift */; };		BB100003BB100003BB100003 /* ExampleHealthDataHandler.swift in Sources */ = {isa = PBXBuildFile; fileRef = BB100004BB100004BB100004 /* ExampleHealthDataHandler.swift */; };
+		BB100001BB100001BB100001 /* ExampleSessionChannel.swift in Sources */ = {isa = PBXBuildFile; fileRef = BB100002BB100002BB100002 /* ExampleSessionChannel.swift */; };
+		CC200001CC200001CC200001 /* RawWorkoutsChannel.swift in Sources */ = {isa = PBXBuildFile; fileRef = CC200002CC200002CC200002 /* RawWorkoutsChannel.swift */; };
+		BB100003BB100003BB100003 /* ExampleHealthDataHandler.swift in Sources */ = {isa = PBXBuildFile; fileRef = BB100004BB100004BB100004 /* ExampleHealthDataHandler.swift */; };
+		DD300001DD300001DD300001 /* AddSleepChannel.swift in Sources */ = {isa = PBXBuildFile; fileRef = DD300002DD300002DD300002 /* AddSleepChannel.swift */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXContainerItemProxy section */
@@ -67,7 +70,10 @@
 		97C147021CF9000F007C117D /* Info.plist */ = {isa = PBXFileReference; lastKnownFileType = text.plist.xml; path = Info.plist; sourceTree = "<group>"; };
 		A25372044429C2C5B82C49D5 /* Pods-Runner.debug.xcconfig */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = text.xcconfig; name = "Pods-Runner.debug.xcconfig"; path = "Target Support Files/Pods-Runner/Pods-Runner.debug.xcconfig"; sourceTree = "<group>"; };
 		B31724901DD14D245C1253BD /* Pods-Runner.profile.xcconfig */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = text.xcconfig; name = "Pods-Runner.profile.xcconfig"; path = "Target Support Files/Pods-Runner/Pods-Runner.profile.xcconfig"; sourceTree = "<group>"; };
-		BB100002BB100002BB100002 /* ExampleSessionChannel.swift */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.swift; path = ExampleSessionChannel.swift; sourceTree = "<group>"; };			CC200002CC200002CC200002 /* RawWorkoutsChannel.swift */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.swift; path = RawWorkoutsChannel.swift; sourceTree = "<group>"; };		BB100004BB100004BB100004 /* ExampleHealthDataHandler.swift */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.swift; path = ExampleHealthDataHandler.swift; sourceTree = "<group>"; };
+		BB100002BB100002BB100002 /* ExampleSessionChannel.swift */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.swift; path = ExampleSessionChannel.swift; sourceTree = "<group>"; };
+		CC200002CC200002CC200002 /* RawWorkoutsChannel.swift */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.swift; path = RawWorkoutsChannel.swift; sourceTree = "<group>"; };
+		BB100004BB100004BB100004 /* ExampleHealthDataHandler.swift */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.swift; path = ExampleHealthDataHandler.swift; sourceTree = "<group>"; };
+		DD300002DD300002DD300002 /* AddSleepChannel.swift */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.swift; path = AddSleepChannel.swift; sourceTree = "<group>"; };
 		C32D0053A6EC581A695381C8 /* Pods-RunnerTests.debug.xcconfig */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = text.xcconfig; name = "Pods-RunnerTests.debug.xcconfig"; path = "Target Support Files/Pods-RunnerTests/Pods-RunnerTests.debug.xcconfig"; sourceTree = "<group>"; };
 		DA5B1BBCCE8DBC5A9684D847 /* Pods_Runner.framework */ = {isa = PBXFileReference; explicitFileType = wrapper.framework; includeInIndex = 0; path = Pods_Runner.framework; sourceTree = BUILT_PRODUCTS_DIR; };
 /* End PBXFileReference section */
@@ -166,7 +172,10 @@
 				1498D2331E8E89220040F4C2 /* GeneratedPluginRegistrant.m */,
 				74858FAE1ED2DC5600515810 /* AppDelegate.swift */,
 				7884E8672EC3CC0400C636F2 /* SceneDelegate.swift */,
-				BB100002BB100002BB100002 /* ExampleSessionChannel.swift */,						CC200002CC200002CC200002 /* RawWorkoutsChannel.swift */,				BB100004BB100004BB100004 /* ExampleHealthDataHandler.swift */,
+				BB100002BB100002BB100002 /* ExampleSessionChannel.swift */,
+				CC200002CC200002CC200002 /* RawWorkoutsChannel.swift */,
+				BB100004BB100004BB100004 /* ExampleHealthDataHandler.swift */,
+				DD300002DD300002DD300002 /* AddSleepChannel.swift */,
 				74858FAD1ED2DC5600515810 /* Runner-Bridging-Header.h */,
 			);
 			path = Runner;
@@ -387,7 +396,10 @@
 				74858FAF1ED2DC5600515810 /* AppDelegate.swift in Sources */,
 				1498D2341E8E89220040F4C2 /* GeneratedPluginRegistrant.m in Sources */,
 				7884E8682EC3CC0700C636F2 /* SceneDelegate.swift in Sources */,
-				BB100001BB100001BB100001 /* ExampleSessionChannel.swift in Sources */,					CC200001CC200001CC200001 /* RawWorkoutsChannel.swift in Sources */,				BB100003BB100003BB100003 /* ExampleHealthDataHandler.swift in Sources */,
+				BB100001BB100001BB100001 /* ExampleSessionChannel.swift in Sources */,
+				CC200001CC200001CC200001 /* RawWorkoutsChannel.swift in Sources */,
+				BB100003BB100003BB100003 /* ExampleHealthDataHandler.swift in Sources */,
+				DD300001DD300001DD300001 /* AddSleepChannel.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};

@@ -1,6 +1,25 @@
 import 'package:flutter/material.dart';
 import 'package:humango_health/humango_health.dart';
 
+class _SleepDayWindow {
+  final DateTime start;
+  final DateTime end;
+
+  const _SleepDayWindow({required this.start, required this.end});
+}
+
+class _SleepDayEntry {
+  final DateTime windowStart;
+  final DateTime windowEnd;
+  final SleepDataResponse response;
+
+  const _SleepDayEntry({
+    required this.windowStart,
+    required this.windowEnd,
+    required this.response,
+  });
+}
+
 class SleepDataScreen extends StatefulWidget {
   const SleepDataScreen({super.key});
 
@@ -10,13 +29,19 @@ class SleepDataScreen extends StatefulWidget {
 
 class _SleepDataScreenState extends State<SleepDataScreen> {
   final SleepDataManager _sleepManager = SleepDataManager();
+  static const int _historyDayCount = 90;
+  static const int _customRangeMaxDays = 730;
 
   SleepDataResponse? _sleepData;
+  final List<_SleepDayEntry> _historyDays = [];
   bool _isLoading = false;
+  bool _isHistoryLoading = false;
   String? _error;
+  String? _historyError;
+  int _historyRequestToken = 0;
 
   // Date range selection
-  String _selectedRange = 'Last 24 hours';
+  String _selectedRange = '6PM → 12PM';
   DateTime? _customStartDate;
   DateTime? _customEndDate;
 
@@ -29,8 +54,19 @@ class _SleepDataScreenState extends State<SleepDataScreen> {
   void initState() {
     super.initState();
     WidgetsBinding.instance.addPostFrameCallback((_) {
-      if (mounted) _fetchSleepData();
+      if (mounted) _refreshAllSleepData();
     });
+  }
+
+  DateTime _todayAtNoon() {
+    final now = DateTime.now();
+    return DateTime(now.year, now.month, now.day, 12);
+  }
+
+  _SleepDayWindow _windowForDayOffset(int dayOffset) {
+    final end = _todayAtNoon().subtract(Duration(days: dayOffset));
+    final start = end.subtract(const Duration(hours: 18));
+    return _SleepDayWindow(start: start, end: end);
   }
 
   /// Calls the group-based sleep payload calculation and updates local state.
@@ -63,26 +99,72 @@ class _SleepDataScreenState extends State<SleepDataScreen> {
   }
 
   DateTime _getStartDate() {
-    final now = DateTime.now();
-    switch (_selectedRange) {
-      case 'Last 24 hours':
-        return now.subtract(const Duration(hours: 24));
-      case 'Last 3 days':
-        return now.subtract(const Duration(days: 3));
-      case 'Last 7 days':
-        return now.subtract(const Duration(days: 7));
-      case 'Custom':
-        return _customStartDate ?? now.subtract(const Duration(hours: 24));
-      default:
-        return now.subtract(const Duration(hours: 24));
+    if (_selectedRange == 'Custom') {
+      return _customStartDate ?? _windowForDayOffset(0).start;
     }
+    return _windowForDayOffset(0).start;
   }
 
   DateTime _getEndDate() {
     if (_selectedRange == 'Custom' && _customEndDate != null) {
       return _customEndDate!;
     }
-    return DateTime.now();
+    return _windowForDayOffset(0).end;
+  }
+
+  Future<void> _refreshAllSleepData() async {
+    await _fetchSleepData();
+    await _fetchPastDaysSleep();
+  }
+
+  Future<void> _fetchPastDaysSleep() async {
+    final requestToken = ++_historyRequestToken;
+    setState(() {
+      _isHistoryLoading = true;
+      _historyError = null;
+      _historyDays.clear();
+    });
+
+    final entries = <_SleepDayEntry>[];
+    final errors = <String>[];
+
+    for (int i = 0; i < _historyDayCount; i++) {
+      if (!mounted || requestToken != _historyRequestToken) return;
+
+      final window = _windowForDayOffset(i);
+      try {
+        final response = await _sleepManager.getSleepData(
+          startDate: window.start,
+          endDate: window.end,
+        );
+
+        if (response.hasSleepData) {
+          entries.add(
+            _SleepDayEntry(
+              windowStart: window.start,
+              windowEnd: window.end,
+              response: response,
+            ),
+          );
+        }
+      } on SleepDataException catch (e) {
+        errors.add('${e.code}: ${e.message}');
+      } catch (e) {
+        errors.add(e.toString());
+      }
+    }
+
+    if (!mounted || requestToken != _historyRequestToken) return;
+
+    setState(() {
+      _historyDays
+        ..clear()
+        ..addAll(entries);
+      _isHistoryLoading = false;
+      _historyError = errors.isNotEmpty
+          ? 'Some day queries failed (${errors.length}); showing successful days only.'
+          : null;
+    });
   }
 
   Future<void> _fetchSleepData() async {
@@ -101,13 +183,13 @@ class _SleepDataScreenState extends State<SleepDataScreen> {
         _isLoading = false;
       });
     } on SleepDataException catch (e) {
-      print(e);
+      debugPrint('$e');
       setState(() {
         _error = '${e.code}: ${e.message}';
         _isLoading = false;
       });
     } catch (e) {
-      print(e);
+      debugPrint('$e');
       setState(() {
         _error = e.toString();
         _isLoading = false;
@@ -122,7 +204,7 @@ class _SleepDataScreenState extends State<SleepDataScreen> {
     final pickedStartDate = await showDatePicker(
       context: context,
       initialDate: _customStartDate ?? now.subtract(const Duration(days: 1)),
-      firstDate: now.subtract(const Duration(days: 365)),
+      firstDate: now.subtract(const Duration(days: _customRangeMaxDays)),
       lastDate: now,
       helpText: 'Select start date',
     );
@@ -208,7 +290,7 @@ class _SleepDataScreenState extends State<SleepDataScreen> {
           ),
           IconButton(
             icon: const Icon(Icons.refresh),
-            onPressed: _fetchSleepData,
+            onPressed: _refreshAllSleepData,
           ),
         ],
       ),
@@ -230,9 +312,7 @@ class _SleepDataScreenState extends State<SleepDataScreen> {
         child: Row(
           children: [
             for (final range in [
-              'Last 24 hours',
-              'Last 3 days',
-              'Last 7 days',
+              '6PM → 12PM',
               'Custom',
             ])
               Padding(
@@ -251,8 +331,12 @@ class _SleepDataScreenState extends State<SleepDataScreen> {
                       if (range == 'Custom') {
                         _selectCustomDateRange();
                       } else {
-                        setState(() => _selectedRange = range);
-                        _fetchSleepData();
+                        setState(() {
+                          _selectedRange = range;
+                          _customStartDate = null;
+                          _customEndDate = null;
+                        });
+                        _refreshAllSleepData();
                       }
                     }
                   },
@@ -265,11 +349,11 @@ class _SleepDataScreenState extends State<SleepDataScreen> {
   }
 
   Widget _buildBody() {
-    if (_isLoading) {
+    if (_isLoading && _sleepData == null && _isHistoryLoading) {
       return const Center(child: CircularProgressIndicator());
     }
 
-    if (_error != null) {
+    if (_error != null && _sleepData == null && _historyDays.isEmpty) {
       return Center(
         child: Padding(
           padding: const EdgeInsets.all(16.0),
@@ -286,7 +370,7 @@ class _SleepDataScreenState extends State<SleepDataScreen> {
               Text(_error!, textAlign: TextAlign.center),
               const SizedBox(height: 16),
               ElevatedButton(
-                onPressed: _fetchSleepData,
+                onPressed: _refreshAllSleepData,
                 child: const Text('Retry'),
               ),
             ],
@@ -295,42 +379,24 @@ class _SleepDataScreenState extends State<SleepDataScreen> {
       );
     }
 
-    if (_sleepData == null || !_sleepData!.hasSleepData) {
-      return Center(
-        child: Column(
-          mainAxisAlignment: MainAxisAlignment.center,
-          children: [
-            const Icon(Icons.bedtime_outlined, size: 64, color: Colors.grey),
-            const SizedBox(height: 16),
-            const Text('No sleep data found'),
-            const SizedBox(height: 8),
-            const Text(
-              'Sleep data from the last 24 hours will appear here',
-              style: TextStyle(color: Colors.grey),
-            ),
-            const SizedBox(height: 16),
-            ElevatedButton(
-              onPressed: _fetchSleepData,
-              child: const Text('Refresh'),
-            ),
-          ],
-        ),
-      );
-    }
-
     return RefreshIndicator(
-      onRefresh: _fetchSleepData,
+      onRefresh: _refreshAllSleepData,
       child: SingleChildScrollView(
         physics: const AlwaysScrollableScrollPhysics(),
         padding: const EdgeInsets.all(16.0),
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            _buildSummaryCard(),
+            if (_sleepData != null && _sleepData!.hasSleepData) ...[
+              _buildSummaryCard(),
+              const SizedBox(height: 16),
+              _buildStageBreakdownCard(),
+              const SizedBox(height: 16),
+              _buildSamplesSection(),
+            ] else
+              _buildNoCurrentWindowCard(),
             const SizedBox(height: 16),
-            _buildStageBreakdownCard(),
-            const SizedBox(height: 16),
-            _buildSamplesSection(),
+            _buildHistorySection(),
           ],
         ),
       ),
@@ -369,6 +435,119 @@ class _SleepDataScreenState extends State<SleepDataScreen> {
             ),
           ],
         ),
+      ),
+    );
+  }
+
+  Widget _buildNoCurrentWindowCard() {
+    return Card(
+      child: Padding(
+        padding: const EdgeInsets.all(16),
+        child: Column(
+          children: [
+            const Icon(Icons.bedtime_outlined, size: 52, color: Colors.grey),
+            const SizedBox(height: 8),
+            const Text('No sleep data for current window'),
+            const SizedBox(height: 6),
+            Text(
+              'Window: ${_formatDateTime(_getStartDate())} - ${_formatDateTime(_getEndDate())}',
+              style: const TextStyle(color: Colors.grey),
+            ),
+            const SizedBox(height: 12),
+            ElevatedButton(
+              onPressed: _refreshAllSleepData,
+              child: const Text('Refresh'),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Widget _buildHistorySection() {
+    return Card(
+      child: Padding(
+        padding: const EdgeInsets.all(16),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Row(
+              children: [
+                const Icon(Icons.history, color: Colors.teal),
+                const SizedBox(width: 8),
+                Expanded(
+                  child: Text(
+                    'Last $_historyDayCount Day Windows (6:00 PM → 12:00 PM)',
+                    style: Theme.of(context).textTheme.titleMedium,
+                  ),
+                ),
+                if (_isHistoryLoading)
+                  const SizedBox(
+                    width: 16,
+                    height: 16,
+                    child: CircularProgressIndicator(strokeWidth: 2),
+                  )
+                else
+                  IconButton(
+                    onPressed: _fetchPastDaysSleep,
+                    icon: const Icon(Icons.refresh),
+                    tooltip: 'Reload history',
+                  ),
+              ],
+            ),
+            if (_historyError != null)
+              Padding(
+                padding: const EdgeInsets.only(top: 8),
+                child: Text(
+                  _historyError!,
+                  style: const TextStyle(color: Colors.orange),
+                ),
+              ),
+            if (_isHistoryLoading && _historyDays.isEmpty)
+              Padding(
+                padding: EdgeInsets.only(top: 8),
+                child: Text('Loading last $_historyDayCount day windows...'),
+              ),
+            if (!_isHistoryLoading && _historyDays.isEmpty)
+              Padding(
+                padding: EdgeInsets.only(top: 8),
+                child: Text(
+                  'No sleep data found in the last $_historyDayCount windows.',
+                ),
+              ),
+            const SizedBox(height: 8),
+            ..._historyDays.map(_buildHistoryDayCard),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Widget _buildHistoryDayCard(_SleepDayEntry entry) {
+    final response = entry.response;
+    final totals = response.stageTotals;
+
+    return Card(
+      margin: const EdgeInsets.only(bottom: 8),
+      child: ExpansionTile(
+        leading: const Icon(Icons.nights_stay, color: Colors.indigo),
+        title: Text(
+          '${_formatDateTime(entry.windowStart)} - ${_formatDateTime(entry.windowEnd)}',
+        ),
+        subtitle: Text(
+          '${_fmtMinutes(response.totalSleepMinutes)} • ${response.sampleCount} samples',
+        ),
+        childrenPadding: const EdgeInsets.fromLTRB(16, 0, 16, 12),
+        children: [
+          _buildDetailRow('Total Sleep', _fmtMinutes(response.totalSleepMinutes)),
+          _buildDetailRow('Deep Sleep', _fmtMinutes(totals.asleepDeepMinutes)),
+          _buildDetailRow('REM Sleep', _fmtMinutes(totals.asleepREMMinutes)),
+          _buildDetailRow('Core Sleep', _fmtMinutes(totals.asleepCoreMinutes)),
+          _buildDetailRow('Awake', _fmtMinutes(totals.awakeMinutes)),
+          _buildDetailRow('In Bed', _fmtMinutes(totals.inBedMinutes)),
+          const SizedBox(height: 8),
+          ...response.samples.map((sample) => _buildSampleCard(sample)),
+        ],
       ),
     );
   }

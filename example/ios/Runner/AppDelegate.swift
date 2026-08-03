@@ -39,5 +39,9 @@ import humango_health
     RawWorkoutsChannel.register(
       with: engineBridge.pluginRegistry.registrar(forPlugin: "RawWorkoutsChannel")!
     )
+    // Register an example-only channel that writes sleep samples to HealthKit.
+    AddSleepChannel.register(
+      with: engineBridge.pluginRegistry.registrar(forPlugin: "AddSleepChannel")!
+    )
   }
 }

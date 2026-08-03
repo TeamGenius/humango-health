@@ -10,6 +10,7 @@ import 'health_metrics_screen.dart';
 import 'today_activities_screen.dart' as activities;
 import 'monitoring_screen.dart' as monitoring;
 import 'raw_workouts_screen.dart' as rawview;
+import 'sleep_write_screen.dart' as sleepwrite;
 import 'package:humango_health/humango_health.dart';
 
 void main() {
@@ -58,7 +59,8 @@ class HealthPermissionsScreen extends StatefulWidget {
   const HealthPermissionsScreen({super.key});
 
   @override
-  State<HealthPermissionsScreen> createState() => _HealthPermissionsScreenState();
+  State<HealthPermissionsScreen> createState() =>
+      _HealthPermissionsScreenState();
 }
 
 class _HealthPermissionsScreenState extends State<HealthPermissionsScreen> {
@@ -73,7 +75,10 @@ class _HealthPermissionsScreenState extends State<HealthPermissionsScreen> {
     } catch (e) {
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text('Login failed: $e'), backgroundColor: Colors.red),
+          SnackBar(
+            content: Text('Login failed: $e'),
+            backgroundColor: Colors.red,
+          ),
         );
       }
     } finally {
@@ -89,7 +94,10 @@ class _HealthPermissionsScreenState extends State<HealthPermissionsScreen> {
     } catch (e) {
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text('Logout failed: $e'), backgroundColor: Colors.red),
+          SnackBar(
+            content: Text('Logout failed: $e'),
+            backgroundColor: Colors.red,
+          ),
         );
       }
     } finally {
@@ -154,20 +162,31 @@ class _HealthPermissionsScreenState extends State<HealthPermissionsScreen> {
                     Card(
                       color: _isLoggedIn ? Colors.green[50] : Colors.grey[100],
                       child: Padding(
-                        padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+                        padding: const EdgeInsets.symmetric(
+                          horizontal: 16,
+                          vertical: 12,
+                        ),
                         child: Row(
                           children: [
                             Icon(
-                              _isLoggedIn ? Icons.verified_user : Icons.no_accounts,
-                              color: _isLoggedIn ? Colors.green[700] : Colors.grey[600],
+                              _isLoggedIn
+                                  ? Icons.verified_user
+                                  : Icons.no_accounts,
+                              color: _isLoggedIn
+                                  ? Colors.green[700]
+                                  : Colors.grey[600],
                             ),
                             const SizedBox(width: 12),
                             Expanded(
                               child: Text(
-                                _isLoggedIn ? 'Logged in — monitoring active' : 'Logged out',
+                                _isLoggedIn
+                                    ? 'Logged in — monitoring active'
+                                    : 'Logged out',
                                 style: TextStyle(
                                   fontWeight: FontWeight.w600,
-                                  color: _isLoggedIn ? Colors.green[800] : Colors.grey[700],
+                                  color: _isLoggedIn
+                                      ? Colors.green[800]
+                                      : Colors.grey[700],
                                 ),
                               ),
                             ),
@@ -176,23 +195,25 @@ class _HealthPermissionsScreenState extends State<HealthPermissionsScreen> {
                                 ? const SizedBox(
                                     width: 24,
                                     height: 24,
-                                    child: CircularProgressIndicator(strokeWidth: 2),
+                                    child: CircularProgressIndicator(
+                                      strokeWidth: 2,
+                                    ),
                                   )
                                 : _isLoggedIn
-                                    ? OutlinedButton.icon(
-                                        onPressed: _logout,
-                                        icon: const Icon(Icons.logout, size: 18),
-                                        label: const Text('Logout'),
-                                        style: OutlinedButton.styleFrom(
-                                          foregroundColor: Colors.red[700],
-                                          side: BorderSide(color: Colors.red[300]!),
-                                        ),
-                                      )
-                                    : FilledButton.icon(
-                                        onPressed: _login,
-                                        icon: const Icon(Icons.login, size: 18),
-                                        label: const Text('Login'),
-                                      ),
+                                ? OutlinedButton.icon(
+                                    onPressed: _logout,
+                                    icon: const Icon(Icons.logout, size: 18),
+                                    label: const Text('Logout'),
+                                    style: OutlinedButton.styleFrom(
+                                      foregroundColor: Colors.red[700],
+                                      side: BorderSide(color: Colors.red[300]!),
+                                    ),
+                                  )
+                                : FilledButton.icon(
+                                    onPressed: _login,
+                                    icon: const Icon(Icons.login, size: 18),
+                                    label: const Text('Login'),
+                                  ),
                           ],
                         ),
                       ),
@@ -330,6 +351,7 @@ class _AppTabsScreenState extends State<_AppTabsScreen> {
     const workouts.WorkoutPushScreen(),
     const readworkouts.WorkoutReadScreen(),
     const sleep.SleepDataScreen(),
+    const sleepwrite.SleepWriteScreen(),
     const HealthMetricsScreen(),
     const activities.TodayActivitiesScreen(),
     const rawview.RawWorkoutsScreen(),
@@ -341,7 +363,10 @@ class _AppTabsScreenState extends State<_AppTabsScreen> {
     } catch (e) {
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text('Logout failed: $e'), backgroundColor: Colors.red),
+          SnackBar(
+            content: Text('Logout failed: $e'),
+            backgroundColor: Colors.red,
+          ),
         );
         return;
       }
@@ -372,7 +397,7 @@ class _AppTabsScreenState extends State<_AppTabsScreen> {
           });
         },
         items: const [
-           BottomNavigationBarItem(
+          BottomNavigationBarItem(
             icon: Icon(Icons.sensors),
             label: 'Monitoring',
           ),
@@ -382,6 +407,7 @@ class _AppTabsScreenState extends State<_AppTabsScreen> {
           ),
           BottomNavigationBarItem(icon: Icon(Icons.sync), label: 'Read'),
           BottomNavigationBarItem(icon: Icon(Icons.bedtime), label: 'Sleep'),
+          BottomNavigationBarItem(icon: Icon(Icons.hotel), label: 'Add Sleep'),
           BottomNavigationBarItem(
             icon: Icon(Icons.monitor_heart),
             label: 'Metrics',
