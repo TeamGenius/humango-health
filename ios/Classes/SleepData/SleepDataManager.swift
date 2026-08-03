@@ -25,11 +25,6 @@ import Foundation
 @available(iOS 14.0, *)
 public class SleepDataManager: NSObject, AppLifecycleObserver {
     public static let shared = SleepDataManager()
-
-    struct SelectedSleepPayload {
-        let payload: [String: Any]
-        let contributingSamples: [HKCategorySample]
-    }
     
     private var healthStore: HKHealthStore { SharedHealthKitStore.shared }
     private let isoFormatter: ISO8601DateFormatter = {
@@ -304,24 +299,55 @@ public class SleepDataManager: NSObject, AppLifecycleObserver {
         // Delegate all duration/aggregation logic to calculateSleepPayload —
         // this applies the Apple-source filter, gap-based session grouping,
         // and stage-level totals, identical to the background monitoring path.
-        guard let selection = selectSleepPayload(from: rawSamples) else {
+        guard let payload = calculateSleepPayload(from: rawSamples) else {
             debugPrint("🛏️ [SleepDataManager] fetchSleepData: no valid sleep groups (all samples < 3 h span), returning nil")
             return nil
         }
 
-        let convertedSamples = rawSamples.map { convertSampleToHuSleepSample($0) }
-        let selectedBundles = Set(selection.contributingSamples.map { $0.sourceRevision.source.bundleIdentifier })
-        let session = buildSleepSession(
-            from: selection.payload,
-            allSamples: convertedSamples,
-            allowedSourceBundles: selectedBundles,
-            queryStart: queryStartDate,
-            queryEnd: queryEndDate
+        let totalSleepSeconds = payload["TOTAL_SLEEP"]       as? Double ?? 0
+        let sleepInBed        = payload["SLEEP_IN_BED"]      as? Double ?? 0
+        let sleepCore         = payload["SLEEP_LIGHT"]        as? Double ?? 0
+        let sleepDeep         = payload["SLEEP_DEEP"]         as? Double ?? 0
+        let sleepREM          = payload["SLEEP_REM"]          as? Double ?? 0
+        let sleepUnspecified  = payload["SLEEP_UNSPECIFIED"]  as? Double ?? 0
+        let sleepAwake        = payload["SLEEP_AWAKE"]        as? Double ?? 0
+        let sourceName        = payload["SOURCE"]             as? String ?? ""
+        let sourceBundle      = payload["SOURCE_BUNDLE"]      as? String ?? ""
+        let timezone          = payload["TIMEZONE"]           as? String ?? TimeZone.current.identifier
+        let bedTimeStr        = payload["BED_TIME"]           as? String
+        let wakeTimeStr       = payload["WAKE_TIME"]          as? String
+        let bedTime           = bedTimeStr.flatMap  { isoFormatter.date(from: $0) }
+        let wakeTime          = wakeTimeStr.flatMap { isoFormatter.date(from: $0) }
+        let sessionId         = bedTimeStr ?? isoFormatter.string(from: queryStartDate)
+
+        // Build the per-sample list using the same Apple-source filter applied
+        // internally by calculateSleepPayload so sample list and totals are consistent.
+        let appleSamples = rawSamples.filter {
+            $0.sourceRevision.source.bundleIdentifier.lowercased().hasPrefix("com.apple.health")
+        }
+        let filteredSamples: [HKCategorySample] = appleSamples.isEmpty ? rawSamples : appleSamples
+        let huSamples = filteredSamples.map { convertSampleToHuSleepSample($0) }
+
+        debugPrint("🛏️ [SleepDataManager] fetchSleepData: \(filteredSamples.count) samples (raw=\(rawSamples.count)) totalSleep=\(Int(totalSleepSeconds))s from \(isoFormatter.string(from: queryStartDate)) to \(isoFormatter.string(from: queryEndDate))")
+
+        return HuSleepSession(
+            source:                  sourceName,
+            sourceBundle:            sourceBundle,
+            timezone:                timezone,
+            totalSleepSeconds:       totalSleepSeconds,
+            sleepInBedSeconds:       sleepInBed,
+            sleepLightSeconds:       sleepCore,
+            sleepDeepSeconds:        sleepDeep,
+            sleepREMSeconds:         sleepREM,
+            sleepUnspecifiedSeconds: sleepUnspecified,
+            sleepAwakeSeconds:       sleepAwake,
+            bedTime:                 bedTime,
+            wakeTime:                wakeTime,
+            queryStart:              queryStartDate,
+            queryEnd:                queryEndDate,
+            sessionId:               sessionId,
+            samples:                 huSamples
         )
-
-        debugPrint("🛏️ [SleepDataManager] fetchSleepData: \(session.samples.count) selected samples (raw=\(rawSamples.count)) totalSleep=\(Int(session.totalSleepSeconds))s from \(isoFormatter.string(from: queryStartDate)) to \(isoFormatter.string(from: queryEndDate))")
-
-        return session
     }
     
     // MARK: - Foreground Monitoring (HKAnchoredObjectQueryDescriptor)
@@ -472,11 +498,9 @@ public class SleepDataManager: NSObject, AppLifecycleObserver {
 
     func deliverPayload(samples: [HKCategorySample], queryStart: Date, queryEnd: Date) async {
 
-        guard let selection = selectSleepPayload(from: samples) else {
+        guard let payload = calculateSleepPayload(from: samples) else {
             return
         }
-
-        let payload = selection.payload
 
         let bedTimeStr   = payload["BED_TIME"]      as? String
         let wakeTimeStr  = payload["WAKE_TIME"]     as? String
@@ -486,13 +510,13 @@ public class SleepDataManager: NSObject, AppLifecycleObserver {
             source:                  payload["SOURCE"]        as? String ?? "",
             sourceBundle:            payload["SOURCE_BUNDLE"] as? String ?? "",
             timezone:                payload["TIMEZONE"]      as? String ?? TimeZone.current.identifier,
-            totalSleepSeconds:       numericDoubleValue(payload["TOTAL_SLEEP"]),
-            sleepInBedSeconds:       numericDoubleValue(payload["SLEEP_IN_BED"]),
-            sleepLightSeconds:       numericDoubleValue(payload["SLEEP_LIGHT"]),
-            sleepDeepSeconds:        numericDoubleValue(payload["SLEEP_DEEP"]),
-            sleepREMSeconds:         numericDoubleValue(payload["SLEEP_REM"]),
-            sleepUnspecifiedSeconds: numericDoubleValue(payload["SLEEP_UNSPECIFIED"]),
-            sleepAwakeSeconds:       numericDoubleValue(payload["SLEEP_AWAKE"]),
+            totalSleepSeconds:       payload["TOTAL_SLEEP"]       as? Double ?? 0,
+            sleepInBedSeconds:       payload["SLEEP_IN_BED"]      as? Double ?? 0,
+            sleepLightSeconds:       payload["SLEEP_LIGHT"]        as? Double ?? 0,
+            sleepDeepSeconds:        payload["SLEEP_DEEP"]         as? Double ?? 0,
+            sleepREMSeconds:         payload["SLEEP_REM"]          as? Double ?? 0,
+            sleepUnspecifiedSeconds: payload["SLEEP_UNSPECIFIED"]  as? Double ?? 0,
+            sleepAwakeSeconds:       payload["SLEEP_AWAKE"]        as? Double ?? 0,
             bedTime:                 bedTimeStr.flatMap  { isoFormatter.date(from: $0) },
             wakeTime:                wakeTimeStr.flatMap { isoFormatter.date(from: $0) },
             queryStart:              queryStart,
@@ -582,62 +606,96 @@ public class SleepDataManager: NSObject, AppLifecycleObserver {
 
     /// Builds the flat aggregated payload in the format used by the backend.
     ///
+    /// Groups samples by source name. Picks source with highest TOTAL_SLEEP (Core+Deep+REM).
     /// Matches the SleepResult.toDict() shape from the legacy humango-mobile app,
     /// with the addition of SOURCE_BUNDLE, TIMEZONE, BED_TIME and WAKE_TIME.
     ///
-    /// The caller is responsible for applying source-priority filtering before invoking
-    /// this method. For non-Apple tiers, all samples passed here must already belong to
-    /// a single bundle so later consumers never see mixed-source aggregates.
+    /// Source priority: if ANY sample originates from an Apple-platform source
+    /// (bundle prefix `com.apple.health`) — which covers both the user's Apple Watch
+    /// (`com.apple.health.<device-UUID>`) and the iPhone Health app (`com.apple.health`)
+    /// regardless of the user-visible device name — all third-party samples are discarded
+    /// before aggregation. If no Apple samples exist, all samples are used (third-party only).
     private func buildAggregatedPayload(samples: [HKCategorySample], queryStart: Date, queryEnd: Date) -> [String: Any]? {
-        guard let firstSample = samples.first else { return nil }
+        // Note: Apple-platform source priority filtering is applied upstream in
+        // calculateSleepPayload before this function is called. All samples
+        // passed here are already from a single source tier.
 
-        var inBed: Double = 0
-        var unspecified: Double = 0
-        var awake: Double = 0
-        var core: Double = 0
-        var deep: Double = 0
-        var rem: Double = 0
-        var minStart: Date?
-        var maxEnd: Date?
-
-        for sample in samples {
-            let dur = roundedSleepDurationSeconds(for: sample)
-            switch HKCategoryValueSleepAnalysis(rawValue: sample.value) {
-            case .inBed:             inBed        += dur
-            case .asleepUnspecified: unspecified  += dur
-            case .awake:             awake        += dur
-            case .asleepCore:        core         += dur
-            case .asleepDeep:        deep         += dur
-            case .asleepREM:         rem          += dur
-            default:                 break
-            }
-            if minStart == nil || sample.startDate < minStart! { minStart = sample.startDate }
-            if maxEnd   == nil || sample.endDate   > maxEnd!   { maxEnd   = sample.endDate }
+        // --- Group by source name (normalized: Apple-platform sources → "Apple") ---
+        var bySource: [String: [HKCategorySample]] = [:]
+        for s in samples {
+            let name = HealthKitConverter.normalizedSourceName(
+                name: s.sourceRevision.source.name,
+                bundle: s.sourceRevision.source.bundleIdentifier
+            )
+            bySource[name, default: []].append(s)
         }
 
-        let totalSleep = core + deep + rem
+        // --- Accumulate per source ---
+        struct SourceStats {
+            var bundle = ""
+            var timezone: String?
+            var inBed: Double = 0
+            var unspecified: Double = 0
+            var awake: Double = 0
+            var core: Double = 0
+            var deep: Double = 0
+            var rem: Double = 0
+            var minStart: Date?
+            var maxEnd: Date?
+        }
+
+        var stats: [String: SourceStats] = [:]
+
+        for (name, list) in bySource {
+            var s = SourceStats()
+            s.bundle = list.first?.sourceRevision.source.bundleIdentifier ?? ""
+            // Timezone from HKMetadataKeyTimeZone on any sample
+            s.timezone = list.compactMap { ($0.metadata?[HKMetadataKeyTimeZone] as? String) }.first
+
+            for sample in list {
+                // Use raw segment duration in seconds from HealthKit with no
+                // library-side rounding/truncation so downstream can decide display policy.
+                let dur = sample.endDate.timeIntervalSince(sample.startDate)
+                switch HKCategoryValueSleepAnalysis(rawValue: sample.value) {
+                case .inBed:             s.inBed        += dur
+                case .asleepUnspecified: s.unspecified  += dur
+                case .awake:             s.awake        += dur
+                case .asleepCore:        s.core         += dur
+                case .asleepDeep:        s.deep         += dur
+                case .asleepREM:         s.rem          += dur
+                default:                 break
+                }
+                if s.minStart == nil || sample.startDate < s.minStart! { s.minStart = sample.startDate }
+                if s.maxEnd   == nil || sample.endDate   > s.maxEnd!   { s.maxEnd   = sample.endDate   }
+            }
+            stats[name] = s
+        }
+
+        // --- Pick winner (highest TOTAL_SLEEP = Core+Deep+REM) ---
+        guard let (winnerName, winner) = stats.max(by: { ($0.value.core + $0.value.deep + $0.value.rem) < ($1.value.core + $1.value.deep + $1.value.rem) }) else {
+            return nil
+        }
+
+        let totalSleep = winner.core + winner.deep + winner.rem
         guard totalSleep > 0 else { return nil }
 
-        let winnerName = HealthKitConverter.normalizedSourceName(
-            name: firstSample.sourceRevision.source.name,
-            bundle: firstSample.sourceRevision.source.bundleIdentifier
-        )
-        let winnerBundle = firstSample.sourceRevision.source.bundleIdentifier
-        let timezone = samples.compactMap { $0.metadata?[HKMetadataKeyTimeZone] as? String }.first
+        if stats.count > 1 {
+            debugPrint("🛏️ [SleepDataManager] \(stats.count) sources — winner: \(winnerName) (\(totalSleep)s). Dropped: \(stats.keys.filter { $0 != winnerName }.joined(separator: ", "))")
+        }
 
         return [
             "SOURCE":            winnerName,
-            "SOURCE_BUNDLE":     winnerBundle,
-            "TIMEZONE":          timezone ?? TimeZone.current.identifier,
-            "TOTAL_SLEEP":       Int(totalSleep.rounded()),
-            "SLEEP_IN_BED":      Int(inBed.rounded()),
-            "SLEEP_LIGHT":       Int(core.rounded()),
-            "SLEEP_DEEP":        Int(deep.rounded()),
-            "SLEEP_REM":         Int(rem.rounded()),
-            "SLEEP_UNSPECIFIED": Int(unspecified.rounded()),
-            "SLEEP_AWAKE":       Int(awake.rounded()),
-            "BED_TIME":          minStart.map { isoFormatter.string(from: $0) } as Any,
-            "WAKE_TIME":         maxEnd.map   { isoFormatter.string(from: $0) } as Any,
+            "SOURCE_BUNDLE":     winner.bundle,
+            "TIMEZONE":          winner.timezone ?? TimeZone.current.identifier,
+            "TOTAL_SLEEP":       totalSleep,
+            "SLEEP_IN_BED":      winner.inBed,
+            "SLEEP_LIGHT":       winner.core,
+            "SLEEP_DEEP":        winner.deep,
+            "SLEEP_REM":         winner.rem,
+            "SLEEP_UNSPECIFIED": winner.unspecified,
+            "SLEEP_AWAKE":       winner.awake,
+            "BED_TIME":          winner.minStart.map { isoFormatter.string(from: $0) } as Any,
+            "WAKE_TIME":         winner.maxEnd.map   { isoFormatter.string(from: $0) } as Any,
             "START_DATE":        isoFormatter.string(from: queryStart),
             "END_DATE":          isoFormatter.string(from: queryEnd)
         ]
@@ -684,81 +742,6 @@ public class SleepDataManager: NSObject, AppLifecycleObserver {
     /// - Parameter samples: Raw `HKCategorySample` array from HealthKit (any order).
     /// - Returns: Aggregated sleep payload, or `nil` if no valid sleep groups are found.
     func calculateSleepPayload(from samples: [HKCategorySample]) -> [String: Any]? {
-        selectSleepPayload(from: samples)?.payload
-    }
-
-    func buildSleepSession(
-        from payload: [String: Any],
-        allSamples: [HuSleepSample],
-        allowedSourceBundles: Set<String>,
-        queryStart: Date,
-        queryEnd: Date
-    ) -> HuSleepSession {
-        let totalSleepSeconds = numericDoubleValue(payload["TOTAL_SLEEP"])
-        let sleepInBed        = numericDoubleValue(payload["SLEEP_IN_BED"])
-        let sleepCore         = numericDoubleValue(payload["SLEEP_LIGHT"])
-        let sleepDeep         = numericDoubleValue(payload["SLEEP_DEEP"])
-        let sleepREM          = numericDoubleValue(payload["SLEEP_REM"])
-        let sleepUnspecified  = numericDoubleValue(payload["SLEEP_UNSPECIFIED"])
-        let sleepAwake        = numericDoubleValue(payload["SLEEP_AWAKE"])
-        let sourceName        = payload["SOURCE"]            as? String ?? ""
-        let sourceBundle      = payload["SOURCE_BUNDLE"]     as? String ?? ""
-        let timezone          = payload["TIMEZONE"]          as? String ?? TimeZone.current.identifier
-        let bedTimeStr        = payload["BED_TIME"]          as? String
-        let wakeTimeStr       = payload["WAKE_TIME"]         as? String
-        let bedTime           = bedTimeStr.flatMap { isoFormatter.date(from: $0) }
-        let wakeTime          = wakeTimeStr.flatMap { isoFormatter.date(from: $0) }
-        let sessionId         = bedTimeStr ?? isoFormatter.string(from: queryStart)
-        let sessionSamples = allowedSourceBundles.isEmpty
-            ? allSamples
-            : allSamples.filter { allowedSourceBundles.contains($0.sourceBundle) }
-
-        return HuSleepSession(
-            source:                  sourceName,
-            sourceBundle:            sourceBundle,
-            timezone:                timezone,
-            totalSleepSeconds:       totalSleepSeconds,
-            sleepInBedSeconds:       sleepInBed,
-            sleepLightSeconds:       sleepCore,
-            sleepDeepSeconds:        sleepDeep,
-            sleepREMSeconds:         sleepREM,
-            sleepUnspecifiedSeconds: sleepUnspecified,
-            sleepAwakeSeconds:       sleepAwake,
-            bedTime:                 bedTime,
-            wakeTime:                wakeTime,
-            queryStart:              queryStart,
-            queryEnd:                queryEnd,
-            sessionId:               sessionId,
-            samples:                 sessionSamples
-        )
-    }
-
-    private func numericDoubleValue(_ value: Any?) -> Double {
-        if let value = value as? Double {
-            return value
-        }
-        if let value = value as? Int {
-            return Double(value)
-        }
-        if let value = value as? NSNumber {
-            return value.doubleValue
-        }
-        return 0
-    }
-
-    private func roundedSleepDurationSeconds(for sample: HKCategorySample) -> Double {
-        let startSecond = Int(sample.startDate.timeIntervalSince1970)
-        let endSecond = Int(sample.endDate.timeIntervalSince1970)
-        let durationSeconds = max(0, endSecond - startSecond)
-
-        guard durationSeconds >= 60 else {
-            return 0
-        }
-
-        return Double(((durationSeconds + 30) / 60) * 60)
-    }
-
-    private func selectSleepPayload(from samples: [HKCategorySample]) -> SelectedSleepPayload? {
         guard !samples.isEmpty else { return nil }
 
         // ── Tier 1: Apple-platform source priority ─────────────────────────────
@@ -805,23 +788,23 @@ public class SleepDataManager: NSObject, AppLifecycleObserver {
         let byBundle = Dictionary(grouping: remaining) { $0.sourceRevision.source.bundleIdentifier }
         debugPrint("🛏️ [SleepDataManager] calculateSleepPayload: Tier 3 — \(byBundle.keys.count) bundle(s): \(byBundle.keys.sorted().joined(separator: ", "))")
 
-        var bestSelection: SelectedSleepPayload? = nil
+        var bestPayload: [String: Any]? = nil
         var bestTotalSleep: Double = -1
 
         for (bundle, bundleSamples) in byBundle {
-            guard let selection = runGroupingAndCalculation(on: bundleSamples, label: bundle) else {
+            guard let payload = runGroupingAndCalculation(on: bundleSamples, label: bundle) else {
                 debugPrint("🛏️ [SleepDataManager] calculateSleepPayload: Tier 3 — bundle '\(bundle)' yielded no valid payload")
                 continue
             }
-            let totalSleep = numericDoubleValue(selection.payload["TOTAL_SLEEP"])
+            let totalSleep = payload["TOTAL_SLEEP"] as? Double ?? 0
             debugPrint("🛏️ [SleepDataManager] calculateSleepPayload: Tier 3 — bundle '\(bundle)' TOTAL_SLEEP=\(totalSleep)")
             if totalSleep > bestTotalSleep {
                 bestTotalSleep = totalSleep
-                bestSelection = selection
+                bestPayload = payload
             }
         }
 
-        return bestSelection
+        return bestPayload
     }
 
     /// Runs the gap-grouping + span-filter + `buildAggregatedPayload` pipeline on a
@@ -831,7 +814,7 @@ public class SleepDataManager: NSObject, AppLifecycleObserver {
     ///   - samples: Samples from a single bundle (or the Apple-platform subset).
     ///   - label:   Debug label (bundle identifier or "Apple") used in log output.
     /// - Returns: Aggregated sleep payload, or `nil` if no valid sleep groups are found.
-    private func runGroupingAndCalculation(on samples: [HKCategorySample], label: String) -> SelectedSleepPayload? {
+    private func runGroupingAndCalculation(on samples: [HKCategorySample], label: String) -> [String: Any]? {
         // ── Step 1: Sort by startDate ──────────────────────────────────────────
         let sorted = samples.sorted { $0.startDate < $1.startDate }
 
@@ -877,11 +860,7 @@ public class SleepDataManager: NSObject, AppLifecycleObserver {
         let queryStart = validSamples.first!.startDate
         let queryEnd   = validSamples.max(by: { $0.endDate < $1.endDate })!.endDate
 
-        guard let payload = buildAggregatedPayload(samples: validSamples, queryStart: queryStart, queryEnd: queryEnd) else {
-            return nil
-        }
-
-        return SelectedSleepPayload(payload: payload, contributingSamples: validSamples)
+        return buildAggregatedPayload(samples: validSamples, queryStart: queryStart, queryEnd: queryEnd)
     }
 
     // MARK: - Convert Sample to HuSleepSample

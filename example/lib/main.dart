@@ -6,7 +6,6 @@ import 'example_session_manager.dart';
 import 'workout_push_screen.dart' as workouts;
 import 'workout_read_screen.dart' as readworkouts;
 import 'sleep_data_screen.dart' as sleep;
-import 'add_sleep_screen.dart' as addsleep;
 import 'health_metrics_screen.dart';
 import 'today_activities_screen.dart' as activities;
 import 'monitoring_screen.dart' as monitoring;
@@ -331,7 +330,6 @@ class _AppTabsScreenState extends State<_AppTabsScreen> {
     const workouts.WorkoutPushScreen(),
     const readworkouts.WorkoutReadScreen(),
     const sleep.SleepDataScreen(),
-    const addsleep.AddSleepScreen(),
     const HealthMetricsScreen(),
     const activities.TodayActivitiesScreen(),
     const rawview.RawWorkoutsScreen(),
@@ -384,10 +382,6 @@ class _AppTabsScreenState extends State<_AppTabsScreen> {
           ),
           BottomNavigationBarItem(icon: Icon(Icons.sync), label: 'Read'),
           BottomNavigationBarItem(icon: Icon(Icons.bedtime), label: 'Sleep'),
-          BottomNavigationBarItem(
-            icon: Icon(Icons.add_circle_outline),
-            label: 'Add Sleep',
-          ),
           BottomNavigationBarItem(
             icon: Icon(Icons.monitor_heart),
             label: 'Metrics',
