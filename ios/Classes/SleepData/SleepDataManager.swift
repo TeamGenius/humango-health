@@ -50,7 +50,6 @@ public class SleepDataManager: NSObject, AppLifecycleObserver {
     private override init() {
         super.init()
         AppLifecycleManager.shared.addObserver(self)
-        debugPrint("🛏️ [SleepDataManager] initialized")
     }
 
     deinit {
@@ -63,7 +62,6 @@ public class SleepDataManager: NSObject, AppLifecycleObserver {
     /// Idempotent — if monitoring is already running, this is a no-op.
     public func startMonitoring() {
         guard monitorStartDate == nil else {
-            debugPrint("🛏️ [SleepDataManager] startMonitoring skipped — monitoring already active")
             return
         }
 
@@ -79,7 +77,6 @@ public class SleepDataManager: NSObject, AppLifecycleObserver {
             startBackgroundMonitoring()
         }
 
-        debugPrint("🛏️ [SleepDataManager] ✅ monitoring started (\(mode)) from \(isoFormatter.string(from: startDate))")
     }
 
     /// Stops all active monitoring and clears all persisted sleep data and configuration.
@@ -89,7 +86,6 @@ public class SleepDataManager: NSObject, AppLifecycleObserver {
         stopLiveUpdates()
         stopBackgroundMonitoring()
         monitorStartDate = nil
-        debugPrint("🛍️ [SleepDataManager] ✅ stopped all monitoring (logout)")
 
     }
     
@@ -109,7 +105,6 @@ public class SleepDataManager: NSObject, AppLifecycleObserver {
         guard monitorStartDate != nil else { return }
         stopBackgroundMonitoring()
         startLiveUpdates()
-        debugPrint("🛍️ [SleepDataManager] → foreground mode")
     }
 
     private func switchToBackgroundMode() {
@@ -123,13 +118,10 @@ public class SleepDataManager: NSObject, AppLifecycleObserver {
             Task {
                 do {
                     try await self.healthStore.enableBackgroundDelivery(for: sleepType, frequency: .immediate)
-                    debugPrint("🛏️ [SleepDataManager] switchToBackgroundMode — re-registered background delivery")
                 } catch {
-                    debugPrint("🛏️ [SleepDataManager] switchToBackgroundMode — re-register failed: \(error)")
                 }
             }
         }
-        debugPrint("🛍️ [SleepDataManager] → background mode")
     }
     
     // MARK: - Method Channel Handler
@@ -292,7 +284,6 @@ public class SleepDataManager: NSObject, AppLifecycleObserver {
         let rawSamples = try await fetchSleepSamples(from: queryStartDate, to: queryEndDate)
 
         guard !rawSamples.isEmpty else {
-            debugPrint("🛏️ [SleepDataManager] fetchSleepData: no samples in range, returning nil")
             return nil
         }
 
@@ -300,7 +291,6 @@ public class SleepDataManager: NSObject, AppLifecycleObserver {
         // this applies the Apple-source filter, gap-based session grouping,
         // and stage-level totals, identical to the background monitoring path.
         guard let payload = calculateSleepPayload(from: rawSamples) else {
-            debugPrint("🛏️ [SleepDataManager] fetchSleepData: no valid sleep groups (all samples < 3 h span), returning nil")
             return nil
         }
 
@@ -320,15 +310,23 @@ public class SleepDataManager: NSObject, AppLifecycleObserver {
         let wakeTime          = wakeTimeStr.flatMap { isoFormatter.date(from: $0) }
         let sessionId         = bedTimeStr ?? isoFormatter.string(from: queryStartDate)
 
-        // Build the per-sample list using the same Apple-source filter applied
-        // internally by calculateSleepPayload so sample list and totals are consistent.
-        let appleSamples = rawSamples.filter {
-            $0.sourceRevision.source.bundleIdentifier.lowercased().hasPrefix("com.apple.health")
+        // Keep returned per-sample list aligned with the source selection used to
+        // compute payload totals.
+        let selectedBundle = sourceBundle.lowercased()
+        let filteredSamples: [HKCategorySample]
+        if selectedBundle.hasPrefix("com.apple.health") {
+            filteredSamples = rawSamples.filter {
+                $0.sourceRevision.source.bundleIdentifier.lowercased().hasPrefix("com.apple.health")
+            }
+        } else if !selectedBundle.isEmpty {
+            filteredSamples = rawSamples.filter {
+                $0.sourceRevision.source.bundleIdentifier == sourceBundle
+            }
+        } else {
+            filteredSamples = rawSamples
         }
-        let filteredSamples: [HKCategorySample] = appleSamples.isEmpty ? rawSamples : appleSamples
         let huSamples = filteredSamples.map { convertSampleToHuSleepSample($0) }
 
-        debugPrint("🛏️ [SleepDataManager] fetchSleepData: \(filteredSamples.count) samples (raw=\(rawSamples.count)) totalSleep=\(Int(totalSleepSeconds))s from \(isoFormatter.string(from: queryStartDate)) to \(isoFormatter.string(from: queryEndDate))")
 
         return HuSleepSession(
             source:                  sourceName,
@@ -360,7 +358,6 @@ public class SleepDataManager: NSObject, AppLifecycleObserver {
         guard let startDate = monitorStartDate else { return }
 
         guard let sleepType = HKObjectType.categoryType(forIdentifier: .sleepAnalysis) else {
-            debugPrint("🛏️ [SleepDataManager] sleep analysis type not available")
             return
         }
 
@@ -382,20 +379,15 @@ public class SleepDataManager: NSObject, AppLifecycleObserver {
                     for try await update in stream {
                         self.anchor = update.newAnchor
                         if !update.addedSamples.isEmpty {
-                            debugPrint("🛍️ [SleepDataManager] foreground: \(update.addedSamples.count) new samples")
                         }
                         for deleted in update.deletedObjects {
-                            debugPrint("🛏️ [SleepDataManager] foreground: sample deleted \(deleted.uuid.uuidString)")
                         }
                     }
                 } catch {
-                    debugPrint("🛏️ [SleepDataManager] foreground monitoring error: \(error)")
 
                 }
             }
-            debugPrint("🛍️ [SleepDataManager] started foreground monitoring")
         } else {
-            debugPrint("🛏️ [SleepDataManager] foreground monitoring requires iOS 15.0+")
         }
     }
 
@@ -403,7 +395,6 @@ public class SleepDataManager: NSObject, AppLifecycleObserver {
         liveUpdateTask?.cancel()
         liveUpdateTask = nil
         isLiveStreaming = false
-        debugPrint("🛏️ [SleepDataManager] stopped foreground monitoring")
     }
     
     // MARK: - Background Monitoring
@@ -414,7 +405,6 @@ public class SleepDataManager: NSObject, AppLifecycleObserver {
         guard !isBackgroundMonitoring else { return }
 
         guard let sleepType = HKObjectType.categoryType(forIdentifier: .sleepAnalysis) else {
-            debugPrint("🛏️ [SleepDataManager] sleep analysis type not available")
             return
         }
 
@@ -423,9 +413,7 @@ public class SleepDataManager: NSObject, AppLifecycleObserver {
         Task {
             do {
                 try await healthStore.enableBackgroundDelivery(for: sleepType, frequency: .immediate)
-                debugPrint("🛏️ [SleepDataManager] background delivery enabled")
             } catch {
-                debugPrint("🛏️ [SleepDataManager] enableBackgroundDelivery failed: \(error)")
             }
         }
 
@@ -439,12 +427,10 @@ public class SleepDataManager: NSObject, AppLifecycleObserver {
             let fireTime = self.isoFormatter.string(from: Date())
 
             if let error = error {
-                debugPrint("🛏️ [SleepDataManager] observer error at \(fireTime): \(error)")
                 completion()
                 return
             }
 
-            debugPrint("🛏️ [SleepDataManager] observer fired at \(fireTime) — processing")
             Task {
                 await self.handleBackgroundObserverFired()
                 // Signal HealthKit AFTER all async work is complete so iOS keeps
@@ -455,7 +441,6 @@ public class SleepDataManager: NSObject, AppLifecycleObserver {
 
         if let query = observerQuery {
             healthStore.execute(query)
-            debugPrint("🛏️ [SleepDataManager] started background monitoring")
         }
     }
 
@@ -470,7 +455,6 @@ public class SleepDataManager: NSObject, AppLifecycleObserver {
         // every foreground transition creates a race where the async re-enable never wins
         // and delivery is permanently broken.
         isBackgroundMonitoring = false
-        debugPrint("🛏️ [SleepDataManager] stopped background monitoring")
     }
 
     // MARK: - Background Observer Logic
@@ -483,7 +467,6 @@ public class SleepDataManager: NSObject, AppLifecycleObserver {
         do {
             rawSamples = try await fetchSleepSamples(from: queryStart, to: queryEnd)
         } catch {
-            debugPrint("🛏️ [SleepDataManager] background fetch failed: \(error)")
             return
         }
 
@@ -531,7 +514,6 @@ public class SleepDataManager: NSObject, AppLifecycleObserver {
             // the app alive for the full fetch → compute → upload pipeline.
             await delegate.onSleepSessionReady(session)
         } else {
-            debugPrint("⚠️ [SleepDataManager] delegate is nil — sleep session \(sessionId) not delivered")
         }
     }
 
@@ -562,7 +544,6 @@ public class SleepDataManager: NSObject, AppLifecycleObserver {
             windowStart = cal.date(byAdding: .hour, value: 18, to: yesterday)!
         }
 
-        debugPrint("🛏️ [SleepDataManager] sixPMWindow: hour=\(hour) → [\(isoFormatter.string(from: windowStart)), now]")
       
         return (windowStart, now)
     }
@@ -581,7 +562,6 @@ public class SleepDataManager: NSObject, AppLifecycleObserver {
             let q = HKSampleQuery(sampleType: sleepType, predicate: predicate, limit: HKObjectQueryNoLimit, sortDescriptors: [sort]) { _, results, error in
                 if let error = error { cont.resume(throwing: error); return }
                 let samples = results as? [HKCategorySample] ?? []
-                debugPrint("🛏️ [SleepDataManager] fetchSleepSamples: \(samples.count) samples from \(self.isoFormatter.string(from: start)) to \(self.isoFormatter.string(from: end))")
                 for (i, s) in samples.enumerated() {
                     let dur = s.endDate.timeIntervalSince(s.startDate)
                     let stage: String
@@ -594,7 +574,6 @@ public class SleepDataManager: NSObject, AppLifecycleObserver {
                     case .asleepREM:         stage = "asleepREM"
                     default:                 stage = "unknown(\(s.value))"
                     }
-                    debugPrint("🛏️ [SleepDataManager]   [\(i)] \(stage) | \(self.isoFormatter.string(from: s.startDate)) → \(self.isoFormatter.string(from: s.endDate)) | \(Int(dur / 60))m | src=\(s.sourceRevision.source.name) (\(s.sourceRevision.source.bundleIdentifier))")
                 }
                 cont.resume(returning: samples)
             }
@@ -680,7 +659,6 @@ public class SleepDataManager: NSObject, AppLifecycleObserver {
         guard totalSleep > 0 else { return nil }
 
         if stats.count > 1 {
-            debugPrint("🛏️ [SleepDataManager] \(stats.count) sources — winner: \(winnerName) (\(totalSleep)s). Dropped: \(stats.keys.filter { $0 != winnerName }.joined(separator: ", "))")
         }
 
         return [
@@ -704,8 +682,8 @@ public class SleepDataManager: NSObject, AppLifecycleObserver {
     // MARK: - Sample-Based Sleep Calculation
 
     /// Source bundle prefixes for known fitness-tracker apps.
-    /// Excluded from consideration when no Apple-platform samples are present (Tier 2).
-    private static let excludedThirdPartyBundles: [String] = [
+    /// Tier-2 preference order when Apple-platform samples are absent.
+    private static let tier2PreferredBundles: [String] = [
         "com.whoop",
         "com.garmin.connect",
         "com.ouraring.oura",
@@ -725,11 +703,12 @@ public class SleepDataManager: NSObject, AppLifecycleObserver {
     /// Source-priority tiers (applied in order):
     ///   Tier 1 — Apple-platform samples (`com.apple.health` prefix): if any exist, use ONLY
     ///             those and return immediately. No other sources are considered.
-    ///   Tier 2 — Known fitness-tracker bundles (Whoop, Garmin, Oura, Coros, Fitbit, etc.)
-    ///             are stripped from the remaining pool.
-    ///   Tier 3 — Group remaining samples by `sourceBundle` and calculate a payload
-    ///             independently per bundle. Return the payload with the highest TOTAL_SLEEP.
-    ///             Samples from two different bundle IDs are NEVER mixed.
+    ///   Tier 2 — If Apple is absent, evaluate known fitness-tracker bundles in the
+    ///             configured order and return the first bundle that yields a valid payload.
+    ///   Tier 3 — If no Tier-2 bundle yields a valid payload, evaluate remaining bundles
+    ///             (non-Tier-2) and return the first valid payload.
+    ///
+    /// Exactly one source bundle is selected; samples from different bundles are never mixed.
     ///
     /// Gap-grouping algorithm (applied per bundle):
     ///   Step 1 — Sort samples by `startDate` ascending.
@@ -744,6 +723,8 @@ public class SleepDataManager: NSObject, AppLifecycleObserver {
     func calculateSleepPayload(from samples: [HKCategorySample]) -> [String: Any]? {
         guard !samples.isEmpty else { return nil }
 
+        logFetchedSamplesBeforeLogic(samples)
+
         // ── Tier 1: Apple-platform source priority ─────────────────────────────
         let appleSamples = samples.filter {
             $0.sourceRevision.source.bundleIdentifier.lowercased().hasPrefix("com.apple.health")
@@ -756,55 +737,80 @@ public class SleepDataManager: NSObject, AppLifecycleObserver {
                         .filter { !$0.sourceRevision.source.bundleIdentifier.lowercased().hasPrefix("com.apple.health") }
                         .map { $0.sourceRevision.source.bundleIdentifier }
                 )
-                debugPrint("🛏️ [SleepDataManager] calculateSleepPayload: Tier 1 — dropped \(droppedCount) third-party sample(s) from: \(droppedBundles.joined(separator: ", "))")
             }
-            debugPrint("🛏️ [SleepDataManager] calculateSleepPayload: Tier 1 — using \(appleSamples.count) Apple sample(s)")
             return runGroupingAndCalculation(on: appleSamples, label: "Apple")
         }
 
-        // ── Tier 2: Strip known fitness-tracker sources ────────────────────────
-        let excluded = Self.excludedThirdPartyBundles
-        let remaining = samples.filter { sample in
-            let bundle = sample.sourceRevision.source.bundleIdentifier
-            return !excluded.contains(where: { bundle.hasPrefix($0) })
+        // ── Tier 2 + Tier 3: Candidate-order selection among non-Apple bundles ─
+        let nonAppleSamples = samples.filter {
+            !$0.sourceRevision.source.bundleIdentifier.lowercased().hasPrefix("com.apple.health")
         }
-        if remaining.count < samples.count {
-            let droppedBundles = Set(
-                samples
-                    .filter { sample in
-                        let bundle = sample.sourceRevision.source.bundleIdentifier
-                        return excluded.contains(where: { bundle.hasPrefix($0) })
-                    }
-                    .map { $0.sourceRevision.source.bundleIdentifier }
-            )
-            debugPrint("🛏️ [SleepDataManager] calculateSleepPayload: Tier 2 — dropped fitness-tracker samples from: \(droppedBundles.joined(separator: ", "))")
-        }
-        guard !remaining.isEmpty else {
-            debugPrint("🛏️ [SleepDataManager] calculateSleepPayload: Tier 2 — all samples excluded, returning nil")
+        guard !nonAppleSamples.isEmpty else {
             return nil
         }
 
-        // ── Tier 3: Per-bundle grouping; pick highest TOTAL_SLEEP ─────────────
-        let byBundle = Dictionary(grouping: remaining) { $0.sourceRevision.source.bundleIdentifier }
-        debugPrint("🛏️ [SleepDataManager] calculateSleepPayload: Tier 3 — \(byBundle.keys.count) bundle(s): \(byBundle.keys.sorted().joined(separator: ", "))")
+        let byBundle = Dictionary(grouping: nonAppleSamples) { $0.sourceRevision.source.bundleIdentifier }
+        let presentBundles = Array(byBundle.keys)
 
-        var bestPayload: [String: Any]? = nil
-        var bestTotalSleep: Double = -1
+        let tier2 = Self.tier2PreferredBundles
+        func tier2Rank(for bundle: String) -> Int? {
+            let lower = bundle.lowercased()
+            return tier2.firstIndex(where: { lower.hasPrefix($0) })
+        }
+        func firstStartDate(for bundle: String) -> Date {
+            byBundle[bundle]?.map(\.startDate).min() ?? .distantFuture
+        }
 
-        for (bundle, bundleSamples) in byBundle {
+        let tier2Bundles = presentBundles
+            .filter { tier2Rank(for: $0) != nil }
+            .sorted { lhs, rhs in
+                let lRank = tier2Rank(for: lhs)!
+                let rRank = tier2Rank(for: rhs)!
+                if lRank != rRank { return lRank < rRank }
+                return firstStartDate(for: lhs) < firstStartDate(for: rhs)
+            }
+
+        let otherBundles = presentBundles
+            .filter { tier2Rank(for: $0) == nil }
+            .sorted { lhs, rhs in
+                firstStartDate(for: lhs) < firstStartDate(for: rhs)
+            }
+
+        let orderedCandidates = tier2Bundles + otherBundles
+
+            "🛏️ [SleepDataManager] calculateSleepPayload: Apple absent — candidate bundle order: \(orderedCandidates.joined(separator: ", "))"
+        )
+
+        for bundle in orderedCandidates {
+            guard let bundleSamples = byBundle[bundle] else { continue }
             guard let payload = runGroupingAndCalculation(on: bundleSamples, label: bundle) else {
-                debugPrint("🛏️ [SleepDataManager] calculateSleepPayload: Tier 3 — bundle '\(bundle)' yielded no valid payload")
                 continue
             }
             let totalSleep = payload["TOTAL_SLEEP"] as? Double ?? 0
-            debugPrint("🛏️ [SleepDataManager] calculateSleepPayload: Tier 3 — bundle '\(bundle)' TOTAL_SLEEP=\(totalSleep)")
-            if totalSleep > bestTotalSleep {
-                bestTotalSleep = totalSleep
-                bestPayload = payload
-            }
+            return payload
         }
 
-        return bestPayload
+        return nil
+    }
+
+    /// Debug helper: prints all fetched samples in chronological order before
+    /// any source-priority or grouping logic is applied.
+    private func logFetchedSamplesBeforeLogic(_ samples: [HKCategorySample]) {
+        let sorted = samples.sorted { lhs, rhs in
+            if lhs.startDate == rhs.startDate {
+                return lhs.endDate < rhs.endDate
+            }
+            return lhs.startDate < rhs.startDate
+        }
+
+        for (index, sample) in sorted.enumerated() {
+            let durationSeconds = Int(sample.endDate.timeIntervalSince(sample.startDate))
+            let stage = sleepStageString(from: sample.value)
+            let sourceName = sample.sourceRevision.source.name
+            let sourceBundle = sample.sourceRevision.source.bundleIdentifier
+                "🛏️ [SleepDataManager] pre-logic [\(index)] \(isoFormatter.string(from: sample.startDate)) -> \(isoFormatter.string(from: sample.endDate)) | stage=\(stage) | duration=\(durationSeconds)s | source=\(sourceName) (\(sourceBundle))"
+            )
+        }
     }
 
     /// Runs the gap-grouping + span-filter + `buildAggregatedPayload` pipeline on a
@@ -846,12 +852,10 @@ public class SleepDataManager: NSObject, AppLifecycleObserver {
         }
 
         guard !validGroups.isEmpty else {
-            debugPrint("🛏️ [SleepDataManager] [\(label)] runGroupingAndCalculation: no valid sleep groups (all < 3h span)")
             return nil
         }
 
         let validSamples = validGroups.flatMap { $0 }
-        debugPrint("🛏️ [SleepDataManager] [\(label)] runGroupingAndCalculation: \(validGroups.count)/\(groups.count) group(s) valid, \(validSamples.count) sample(s)")
 
         // ── Step 3: Merge valid groups → build aggregated payload ──────────────
         // queryStart: earliest startDate (.first is correct — sorted is by startDate)
