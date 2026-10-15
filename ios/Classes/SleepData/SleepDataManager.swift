@@ -631,22 +631,17 @@ public class SleepDataManager: NSObject, AppLifecycleObserver {
             // Timezone from HKMetadataKeyTimeZone on any sample
             s.timezone = list.compactMap { ($0.metadata?[HKMetadataKeyTimeZone] as? String) }.first
 
-            for sample in list {
-                // Use raw segment duration in seconds from HealthKit with no
-                // library-side rounding/truncation so downstream can decide display policy.
-                let dur = sample.endDate.timeIntervalSince(sample.startDate)
-                switch HKCategoryValueSleepAnalysis(rawValue: sample.value) {
-                case .inBed:             s.inBed        += dur
-                case .asleepUnspecified: s.unspecified  += dur
-                case .awake:             s.awake        += dur
-                case .asleepCore:        s.core         += dur
-                case .asleepDeep:        s.deep         += dur
-                case .asleepREM:         s.rem          += dur
-                default:                 break
-                }
-                if s.minStart == nil || sample.startDate < s.minStart! { s.minStart = sample.startDate }
-                if s.maxEnd   == nil || sample.endDate   > s.maxEnd!   { s.maxEnd   = sample.endDate   }
-            }
+            // Raw seconds from HealthKit with no library-side rounding/truncation
+            // so downstream can decide display policy. Overlaps count once.
+            let secs = overlapFreeStageSeconds(list)
+            s.inBed       = secs[.inBed]             ?? 0
+            s.unspecified = secs[.asleepUnspecified] ?? 0
+            s.awake       = secs[.awake]             ?? 0
+            s.core        = secs[.asleepCore]        ?? 0
+            s.deep        = secs[.asleepDeep]        ?? 0
+            s.rem         = secs[.asleepREM]         ?? 0
+            s.minStart    = list.map(\.startDate).min()
+            s.maxEnd      = list.map(\.endDate).max()
             stats[name] = s
         }
 
@@ -677,6 +672,39 @@ public class SleepDataManager: NSObject, AppLifecycleObserver {
             "START_DATE":        isoFormatter.string(from: queryStart),
             "END_DATE":          isoFormatter.string(from: queryEnd)
         ]
+    }
+
+    /// Seconds per sleep stage with overlapping samples counted once (e.g. a source
+    /// that writes the same night twice). Each instant goes to the highest-ranked
+    /// stage covering it: deep > REM > core > unspecified > awake. `inBed` overlaps
+    /// the asleep stages by design, so it is ranked on its own (union of its intervals).
+    private func overlapFreeStageSeconds(_ samples: [HKCategorySample]) -> [HKCategoryValueSleepAnalysis: Double] {
+        let rankings: [[HKCategoryValueSleepAnalysis]] = [
+            [.asleepDeep, .asleepREM, .asleepCore, .asleepUnspecified, .awake],
+            [.inBed],
+        ]
+        var totals: [HKCategoryValueSleepAnalysis: Double] = [:]
+        for ranking in rankings {
+            // Sweep start (+1) / end (-1) events in time order; the slice since the
+            // previous event goes to the top-ranked stage still open.
+            var events: [(time: Date, rank: Int, delta: Int)] = []
+            for s in samples {
+                guard let stage = HKCategoryValueSleepAnalysis(rawValue: s.value),
+                      let rank = ranking.firstIndex(of: stage) else { continue }
+                events += [(s.startDate, rank, 1), (s.endDate, rank, -1)]
+            }
+            events.sort { $0.time < $1.time }
+            var open = [Int](repeating: 0, count: ranking.count)
+            var last: Date?
+            for e in events {
+                if let last, let top = open.firstIndex(where: { $0 > 0 }) {
+                    totals[ranking[top], default: 0] += e.time.timeIntervalSince(last)
+                }
+                open[e.rank] += e.delta
+                last = e.time
+            }
+        }
+        return totals
     }
 
     // MARK: - Sample-Based Sleep Calculation

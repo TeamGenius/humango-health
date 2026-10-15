@@ -1,3 +1,15 @@
+## 1.0.27 — 2026-10-15
+
+### Bug fixes
+
+#### Sleep stage durations no longer double when a source writes the same night twice
+
+`buildAggregatedPayload` added the raw duration of every sample to its stage bucket without checking for overlap, so a source that wrote a night into HealthKit twice (seen with Eight Sleep) reported every stage and `TOTAL_SLEEP` at exactly 2×. `BED_TIME` / `WAKE_TIME` were unaffected.
+
+Stage totals are now overlap-aware within the selected source: each second goes to one stage, by precedence `asleepDeep > asleepREM > asleepCore > asleepUnspecified > awake`, and identical copies collapse. `SLEEP_IN_BED` is the union of the `inBed` intervals. Non-overlapping data gives the same totals as before. Payload keys, units, source selection and gap grouping are unchanged.
+
+---
+
 ## 1.0.24 — 2026-06-03
 
 ### Changes
