@@ -312,6 +312,8 @@ class RouteService {
             dictMetaData["dataSource"] = workout.sourceRevision.source.name
             dictMetaData["sourceBundleId"] = workout.sourceRevision.source.bundleIdentifier ?? ""
             dictMetaData["iosVersion"] = ProcessInfo.processInfo.operatingSystemVersionString
+            // Backend reads this first to classify the activity origin (HUMANGO | APPLE | KEMTAI).
+            dictMetaData["activityOrigin"] = HuActivityOrigin.apple
             // Stamp isUserEnteredWorkout — backend uses this to decide how to handle the workout.
             // HKWasUserEntered is stored as an ObjC BOOL boxed in NSNumber; in Swift's [String:Any]
             // it may surface as NSNumber or Bool depending on the runtime path, so try both.

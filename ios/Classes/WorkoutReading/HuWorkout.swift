@@ -272,6 +272,11 @@ func formatStatistics(statistics: [HKQuantityType: HKStatistics]) -> [[String: D
 
 // MARK: - Metadata formatter
 
+/// Wire values for `metadata.ACTIVITY_ORIGIN`; this plugin only produces `apple`.
+enum HuActivityOrigin {
+    static let apple = "APPLE"
+}
+
 func formatMetadata(metadata: [String: Any]?) -> [String: Any] {
     guard let metadata = metadata else { return [:] }
     var out = [String: Any]()
@@ -292,6 +297,7 @@ func formatMetadata(metadata: [String: Any]?) -> [String: Any] {
         case "appVersion":         out["APP_VERSION"]           = value as? String ?? ""
         case "appBuild":           out["APP_BUILD"]             = value as? String ?? ""
         case "iosVersion":         out["IOS_VERSION"]           = value as? String ?? ""
+        case "activityOrigin":     out["ACTIVITY_ORIGIN"]       = value as? String ?? ""
         case "isScheduledWorkout":  out["IS_SCHEDULED_WORKOUT"]   = value as? Bool   ?? false
         case "isUserEnteredWorkout": out["IS_USER_ENTERED_WORKOUT"] = value as? Bool   ?? false
         case "scheduledWorkoutId":  out["SCHEDULED_WORKOUT_ID"]   = value as? String ?? ""
