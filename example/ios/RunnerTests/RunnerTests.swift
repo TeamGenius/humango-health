@@ -467,6 +467,79 @@ class SleepDataManagerCalculateSleepPayloadTests: XCTestCase {
         ]
         XCTAssertNil(manager.calculateSleepPayload(from: samples))
     }
+
+    // MARK: Overlapping samples — each second counts once
+
+    private func payloadDict(_ samples: [HKCategorySample]) -> NSDictionary {
+        NSDictionary(dictionary: manager.calculateSleepPayload(from: samples)!)
+    }
+
+    func testCalculateSleepPayload_duplicatedNight_equalsSingleCopy() {
+        // A source writing the same night twice must not double any stage.
+        let single = payloadDict(march23Samples())
+        // Non-overlapping data is unchanged by the overlap handling (raw seconds, no rounding).
+        XCTAssertEqual(single["TOTAL_SLEEP"] as! Double, 23_363.054, accuracy: 0.001)
+        XCTAssertEqual(payloadDict(march23Samples() + march23Samples()), single)
+        XCTAssertEqual(payloadDict((march23Samples() + march23Samples()).shuffled()), single)
+    }
+
+    func testCalculateSleepPayload_twoDifferentFullNightCopies_countOnceByPrecedence() {
+        // Copy A: core 22–01, deep 01–03, awake 03–03:30, rem 03:30–06
+        // Copy B: core 22–02, awake 02–02:30, rem 02:30–06
+        // deep > rem > core > awake → core 3 h, deep 2 h, rem 3 h, awake 0 (8 h window).
+        let samples = [
+            sleepSample(stage: .asleepCore, start: "2026-03-24T22:00:00.000Z", end: "2026-03-25T01:00:00.000Z"),
+            sleepSample(stage: .asleepDeep, start: "2026-03-25T01:00:00.000Z", end: "2026-03-25T03:00:00.000Z"),
+            sleepSample(stage: .awake,      start: "2026-03-25T03:00:00.000Z", end: "2026-03-25T03:30:00.000Z"),
+            sleepSample(stage: .asleepREM,  start: "2026-03-25T03:30:00.000Z", end: "2026-03-25T06:00:00.000Z"),
+            sleepSample(stage: .asleepCore, start: "2026-03-24T22:00:00.000Z", end: "2026-03-25T02:00:00.000Z"),
+            sleepSample(stage: .awake,      start: "2026-03-25T02:00:00.000Z", end: "2026-03-25T02:30:00.000Z"),
+            sleepSample(stage: .asleepREM,  start: "2026-03-25T02:30:00.000Z", end: "2026-03-25T06:00:00.000Z"),
+        ]
+        let p = manager.calculateSleepPayload(from: samples)!
+        XCTAssertEqual(p["SLEEP_LIGHT"] as? Double, 10_800)
+        XCTAssertEqual(p["SLEEP_DEEP"]  as? Double, 7_200)
+        XCTAssertEqual(p["SLEEP_REM"]   as? Double, 10_800)
+        XCTAssertEqual(p["SLEEP_AWAKE"] as? Double, 0)
+        XCTAssertEqual(p["TOTAL_SLEEP"] as? Double, 28_800)
+
+        // Window invariant: counted time never exceeds bed → wake.
+        let window = sleepIso.date(from: p["WAKE_TIME"] as! String)!
+            .timeIntervalSince(sleepIso.date(from: p["BED_TIME"] as! String)!)
+        let counted = (p["TOTAL_SLEEP"] as! Double) + (p["SLEEP_AWAKE"] as! Double) + (p["SLEEP_UNSPECIFIED"] as! Double)
+        XCTAssertLessThanOrEqual(counted, window)
+
+        // Deterministic regardless of input order.
+        for _ in 0..<10 {
+            XCTAssertEqual(payloadDict(samples.shuffled()), payloadDict(samples))
+        }
+    }
+
+    func testCalculateSleepPayload_partialSameStageOverlap_countsUnion() {
+        // core 00–02 + core 01–03 → 3 h, not 4 h
+        let samples = [
+            sleepSample(stage: .asleepCore, start: "2026-03-25T00:00:00.000Z", end: "2026-03-25T02:00:00.000Z"),
+            sleepSample(stage: .asleepCore, start: "2026-03-25T01:00:00.000Z", end: "2026-03-25T03:00:00.000Z"),
+        ]
+        let p = manager.calculateSleepPayload(from: samples)!
+        XCTAssertEqual(p["SLEEP_LIGHT"] as? Double, 10_800)
+        XCTAssertEqual(p["TOTAL_SLEEP"] as? Double, 10_800)
+    }
+
+    func testCalculateSleepPayload_inBedOverlap_doesNotAffectStagesAndIsNotDoubled() {
+        // Duplicated inBed 22–06 over core 22:30–02 + rem 02–05:30.
+        let samples = [
+            sleepSample(stage: .inBed,      start: "2026-03-24T22:00:00.000Z", end: "2026-03-25T06:00:00.000Z"),
+            sleepSample(stage: .inBed,      start: "2026-03-24T22:00:00.000Z", end: "2026-03-25T06:00:00.000Z"),
+            sleepSample(stage: .asleepCore, start: "2026-03-24T22:30:00.000Z", end: "2026-03-25T02:00:00.000Z"),
+            sleepSample(stage: .asleepREM,  start: "2026-03-25T02:00:00.000Z", end: "2026-03-25T05:30:00.000Z"),
+        ]
+        let p = manager.calculateSleepPayload(from: samples)!
+        XCTAssertEqual(p["SLEEP_IN_BED"] as? Double, 28_800)
+        XCTAssertEqual(p["SLEEP_LIGHT"]  as? Double, 12_600)
+        XCTAssertEqual(p["SLEEP_REM"]    as? Double, 12_600)
+        XCTAssertEqual(p["TOTAL_SLEEP"]  as? Double, 25_200)
+    }
 }
 
 // MARK: - SleepDataManager.deliverPayload + Delegate Tests
