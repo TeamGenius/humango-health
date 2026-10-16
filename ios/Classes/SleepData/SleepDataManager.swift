@@ -705,8 +705,9 @@ public class SleepDataManager: NSObject, AppLifecycleObserver {
     ///             those and return immediately. No other sources are considered.
     ///   Tier 2 — If Apple is absent, evaluate known fitness-tracker bundles in the
     ///             configured order and return the first bundle that yields a valid payload.
-    ///   Tier 3 — If no Tier-2 bundle yields a valid payload, evaluate remaining bundles
-    ///             (non-Tier-2) and return the first valid payload.
+    ///             If any Tier-2 bundle is present, ONLY Tier-2 bundles are considered.
+    ///   Tier 3 — Only when no Tier-2 bundle is present: evaluate remaining bundles
+    ///             (earliest first) and return the first valid payload.
     ///
     /// Exactly one source bundle is selected; samples from different bundles are never mixed.
     ///
@@ -776,7 +777,9 @@ public class SleepDataManager: NSObject, AppLifecycleObserver {
                 firstStartDate(for: lhs) < firstStartDate(for: rhs)
             }
 
-        let orderedCandidates = tier2Bundles + otherBundles
+        // Tier 3 is a fallback only when no Tier-2 bundle is present at all —
+        // if any Tier-2 samples exist, other third-party bundles are never used.
+        let orderedCandidates = tier2Bundles.isEmpty ? otherBundles : tier2Bundles
 
         for bundle in orderedCandidates {
             guard let bundleSamples = byBundle[bundle] else { continue }

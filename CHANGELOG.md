@@ -1,3 +1,13 @@
+## Unreleased
+
+### Changes
+
+#### Sleep source selection: Tier 2 excludes other third-party sources
+
+`calculateSleepPayload` source priority is now Apple → Tier-2 fitness trackers (Whoop, Garmin, Oura, …, in configured order) → any other bundle. When any Tier-2 bundle has samples for the night, only Tier-2 bundles are evaluated; other third-party sources (e.g. Eight Sleep) are used only when no Tier-2 bundle is present.
+
+---
+
 ## 1.0.24 — 2026-06-03
 
 ### Changes
