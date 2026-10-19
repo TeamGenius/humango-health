@@ -279,20 +279,11 @@ public class SleepDataManager: NSObject, AppLifecycleObserver {
 
         let queryEndDate   = endDate   ?? Date()
         let queryStartDate = startDate ?? Calendar.current.date(byAdding: .hour, value: -24, to: queryEndDate)!
-        SleepTraceLogger.shared.log("fetch_01_request", data: [
-            "requestedStartUtc": SleepTraceLogger.utc(startDate),
-            "requestedEndUtc": SleepTraceLogger.utc(endDate),
-            "queryStartUtc": SleepTraceLogger.utc(queryStartDate),
-            "queryEndUtc": SleepTraceLogger.utc(queryEndDate),
-            "queryStartLocal": SleepTraceLogger.local(queryStartDate),
-            "queryEndLocal": SleepTraceLogger.local(queryEndDate),
-        ])
 
         // Single canonical HealthKit query path shared with the monitoring pipeline.
         let rawSamples = try await fetchSleepSamples(from: queryStartDate, to: queryEndDate)
 
         guard !rawSamples.isEmpty else {
-            SleepTraceLogger.shared.log("fetch_02_no_samples")
             return nil
         }
 
@@ -300,7 +291,6 @@ public class SleepDataManager: NSObject, AppLifecycleObserver {
         // this applies the Apple-source filter, gap-based session grouping,
         // and stage-level totals, identical to the background monitoring path.
         guard let payload = calculateSleepPayload(from: rawSamples) else {
-            SleepTraceLogger.shared.log("fetch_02_payload_nil", data: ["rawSampleCount": rawSamples.count])
             return nil
         }
 
@@ -337,12 +327,6 @@ public class SleepDataManager: NSObject, AppLifecycleObserver {
         }
         let huSamples = filteredSamples.map { convertSampleToHuSleepSample($0) }
 
-        SleepTraceLogger.shared.log("fetch_03_payload", data: [
-            "payload": payload,
-            "rawSampleCount": rawSamples.count,
-            "returnedSampleCount": filteredSamples.count,
-            "returnedSampleUUIDs": filteredSamples.map { $0.uuid.uuidString },
-        ])
 
         return HuSleepSession(
             source:                  sourceName,
@@ -441,15 +425,6 @@ public class SleepDataManager: NSObject, AppLifecycleObserver {
             // remote log network request complete.
 
             let fireTime = self.isoFormatter.string(from: Date())
-            let traceRunId = SleepTraceLogger.makeRunId(prefix: "BG")
-            SleepTraceLogger.shared.log("bg_01_observer_fired", runId: traceRunId, data: [
-                "fireTimeUtc": fireTime,
-                "error": error.map { "\($0)" } ?? NSNull(),
-                "isBackgroundMonitoring": self.isBackgroundMonitoring,
-                "isLiveStreaming": self.isLiveStreaming,
-                "monitorStartDate": SleepTraceLogger.utc(self.monitorStartDate),
-                "delegateSet": HumangoHealthPlugin.delegate != nil,
-            ])
 
             if let error = error {
                 completion()
@@ -457,11 +432,7 @@ public class SleepDataManager: NSObject, AppLifecycleObserver {
             }
 
             Task {
-                await SleepTraceLogger.$currentRunId.withValue(traceRunId) {
-                    await self.handleBackgroundObserverFired()
-                    SleepTraceLogger.shared.log("bg_99_observer_completion")
-                }
-                await SleepTraceLogger.shared.flush()
+                await self.handleBackgroundObserverFired()
                 // Signal HealthKit AFTER all async work is complete so iOS keeps
                 // the app alive for the full fetch → compute → deliver pipeline.
                 completion()
@@ -490,24 +461,16 @@ public class SleepDataManager: NSObject, AppLifecycleObserver {
 
     private func handleBackgroundObserverFired() async {
         let (queryStart, queryEnd) = sixPMWindow()
-        SleepTraceLogger.shared.log("bg_02_query_window", data: [
-            "queryStartUtc": SleepTraceLogger.utc(queryStart),
-            "queryEndUtc": SleepTraceLogger.utc(queryEnd),
-            "queryStartLocal": SleepTraceLogger.local(queryStart),
-            "queryEndLocal": SleepTraceLogger.local(queryEnd),
-            "currentHour": Calendar.current.component(.hour, from: queryEnd),
-        ])
+
 
         let rawSamples: [HKCategorySample]
         do {
             rawSamples = try await fetchSleepSamples(from: queryStart, to: queryEnd)
         } catch {
-            SleepTraceLogger.shared.log("bg_03_fetch_error", data: ["error": "\(error)"])
             return
         }
 
         guard !rawSamples.isEmpty else {
-            SleepTraceLogger.shared.log("bg_03_no_samples", data: ["sampleCount": 0])
             return
         }
 
@@ -518,13 +481,7 @@ public class SleepDataManager: NSObject, AppLifecycleObserver {
 
     func deliverPayload(samples: [HKCategorySample], queryStart: Date, queryEnd: Date) async {
 
-        SleepTraceLogger.shared.log("deliver_01_start", data: [
-            "inputSampleCount": samples.count,
-            "queryStartUtc": SleepTraceLogger.utc(queryStart),
-            "queryEndUtc": SleepTraceLogger.utc(queryEnd),
-        ])
         guard let payload = calculateSleepPayload(from: samples) else {
-            SleepTraceLogger.shared.log("deliver_02_payload_nil")
             return
         }
 
@@ -551,20 +508,12 @@ public class SleepDataManager: NSObject, AppLifecycleObserver {
             samples:                 []
         )
 
-        SleepTraceLogger.shared.log("deliver_03_session_built", data: [
-            "session": session.toDict(),
-            "payload": payload,
-        ])
-
         if let delegate = HumangoHealthPlugin.delegate {
             // `await` so the host app's upload completes before we return.
             // completion() is called after this function returns, so iOS keeps
             // the app alive for the full fetch → compute → upload pipeline.
-            SleepTraceLogger.shared.log("deliver_04_delegate_call", data: ["sessionId": sessionId])
             await delegate.onSleepSessionReady(session)
-            SleepTraceLogger.shared.log("deliver_05_delegate_returned", data: ["sessionId": sessionId])
         } else {
-            SleepTraceLogger.shared.log("deliver_04_delegate_nil", data: ["sessionId": sessionId])
         }
     }
 
@@ -609,29 +558,6 @@ public class SleepDataManager: NSObject, AppLifecycleObserver {
         // start before or end after the query boundary.
         let predicate = HKQuery.predicateForSamples(withStart: start, end: end, options: [])
         let sort = NSSortDescriptor(key: HKSampleSortIdentifierStartDate, ascending: true)
-        let traceQuery: [String: Any] = [
-            "predicateStartUtc": SleepTraceLogger.utc(start),
-            "predicateEndUtc": SleepTraceLogger.utc(end),
-            "predicateStartLocal": SleepTraceLogger.local(start),
-            "predicateEndLocal": SleepTraceLogger.local(end),
-            "predicateOptions": "[] (overlap)",
-            "sort": "startDate ascending",
-            "limit": "HKObjectQueryNoLimit",
-        ]
-        SleepTraceLogger.shared.log("hk_01_query_start", data: traceQuery)
-        let traceSamples: [HKCategorySample]
-        do {
-            traceSamples = try await rawSleepSampleQuery(sleepType: sleepType, predicate: predicate, sort: sort)
-        } catch {
-            SleepTraceLogger.shared.log("hk_02_query_error", data: traceQuery.merging(["error": "\(error)"]) { $1 })
-            throw error
-        }
-        SleepTraceLogger.shared.logSamples("hk_02_raw_samples", samples: traceSamples, extra: traceQuery)
-        return traceSamples
-    }
-
-    /// The original HealthKit sample query, unchanged; split out so results can be traced.
-    private func rawSleepSampleQuery(sleepType: HKCategoryType, predicate: NSPredicate, sort: NSSortDescriptor) async throws -> [HKCategorySample] {
         return try await withCheckedThrowingContinuation { cont in
             let q = HKSampleQuery(sampleType: sleepType, predicate: predicate, limit: HKObjectQueryNoLimit, sortDescriptors: [sort]) { _, results, error in
                 if let error = error { cont.resume(throwing: error); return }
@@ -705,18 +631,10 @@ public class SleepDataManager: NSObject, AppLifecycleObserver {
             // Timezone from HKMetadataKeyTimeZone on any sample
             s.timezone = list.compactMap { ($0.metadata?[HKMetadataKeyTimeZone] as? String) }.first
 
-            var traceContributions: [[String: Any]] = []
             for sample in list {
                 // Use raw segment duration in seconds from HealthKit with no
                 // library-side rounding/truncation so downstream can decide display policy.
                 let dur = sample.endDate.timeIntervalSince(sample.startDate)
-                traceContributions.append([
-                    "uuid": sample.uuid.uuidString,
-                    "value": sample.value,
-                    "startLocal": SleepTraceLogger.local(sample.startDate),
-                    "endLocal": SleepTraceLogger.local(sample.endDate),
-                    "durationSeconds": dur,
-                ])
                 switch HKCategoryValueSleepAnalysis(rawValue: sample.value) {
                 case .inBed:             s.inBed        += dur
                 case .asleepUnspecified: s.unspecified  += dur
@@ -730,20 +648,6 @@ public class SleepDataManager: NSObject, AppLifecycleObserver {
                 if s.maxEnd   == nil || sample.endDate   > s.maxEnd!   { s.maxEnd   = sample.endDate   }
             }
             stats[name] = s
-            SleepTraceLogger.shared.log("agg_01_source_totals", data: [
-                "sourceName": name,
-                "bundle": s.bundle,
-                "sampleCount": list.count,
-                "inBed": s.inBed,
-                "unspecified": s.unspecified,
-                "awake": s.awake,
-                "core": s.core,
-                "deep": s.deep,
-                "rem": s.rem,
-                "minStartLocal": SleepTraceLogger.local(s.minStart),
-                "maxEndLocal": SleepTraceLogger.local(s.maxEnd),
-                "contributions": traceContributions,
-            ])
         }
 
         // --- Pick winner (highest TOTAL_SLEEP = Core+Deep+REM) ---
@@ -752,14 +656,6 @@ public class SleepDataManager: NSObject, AppLifecycleObserver {
         }
 
         let totalSleep = winner.core + winner.deep + winner.rem
-        SleepTraceLogger.shared.log("agg_02_winner", data: [
-            "winnerName": winnerName,
-            "winnerBundle": winner.bundle,
-            "totalSleep": totalSleep,
-            "sourceNames": Array(stats.keys),
-            "queryStartUtc": SleepTraceLogger.utc(queryStart),
-            "queryEndUtc": SleepTraceLogger.utc(queryEnd),
-        ])
         guard totalSleep > 0 else { return nil }
 
         if stats.count > 1 {
@@ -834,13 +730,6 @@ public class SleepDataManager: NSObject, AppLifecycleObserver {
         let appleSamples = samples.filter {
             $0.sourceRevision.source.bundleIdentifier.lowercased().hasPrefix("com.apple.health")
         }
-        SleepTraceLogger.shared.log("calc_01_input", data: [
-            "inputSampleCount": samples.count,
-            "inputSampleUUIDs": samples.map { $0.uuid.uuidString },
-            "appleSampleCount": appleSamples.count,
-            "appleSampleUUIDs": appleSamples.map { $0.uuid.uuidString },
-            "bundleCounts": Dictionary(grouping: samples, by: { $0.sourceRevision.source.bundleIdentifier }).mapValues { $0.count },
-        ])
         if !appleSamples.isEmpty {
             let droppedCount = samples.count - appleSamples.count
             if droppedCount > 0 {
@@ -849,15 +738,8 @@ public class SleepDataManager: NSObject, AppLifecycleObserver {
                         .filter { !$0.sourceRevision.source.bundleIdentifier.lowercased().hasPrefix("com.apple.health") }
                         .map { $0.sourceRevision.source.bundleIdentifier }
                 )
-                SleepTraceLogger.shared.log("calc_02_tier1_dropped", data: [
-                    "droppedCount": droppedCount,
-                    "droppedBundles": Array(droppedBundles),
-                ])
             }
-            SleepTraceLogger.shared.log("calc_02_tier1_selected", data: ["appleSampleCount": appleSamples.count])
-            let applePayload = runGroupingAndCalculation(on: appleSamples, label: "Apple")
-            SleepTraceLogger.shared.log("calc_09_result", data: ["tier": 1, "payload": applePayload ?? NSNull()])
-            return applePayload
+            return runGroupingAndCalculation(on: appleSamples, label: "Apple")
         }
 
         // ── Tier 2 + Tier 3: Candidate-order selection among non-Apple bundles ─
@@ -898,26 +780,16 @@ public class SleepDataManager: NSObject, AppLifecycleObserver {
         // Tier 3 is a fallback only when no Tier-2 bundle is present at all —
         // if any Tier-2 samples exist, other third-party bundles are never used.
         let orderedCandidates = tier2Bundles.isEmpty ? otherBundles : tier2Bundles
-        SleepTraceLogger.shared.log("calc_03_candidates", data: [
-            "presentBundles": presentBundles,
-            "tier2Bundles": tier2Bundles,
-            "otherBundles": otherBundles,
-            "orderedCandidates": orderedCandidates,
-            "bundleSampleCounts": byBundle.mapValues { $0.count },
-        ])
 
         for bundle in orderedCandidates {
             guard let bundleSamples = byBundle[bundle] else { continue }
             guard let payload = runGroupingAndCalculation(on: bundleSamples, label: bundle) else {
-                SleepTraceLogger.shared.log("calc_04_candidate_nil", data: ["bundle": bundle, "sampleCount": bundleSamples.count])
                 continue
             }
             let totalSleep = payload["TOTAL_SLEEP"] as? Double ?? 0
-            SleepTraceLogger.shared.log("calc_09_result", data: ["tier": tier2Bundles.isEmpty ? 3 : 2, "bundle": bundle, "totalSleep": totalSleep, "payload": payload])
             return payload
         }
 
-        SleepTraceLogger.shared.log("calc_09_result", data: ["payload": NSNull(), "reason": "no candidate produced a payload"])
         return nil
     }
 
@@ -969,25 +841,6 @@ public class SleepDataManager: NSObject, AppLifecycleObserver {
             let maxEnd = group.max(by: { $0.endDate < $1.endDate })!.endDate
             return maxEnd.timeIntervalSince(first.startDate) >= minGroupSpan
         }
-
-        SleepTraceLogger.shared.log("group_01_groups", data: [
-            "label": label,
-            "inputSampleCount": samples.count,
-            "groupCount": groups.count,
-            "groups": groups.enumerated().map { idx, group -> [String: Any] in
-                let maxEnd = group.max(by: { $0.endDate < $1.endDate })?.endDate
-                return [
-                    "groupIndex": idx,
-                    "sampleCount": group.count,
-                    "firstStartLocal": SleepTraceLogger.local(group.first?.startDate),
-                    "maxEndLocal": SleepTraceLogger.local(maxEnd),
-                    "spanSeconds": (group.first != nil && maxEnd != nil) ? maxEnd!.timeIntervalSince(group.first!.startDate) : 0,
-                    "kept": validGroups.contains(where: { $0.first?.uuid == group.first?.uuid }),
-                    "sampleUUIDs": group.map { $0.uuid.uuidString },
-                ]
-            },
-            "validGroupCount": validGroups.count,
-        ])
 
         guard !validGroups.isEmpty else {
             return nil
