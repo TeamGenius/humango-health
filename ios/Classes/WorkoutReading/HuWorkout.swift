@@ -288,6 +288,9 @@ func formatMetadata(metadata: [String: Any]?) -> [String: Any] {
             out["SWIMMING_STROKE_TYPE"]   = getSwimmingStrokeName(val: value as? Int ?? 0)
         case HKMetadataKeyLapLength:
             if let q = value as? HKQuantity { out["LAP_LENGTH"] = q.doubleValue(for: .meter()) }
+        // IANA name of where the workout was recorded; the backend derives its UTC offset from it.
+        case HKMetadataKeyTimeZone:
+            if let name = value as? String { out["TIMEZONE"] = name }
         case "FeedbackRpe":        out["FEEDBACK_RPE"]          = value as? Int    ?? -1
         case "FeedbackMood":       out["FEEDBACK_MOOD"]         = value as? Int    ?? -1
         case "WorkoutName":        out["WORKOUT_NAME"]          = value as? String ?? ""
