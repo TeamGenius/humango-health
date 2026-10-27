@@ -2,6 +2,12 @@
 
 ### Changes
 
+#### `WorkoutRecordStore` moved into the plugin
+
+The upload-dedup store for auto-synced workouts now lives in the plugin as a public actor (`WorkoutRecordStore.shared`), so the app reads it through the library instead of its own Runner code. The `UserDefaults` key (`WorkoutRecordStore.records.v4`) is unchanged, so existing records carry over.
+
+`WorkoutReadManager.fetchPushedWorkoutIds()` returns the IDs of workouts already uploaded, for hiding them from manual import.
+
 #### Sleep source selection: Tier 2 excludes other third-party sources
 
 `calculateSleepPayload` source priority is now Apple → Tier-2 fitness trackers (Whoop, Garmin, Oura, …, in configured order) → any other bundle. When any Tier-2 bundle has samples for the night, only Tier-2 bundles are evaluated; other third-party sources (e.g. Eight Sleep) are used only when no Tier-2 bundle is present.

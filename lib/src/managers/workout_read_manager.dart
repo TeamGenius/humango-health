@@ -59,4 +59,12 @@ class WorkoutReadManager {
     if (result is List) return result.cast<String>();
     return [];
   }
+
+  /// IDs of workouts already uploaded to HumanGO by background auto-sync.
+  Future<List<String>> fetchPushedWorkoutIds() async {
+    final ids = await _methodChannel.invokeListMethod<String>(
+      'fetchPushedWorkoutIds',
+    );
+    return ids ?? [];
+  }
 }

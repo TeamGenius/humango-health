@@ -24,8 +24,20 @@ public class WorkoutServiceChannel: NSObject {
 
         case "fetchAllWorkouts":
             handleFetchAllWorkouts(call, result)
+        case "fetchPushedWorkoutIds":
+            handleFetchPushedWorkoutIds(result)
         default:
             result(FlutterMethodNotImplemented)
+        }
+    }
+
+    /// Returns IDs of workouts `WorkoutRecordStore` has marked as uploaded.
+    private func handleFetchPushedWorkoutIds(_ result: @escaping FlutterResult) {
+        Task {
+            let ids = await WorkoutRecordStore.shared.pushedDeviceActivityIds()
+            DispatchQueue.main.async {
+                result(ids)
+            }
         }
     }
 
