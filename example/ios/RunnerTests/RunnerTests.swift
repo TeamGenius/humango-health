@@ -620,3 +620,37 @@ class SleepDataManagerDeliverPayloadTests: XCTestCase {
     }
 }
 
+
+// MARK: - formatMetadata Tests
+
+class FormatMetadataTests: XCTestCase {
+
+  func testFormatMetadata_strengthLog_emittedAsStrengthLogStringUnchanged() {
+    let log = "{\"version\":1,\"sets\":[{\"step_index\":4,\"set\":2,\"reps\":8}]}"
+    let out = formatMetadata(metadata: ["HumanGoStrengthLog": log])
+    XCTAssertEqual(out["strength_log"] as? String, log)
+    XCTAssertNil(out["HumanGoStrengthLog"])
+  }
+
+  func testFormatMetadata_strengthLogAlongsideKnownKeys_otherMappingsUnchanged() {
+    let out = formatMetadata(metadata: [
+      "HumanGoStrengthLog": "{}",
+      "WorkoutName": "Leg day",
+      "FeedbackRpe": 7,
+    ])
+    XCTAssertEqual(out["strength_log"] as? String, "{}")
+    XCTAssertEqual(out["WORKOUT_NAME"] as? String, "Leg day")
+    XCTAssertEqual(out["FEEDBACK_RPE"] as? Int, 7)
+    XCTAssertEqual(out.count, 3)
+  }
+
+  func testFormatMetadata_noStrengthLog_noStrengthLogKey() {
+    let out = formatMetadata(metadata: ["WorkoutName": "Run"])
+    XCTAssertNil(out["strength_log"])
+  }
+
+  func testFormatMetadata_unknownKey_stillDropped() {
+    let out = formatMetadata(metadata: ["SomethingElse": "x"])
+    XCTAssertTrue(out.isEmpty)
+  }
+}

@@ -2,6 +2,10 @@
 
 ### Changes
 
+#### Workout metadata: forward the watch's strength log
+
+`formatMetadata` now maps the HealthKit workout metadata key `HumanGoStrengthLog` (a JSON string written by the HumanGo watch app for strength workouts) to `strength_log` in the workout payload. The string is passed through unchanged; the backend parses it. All other metadata mappings are unchanged and unknown keys are still dropped.
+
 #### Sleep source selection: Tier 2 excludes other third-party sources
 
 `calculateSleepPayload` source priority is now Apple → Tier-2 fitness trackers (Whoop, Garmin, Oura, …, in configured order) → any other bundle. When any Tier-2 bundle has samples for the night, only Tier-2 bundles are evaluated; other third-party sources (e.g. Eight Sleep) are used only when no Tier-2 bundle is present.
