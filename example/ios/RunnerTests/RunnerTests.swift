@@ -644,6 +644,12 @@ class FormatMetadataTests: XCTestCase {
     XCTAssertEqual(out.count, 3)
   }
 
+  func testFormatMetadata_strengthLogNotAString_dropped() {
+    let out = formatMetadata(metadata: ["HumanGoStrengthLog": 42])
+    XCTAssertNil(out["strength_log"])
+    XCTAssertTrue(out.isEmpty)
+  }
+
   func testFormatMetadata_noStrengthLog_noStrengthLogKey() {
     let out = formatMetadata(metadata: ["WorkoutName": "Run"])
     XCTAssertNil(out["strength_log"])
