@@ -416,11 +416,13 @@ func getSampleValue(sample: HKQuantitySample) -> Double {
 enum IndoorAltitudeProfile {
     static let metadataKey = "HumanGoAltitudeProfile"
 
-    /// The pairs as location points with only a timestamp and an altitude; malformed pairs are left out.
+    /// The pairs as location points with only a timestamp and an altitude. A malformed pair is left out,
+    /// including "nan" or "inf", which `Double` parses but JSON cannot hold: one would drop the whole workout.
     static func points(from text: String, formatter: ISO8601DateFormatter) -> [[String: Any]] {
         text.split(separator: ";").compactMap { pair in
             let parts = pair.split(separator: ",")
-            guard parts.count == 2, let seconds = Double(parts[0]), let meters = Double(parts[1]) else { return nil }
+            guard parts.count == 2, let seconds = Double(parts[0]), let meters = Double(parts[1]),
+                  seconds.isFinite, meters.isFinite else { return nil }
             return [
                 "timestamp": formatter.string(from: Date(timeIntervalSince1970: seconds)),
                 "altitude":  meters
