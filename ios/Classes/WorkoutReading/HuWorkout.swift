@@ -420,7 +420,8 @@ enum IndoorAltitudeProfile {
     /// including "nan" or "inf", which `Double` parses but JSON cannot hold: one would drop the whole workout.
     static func points(from text: String, formatter: ISO8601DateFormatter) -> [[String: Any]] {
         text.split(separator: ";").compactMap { pair in
-            let parts = pair.split(separator: ",")
+            // Empty fields are kept, so "1700000000,,12" or ",1700000000,12" fails the count check.
+            let parts = pair.split(separator: ",", omittingEmptySubsequences: false)
             guard parts.count == 2, let seconds = Double(parts[0]), let meters = Double(parts[1]),
                   seconds.isFinite, meters.isFinite else { return nil }
             return [

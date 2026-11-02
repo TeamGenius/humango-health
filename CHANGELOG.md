@@ -6,6 +6,8 @@
 
 A treadmill workout recorded by the HumanGO watch app saves its altitude (from the incline) every 10 s in the workout metadata, `HumanGoAltitudeProfile`, as "unix seconds,metres" pairs separated by ";". Health has no altitude series for a workout without a route. When a workout has no route points, `toDict` now sends these pairs as `series_data.locations` with only `timestamp` and `altitude`, the shape the HumanGO phone app already sends for its own indoor workouts, so the backend reads them as the elevation profile. Workouts with a route, and workouts without the key, are unchanged.
 
+In the Dart model, `RouteLocation.latitude` and `longitude` are now nullable: an altitude-only point keeps them `null` instead of a made-up position at (0, 0), and `hasPosition` tells a GPS point from an altitude-only one. Code reading `RouteLocation` should check `hasPosition` before using the coordinates.
+
 #### Sleep source selection: Tier 2 excludes other third-party sources
 
 `calculateSleepPayload` source priority is now Apple → Tier-2 fitness trackers (Whoop, Garmin, Oura, …, in configured order) → any other bundle. When any Tier-2 bundle has samples for the night, only Tier-2 bundles are evaluated; other third-party sources (e.g. Eight Sleep) are used only when no Tier-2 bundle is present.
