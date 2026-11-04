@@ -145,12 +145,24 @@ public struct HuWorkout {
             "sport":              sport.name,
             "start_time":         formatter.string(from: start_time),
             "serial":             deviceActivityId,
-            "series_data":        routeData.toDict(),
+            "series_data":        seriesWithIndoorAltitude(formatter: formatter),
             "device_activity_id": deviceActivityId,
             "statistics":         formatStatistics(statistics: statistics),
             "events":             eventList,
             "metadata":           formatMetadata(metadata: metadata)
         ]
+    }
+
+    /// The series data; for an indoor workout without GPS points, the altitude profile the HumanGO watch app
+    /// saved in the metadata, as points with only a time and an altitude (as the phone app sends them).
+    private func seriesWithIndoorAltitude(formatter: ISO8601DateFormatter) -> [String: Any] {
+        var series = routeData.toDict()
+        let locations = series["locations"] as? [[String: Any]] ?? []
+        guard locations.isEmpty,
+              let text = metadata?[IndoorAltitudeProfile.metadataKey] as? String else { return series }
+        let points = IndoorAltitudeProfile.points(from: text, formatter: formatter)
+        if !points.isEmpty { series["locations"] = points }
+        return series
     }
 
     // MARK: - Multisport serialization (sessions-based)
@@ -397,5 +409,28 @@ func getSampleValue(sample: HKQuantitySample) -> Double {
             .unitDivided(by: HKUnit.gramUnit(with: .kilo).unitMultiplied(by: .minute())))
     default:
         return 0.0
+    }
+}
+
+// MARK: - Indoor altitude profile
+
+/// The altitude of a treadmill workout that the HumanGO watch app saves in the workout metadata, as
+/// "unix seconds,metres" pairs separated by ";". Health has no altitude series for a workout without a route.
+enum IndoorAltitudeProfile {
+    static let metadataKey = "HumanGoAltitudeProfile"
+
+    /// The pairs as location points with only a timestamp and an altitude. A malformed pair is left out,
+    /// including "nan" or "inf", which `Double` parses but JSON cannot hold: one would drop the whole workout.
+    static func points(from text: String, formatter: ISO8601DateFormatter) -> [[String: Any]] {
+        text.split(separator: ";").compactMap { pair in
+            // Empty fields are kept, so "1700000000,,12" or ",1700000000,12" fails the count check.
+            let parts = pair.split(separator: ",", omittingEmptySubsequences: false)
+            guard parts.count == 2, let seconds = Double(parts[0]), let meters = Double(parts[1]),
+                  seconds.isFinite, meters.isFinite else { return nil }
+            return [
+                "timestamp": formatter.string(from: Date(timeIntervalSince1970: seconds)),
+                "altitude":  meters
+            ]
+        }
     }
 }

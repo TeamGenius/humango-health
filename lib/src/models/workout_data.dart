@@ -225,27 +225,33 @@ class WorkoutStatistics {
   }
 }
 
+/// A point of a workout's route, or an altitude-only point of an indoor workout (a treadmill workout from the
+/// HumanGO watch app), which has no latitude or longitude.
 class RouteLocation {
-  final double latitude;
-  final double longitude;
+  final double? latitude;
+  final double? longitude;
   final double altitude;
   final double? speed;
   final double? course;
   final DateTime timestamp;
 
   RouteLocation({
-    required this.latitude,
-    required this.longitude,
+    this.latitude,
+    this.longitude,
     required this.altitude,
     this.speed,
     this.course,
     required this.timestamp,
   });
 
+  /// Whether the point has a position on the map (a GPS point), not only an altitude.
+  bool get hasPosition => latitude != null && longitude != null;
+
   factory RouteLocation.fromJson(Map<String, dynamic> json) {
     return RouteLocation(
-      latitude: (json['latitude'] as num?)?.toDouble() ?? 0.0,
-      longitude: (json['longitude'] as num?)?.toDouble() ?? 0.0,
+      // Absent on an altitude-only point: kept null, not a fabricated position at (0, 0).
+      latitude: (json['latitude'] as num?)?.toDouble(),
+      longitude: (json['longitude'] as num?)?.toDouble(),
       altitude: (json['altitude'] as num?)?.toDouble() ?? 0.0,
       speed: (json['speed'] as num?)?.toDouble(),
       course: (json['course'] as num?)?.toDouble(),
