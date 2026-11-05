@@ -316,6 +316,7 @@ func formatMetadata(metadata: [String: Any]?) -> [String: Any] {
         case "isScheduledWorkout":  out["IS_SCHEDULED_WORKOUT"]   = value as? Bool   ?? false
         case "isUserEnteredWorkout": out["IS_USER_ENTERED_WORKOUT"] = value as? Bool   ?? false
         case "scheduledWorkoutId":  out["SCHEDULED_WORKOUT_ID"]   = value as? String ?? ""
+        case "HumanGoStrengthLog": out["strength_log"]          = value as? String // watch's JSON; a non-string sets nil, so is dropped
         default: break
         }
         if #available(iOS 16.0, *) {

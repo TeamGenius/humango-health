@@ -2,6 +2,10 @@
 
 ### Changes
 
+#### Workout metadata: forward the watch's strength log
+
+`formatMetadata` now maps the HealthKit workout metadata key `HumanGoStrengthLog` (a JSON string written by the HumanGo watch app for strength workouts) to `strength_log` in the workout payload. The string is passed through unchanged; the backend parses it. All other metadata mappings are unchanged and unknown keys are still dropped.
+
 #### Indoor altitude profile from the HumanGO watch app
 
 A treadmill workout recorded by the HumanGO watch app saves its altitude (from the incline) every 10 s in the workout metadata, `HumanGoAltitudeProfile`, as "unix seconds,metres" pairs separated by ";". Health has no altitude series for a workout without a route. When a workout has no route points, `toDict` now sends these pairs as `series_data.locations` with only `timestamp` and `altitude`, the shape the HumanGO phone app already sends for its own indoor workouts, so the backend reads them as the elevation profile. Workouts with a route, and workouts without the key, are unchanged.
