@@ -65,6 +65,8 @@ Types are exported from `package:humango_health/humango_health.dart`.
 
 `inBed` and `awake` are excluded from “total sleep” style aggregates in the flat payload (see README sleep JSON example).
 
+Overlapping samples within the selected source count once (e.g. a source that writes the same night twice): each second goes to one stage, by precedence `asleepDeep > asleepREM > asleepCore > asleepUnspecified > awake`. `SLEEP_IN_BED` is the union of the `inBed` intervals.
+
 ---
 
 ## Dart API
