@@ -282,11 +282,8 @@ public class WorkoutServiceChannel: NSObject {
                     // Read permission is intentionally hidden by HealthKit — just run the
                     // query and handle errors gracefully below.
                     do {
-                        let pred = HKQuery.predicateForSamples(
-                            withStart: workout.startDate,
-                            end: workout.endDate,
-                            options: .strictEndDate
-                        )
+                        // Only samples linked to this workout, not every sample in its time window
+                        let pred = HKQuery.predicateForObjects(from: workout)
                         let descriptor = HKSampleQueryDescriptor(
                             predicates: [.sample(type: qType, predicate: pred)],
                             sortDescriptors: [SortDescriptor(\.startDate, order: .forward)],

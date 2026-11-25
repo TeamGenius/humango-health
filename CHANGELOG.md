@@ -7,6 +7,23 @@
 `buildAggregatedPayload` added the raw duration of every sample to its stage bucket without checking for overlap, so a source that wrote a night into HealthKit twice (seen with Eight Sleep) reported every stage and `TOTAL_SLEEP` at exactly 2×. `BED_TIME` / `WAKE_TIME` were unaffected.
 
 Stage totals are now overlap-aware within the selected source: each second goes to one stage, by precedence `asleepDeep > asleepREM > asleepCore > asleepUnspecified > awake`, and identical copies collapse. `SLEEP_IN_BED` is the union of the `inBed` intervals. Non-overlapping data gives the same totals as before. Payload keys, units, source selection and gap grouping are unchanged.
+## Unreleased
+
+### Changes
+
+#### Workout metadata: forward the watch's strength log
+
+`formatMetadata` now maps the HealthKit workout metadata key `HumanGoStrengthLog` (a JSON string written by the HumanGo watch app for strength workouts) to `strength_log` in the workout payload. The string is passed through unchanged; the backend parses it. All other metadata mappings are unchanged and unknown keys are still dropped.
+
+#### Indoor altitude profile from the HumanGO watch app
+
+A treadmill workout recorded by the HumanGO watch app saves its altitude (from the incline) every 10 s in the workout metadata, `HumanGoAltitudeProfile`, as "unix seconds,metres" pairs separated by ";". Health has no altitude series for a workout without a route. When a workout has no route points, `toDict` now sends these pairs as `series_data.locations` with only `timestamp` and `altitude`, the shape the HumanGO phone app already sends for its own indoor workouts, so the backend reads them as the elevation profile. Workouts with a route, and workouts without the key, are unchanged.
+
+In the Dart model, `RouteLocation.latitude` and `longitude` are now nullable: an altitude-only point keeps them `null` instead of a made-up position at (0, 0), and `hasPosition` tells a GPS point from an altitude-only one. Code reading `RouteLocation` should check `hasPosition` before using the coordinates.
+
+#### Sleep source selection: Tier 2 excludes other third-party sources
+
+`calculateSleepPayload` source priority is now Apple → Tier-2 fitness trackers (Whoop, Garmin, Oura, …, in configured order) → any other bundle. When any Tier-2 bundle has samples for the night, only Tier-2 bundles are evaluated; other third-party sources (e.g. Eight Sleep) are used only when no Tier-2 bundle is present.
 
 ---
 

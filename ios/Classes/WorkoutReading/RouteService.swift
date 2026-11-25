@@ -86,8 +86,8 @@ class RouteService {
                         return (idx, [])
                     }
 
-                    // predicate bounded to workout start/end
-                    let pred = HKQuery.predicateForSamples(withStart: workout.startDate, end: workout.endDate, options: .strictEndDate)
+                    // only samples linked to this workout, not every sample in its time window
+                    let pred = HKQuery.predicateForObjects(from: workout)
 
                     // Use HKSampleQueryDescriptor so we keep descriptor-style fetching (same API style as the rest)
                     let descriptor = HKSampleQueryDescriptor(
