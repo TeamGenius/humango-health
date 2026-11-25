@@ -1,13 +1,4 @@
-## 1.0.27 — 2026-10-15
-
-### Bug fixes
-
-#### Sleep stage durations no longer double when a source writes the same night twice
-
-`buildAggregatedPayload` added the raw duration of every sample to its stage bucket without checking for overlap, so a source that wrote a night into HealthKit twice (seen with Eight Sleep) reported every stage and `TOTAL_SLEEP` at exactly 2×. `BED_TIME` / `WAKE_TIME` were unaffected.
-
-Stage totals are now overlap-aware within the selected source: each second goes to one stage, by precedence `asleepDeep > asleepREM > asleepCore > asleepUnspecified > awake`, and identical copies collapse. `SLEEP_IN_BED` is the union of the `inBed` intervals. Non-overlapping data gives the same totals as before. Payload keys, units, source selection and gap grouping are unchanged.
-## Unreleased
+## 1.0.27 — 2026-11-25
 
 ### Changes
 
@@ -24,6 +15,14 @@ In the Dart model, `RouteLocation.latitude` and `longitude` are now nullable: an
 #### Sleep source selection: Tier 2 excludes other third-party sources
 
 `calculateSleepPayload` source priority is now Apple → Tier-2 fitness trackers (Whoop, Garmin, Oura, …, in configured order) → any other bundle. When any Tier-2 bundle has samples for the night, only Tier-2 bundles are evaluated; other third-party sources (e.g. Eight Sleep) are used only when no Tier-2 bundle is present.
+
+### Bug fixes
+
+#### Sleep stage durations no longer double when a source writes the same night twice
+
+`buildAggregatedPayload` added the raw duration of every sample to its stage bucket without checking for overlap, so a source that wrote a night into HealthKit twice (seen with Eight Sleep and Oura) reported every stage and `TOTAL_SLEEP` at exactly 2×. `BED_TIME` / `WAKE_TIME` were unaffected.
+
+Stage totals are now overlap-aware within the selected source: each second goes to one stage, by precedence `asleepDeep > asleepREM > asleepCore > asleepUnspecified > awake`, and identical copies collapse. `SLEEP_IN_BED` is the union of the `inBed` intervals. Non-overlapping data gives the same totals as before. Payload keys, units, source selection and gap grouping are unchanged.
 
 ---
 
